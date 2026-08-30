@@ -1,0 +1,15 @@
+node_modules/
+.env
+.env.local
+.env*.local
+dist/
+build/
+.next/
+out/
+*.log
+.DS_Store
+.vercel
+# never commit keys or wallet config
+*.key
+wallet.json
+config.json

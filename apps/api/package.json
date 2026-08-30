@@ -1,0 +1,24 @@
+{
+  "name": "@copilot/api",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "explore": "tsx src/scripts/explore.ts",
+    "fill": "tsx src/scripts/fill.ts",
+    "dev": "tsx watch src/server.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@copilot/shared": "*",
+    "@thetanuts-finance/thetanuts-client": "^0.3.0",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.4",
+    "fastify": "^5.1.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "@types/node": "^22.10.1"
+  }
+}

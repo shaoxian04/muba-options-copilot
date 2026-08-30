@@ -1,0 +1,9 @@
+{
+  "name": "muba-copilot",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "explore": "npm run explore -w @copilot/api",
+    "fill": "npm run fill -w @copilot/api"
+  }
+}
