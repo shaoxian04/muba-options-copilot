@@ -47,40 +47,79 @@ const baseParams: Parameters<AgentCreateFn>[0] = {
   messages: [{ role: "user", content: "hi" }],
 };
 
+const neverCalled = (label: string): AgentCreateFn => async () => {
+  throw new Error(`${label} should not have been called`);
+};
+const neverAskedForKey = (label: string) => (): string | undefined => {
+  throw new Error(`${label} key getter should not have been called`);
+};
+
 test("realCreateWithFallback uses OpenAI when a key is configured and the call succeeds", async () => {
-  let claudeCalled = false;
   const deps: AgentFallbackDeps = {
     openaiApiKey: () => "fake-openai-key",
     openaiCreate: async () => ({ content: [{ type: "text", text: "from openai" }] }),
-    claudeCreate: async () => {
-      claudeCalled = true;
-      return { content: [{ type: "text", text: "from claude" }] };
-    },
+    groqApiKey: neverAskedForKey("groq"),
+    groqCreate: neverCalled("groq"),
+    claudeCreate: neverCalled("claude"),
   };
   const result = await realCreateWithFallback(baseParams, deps);
   assert.equal(result.content[0].text, "from openai");
-  assert.equal(claudeCalled, false);
 });
 
-test("realCreateWithFallback falls back to Claude when no OpenAI key is configured", async () => {
-  let openaiCalled = false;
+test("realCreateWithFallback falls back to Groq when no OpenAI key is configured", async () => {
   const deps: AgentFallbackDeps = {
     openaiApiKey: () => undefined,
-    openaiCreate: async () => {
-      openaiCalled = true;
-      return { content: [{ type: "text", text: "from openai" }] };
-    },
+    openaiCreate: neverCalled("openai"),
+    groqApiKey: () => "fake-groq-key",
+    groqCreate: async () => ({ content: [{ type: "text", text: "from groq" }] }),
+    claudeCreate: neverCalled("claude"),
+  };
+  const result = await realCreateWithFallback(baseParams, deps);
+  assert.equal(result.content[0].text, "from groq");
+});
+
+test("realCreateWithFallback falls back to Groq when the OpenAI call itself throws", async () => {
+  const deps: AgentFallbackDeps = {
+    openaiApiKey: () => "fake-openai-key",
+    openaiCreate: async () => { throw new Error("openai is down"); },
+    groqApiKey: () => "fake-groq-key",
+    groqCreate: async () => ({ content: [{ type: "text", text: "from groq" }] }),
+    claudeCreate: neverCalled("claude"),
+  };
+  const result = await realCreateWithFallback(baseParams, deps);
+  assert.equal(result.content[0].text, "from groq");
+});
+
+test("realCreateWithFallback falls back to Claude when no OpenAI or Groq key is configured", async () => {
+  const deps: AgentFallbackDeps = {
+    openaiApiKey: () => undefined,
+    openaiCreate: neverCalled("openai"),
+    groqApiKey: () => undefined,
+    groqCreate: neverCalled("groq"),
     claudeCreate: async () => ({ content: [{ type: "text", text: "from claude" }] }),
   };
   const result = await realCreateWithFallback(baseParams, deps);
   assert.equal(result.content[0].text, "from claude");
-  assert.equal(openaiCalled, false);
 });
 
-test("realCreateWithFallback falls back to Claude when the OpenAI call itself throws", async () => {
+test("realCreateWithFallback falls back to Claude when there's no OpenAI key and the Groq call throws", async () => {
+  const deps: AgentFallbackDeps = {
+    openaiApiKey: () => undefined,
+    openaiCreate: neverCalled("openai"),
+    groqApiKey: () => "fake-groq-key",
+    groqCreate: async () => { throw new Error("groq is down"); },
+    claudeCreate: async () => ({ content: [{ type: "text", text: "from claude" }] }),
+  };
+  const result = await realCreateWithFallback(baseParams, deps);
+  assert.equal(result.content[0].text, "from claude");
+});
+
+test("realCreateWithFallback falls back to Claude when both OpenAI and Groq calls throw", async () => {
   const deps: AgentFallbackDeps = {
     openaiApiKey: () => "fake-openai-key",
     openaiCreate: async () => { throw new Error("openai is down"); },
+    groqApiKey: () => "fake-groq-key",
+    groqCreate: async () => { throw new Error("groq is down"); },
     claudeCreate: async () => ({ content: [{ type: "text", text: "from claude" }] }),
   };
   const result = await realCreateWithFallback(baseParams, deps);
