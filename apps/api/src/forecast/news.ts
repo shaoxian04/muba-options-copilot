@@ -5,12 +5,12 @@
  */
 import { z } from "zod";
 import { Headline, NewsAnalysis, FORECAST_DISCLAIMER, type MarketScenario } from "@copilot/shared";
-import { callClaudeForJson, type ClaudeCreateFn } from "./claude.js";
+import { callClaudeForJson, type AgentCreateFn } from "./agent.js";
 import { assertNoForbiddenPhrase } from "./guardrails.js";
 
 const HeadlineList = z.object({ headlines: z.array(Headline) });
 
-export async function fetchNews(symbol: string, create?: ClaudeCreateFn): Promise<Headline[]> {
+export async function fetchNews(symbol: string, create?: AgentCreateFn): Promise<Headline[]> {
   const { headlines } = await callClaudeForJson(
     HeadlineList,
     'You invent plausible, realistic-sounding crypto news headlines for a demo. ' +
@@ -31,7 +31,7 @@ const NewsAnalysisModel = NewsAnalysis.omit({
   generatedAt: true,
 });
 
-export async function analyzeNews(scenario: MarketScenario, create?: ClaudeCreateFn): Promise<NewsAnalysis> {
+export async function analyzeNews(scenario: MarketScenario, create?: AgentCreateFn): Promise<NewsAnalysis> {
   const model = await callClaudeForJson(
     NewsAnalysisModel,
     'You analyze simulated crypto news headlines and produce a sentiment read. ' +

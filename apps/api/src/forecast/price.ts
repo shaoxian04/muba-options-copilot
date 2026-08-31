@@ -1,5 +1,5 @@
 import { PricePrediction, FORECAST_DISCLAIMER, type MarketScenario } from "@copilot/shared";
-import { callClaudeForJson, type ClaudeCreateFn } from "./claude.js";
+import { callClaudeForJson, type AgentCreateFn } from "./agent.js";
 import { assertNoForbiddenPhrase } from "./guardrails.js";
 
 const PricePredictionModel = PricePrediction.omit({
@@ -10,7 +10,7 @@ const PricePredictionModel = PricePrediction.omit({
   generatedAt: true,
 });
 
-export async function predictPrice(scenario: MarketScenario, create?: ClaudeCreateFn): Promise<PricePrediction> {
+export async function predictPrice(scenario: MarketScenario, create?: AgentCreateFn): Promise<PricePrediction> {
   const { marketData } = scenario;
   const model = await callClaudeForJson(
     PricePredictionModel,

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildScenario } from "./scenario.js";
 import type { MarketDataDeps, CoinGeckoMarket } from "./marketData.js";
-import type { ClaudeCreateFn } from "./claude.js";
+import type { AgentCreateFn } from "./agent.js";
 
 const cgRow: CoinGeckoMarket = {
   id: "ethereum",
@@ -19,11 +19,11 @@ test("buildScenario combines real market data with simulated headlines", async (
     fetchCoinGeckoMarket: async () => cgRow,
     resolveViaCoinGeckoSearch: async () => { throw new Error("should not be called for a major"); },
   };
-  const claudeCreate: ClaudeCreateFn = async () => ({
+  const agentCreate: AgentCreateFn = async () => ({
     content: [{ type: "text", text: JSON.stringify({ headlines: [{ text: "ETH steady", sentiment: "neutral", source: "simulated" }] }) }],
   });
 
-  const scenario = await buildScenario("eth", "7d", { marketData: marketDataDeps, claudeCreate });
+  const scenario = await buildScenario("eth", "7d", { marketData: marketDataDeps, agentCreate });
 
   assert.equal(scenario.symbol, "ETH");
   assert.equal(scenario.horizon, "7d");

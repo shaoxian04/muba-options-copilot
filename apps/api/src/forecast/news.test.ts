@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import type { MarketScenario } from "@copilot/shared";
 import { fetchNews, analyzeNews } from "./news.js";
 import { ForbiddenPhraseUsed } from "./guardrails.js";
-import type { ClaudeCreateFn } from "./claude.js";
+import type { AgentCreateFn } from "./agent.js";
 
 test("fetchNews returns headlines tagged as simulated", async () => {
-  const fakeCreate: ClaudeCreateFn = async () => ({
+  const fakeCreate: AgentCreateFn = async () => ({
     content: [
       {
         type: "text",
@@ -43,7 +43,7 @@ const scenario = (): MarketScenario => ({
 });
 
 test("analyzeNews builds a full NewsAnalysis from the model's sentiment read", async () => {
-  const fakeCreate: ClaudeCreateFn = async () => ({
+  const fakeCreate: AgentCreateFn = async () => ({
     content: [{ type: "text", text: JSON.stringify({ overallSentiment: "bullish", summary: "Headlines lean positive." }) }],
   });
   const result = await analyzeNews(scenario(), fakeCreate);
@@ -54,7 +54,7 @@ test("analyzeNews builds a full NewsAnalysis from the model's sentiment read", a
 });
 
 test("analyzeNews refuses a response whose summary uses the forbidden phrase 'max loss'", async () => {
-  const fakeCreate: ClaudeCreateFn = async () => ({
+  const fakeCreate: AgentCreateFn = async () => ({
     content: [
       {
         type: "text",

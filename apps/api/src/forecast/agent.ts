@@ -18,24 +18,24 @@ function getAnthropic(): Anthropic {
 
 export class ForecastGenerationFailed extends Error {}
 
-export type ClaudeCreateFn = (params: {
+export type AgentCreateFn = (params: {
   model: string;
   max_tokens: number;
   system: string;
   messages: Array<{ role: "user"; content: string }>;
 }) => Promise<{ content: Array<{ type: string; text?: string }> }>;
 
-async function realClaudeCreate(params: Parameters<ClaudeCreateFn>[0]): ReturnType<ClaudeCreateFn> {
+async function realClaudeCreate(params: Parameters<AgentCreateFn>[0]): ReturnType<AgentCreateFn> {
   const res = await getAnthropic().messages.create(params as any);
   return res as any;
 }
 
-/** Calls Claude, expects a single JSON object back, validates it against `schema`. */
+/** Calls the configured agent, expects a single JSON object back, validates it against `schema`. */
 export async function callClaudeForJson<T>(
   schema: ZodType<T>,
   system: string,
   user: string,
-  create: ClaudeCreateFn = realClaudeCreate
+  create: AgentCreateFn = realClaudeCreate
 ): Promise<T> {
   let raw: string;
   try {

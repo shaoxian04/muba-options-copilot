@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { MarketScenario } from "@copilot/shared";
 import { assessRiskBenefit } from "./riskBenefit.js";
 import { ForbiddenPhraseUsed } from "./guardrails.js";
-import type { ClaudeCreateFn } from "./claude.js";
+import type { AgentCreateFn } from "./agent.js";
 
 const scenario = (): MarketScenario => ({
   symbol: "ETH",
@@ -24,7 +24,7 @@ const scenario = (): MarketScenario => ({
 });
 
 test("assessRiskBenefit builds a full RiskBenefitView", async () => {
-  const fakeCreate: ClaudeCreateFn = async () => ({
+  const fakeCreate: AgentCreateFn = async () => ({
     content: [
       {
         type: "text",
@@ -43,7 +43,7 @@ test("assessRiskBenefit builds a full RiskBenefitView", async () => {
 });
 
 test("assessRiskBenefit refuses a response that uses the forbidden phrase 'max loss'", async () => {
-  const fakeCreate: ClaudeCreateFn = async () => ({
+  const fakeCreate: AgentCreateFn = async () => ({
     content: [
       {
         type: "text",

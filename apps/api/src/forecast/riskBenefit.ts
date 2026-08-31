@@ -1,5 +1,5 @@
 import { RiskBenefitView, FORECAST_DISCLAIMER, type MarketScenario } from "@copilot/shared";
-import { callClaudeForJson, type ClaudeCreateFn } from "./claude.js";
+import { callClaudeForJson, type AgentCreateFn } from "./agent.js";
 import { assertNoForbiddenPhrase } from "./guardrails.js";
 
 const RiskBenefitModel = RiskBenefitView.omit({
@@ -10,7 +10,7 @@ const RiskBenefitModel = RiskBenefitView.omit({
   generatedAt: true,
 });
 
-export async function assessRiskBenefit(scenario: MarketScenario, create?: ClaudeCreateFn): Promise<RiskBenefitView> {
+export async function assessRiskBenefit(scenario: MarketScenario, create?: AgentCreateFn): Promise<RiskBenefitView> {
   const { marketData } = scenario;
   const model = await callClaudeForJson(
     RiskBenefitModel,

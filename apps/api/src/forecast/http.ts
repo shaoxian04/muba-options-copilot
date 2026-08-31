@@ -1,5 +1,5 @@
 import { UnknownSymbol, MarketDataUnavailable, MarketDataDivergence } from "./marketData.js";
-import { ForecastGenerationFailed } from "./claude.js";
+import { ForecastGenerationFailed } from "./agent.js";
 import { ForbiddenPhraseUsed } from "./guardrails.js";
 
 export function parseForecastQuery(

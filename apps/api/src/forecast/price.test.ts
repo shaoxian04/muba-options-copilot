@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { MarketScenario } from "@copilot/shared";
 import { predictPrice } from "./price.js";
 import { ForbiddenPhraseUsed } from "./guardrails.js";
-import type { ClaudeCreateFn } from "./claude.js";
+import type { AgentCreateFn } from "./agent.js";
 
 const scenario = (): MarketScenario => ({
   symbol: "ETH",
@@ -24,7 +24,7 @@ const scenario = (): MarketScenario => ({
 });
 
 test("predictPrice builds a full PricePrediction and echoes the grounding market data", async () => {
-  const fakeCreate: ClaudeCreateFn = async () => ({
+  const fakeCreate: AgentCreateFn = async () => ({
     content: [
       {
         type: "text",
@@ -45,7 +45,7 @@ test("predictPrice builds a full PricePrediction and echoes the grounding market
 });
 
 test("predictPrice refuses a response whose rationale uses the forbidden phrase 'max loss'", async () => {
-  const fakeCreate: ClaudeCreateFn = async () => ({
+  const fakeCreate: AgentCreateFn = async () => ({
     content: [
       {
         type: "text",
