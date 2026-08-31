@@ -34,6 +34,8 @@ export function requireRpc(): string {
 export const privateKey = () => process.env.THETANUTS_PRIVATE_KEY;
 export const maxFillUsdc = () => Number(process.env.MAX_FILL_USDC ?? 2);
 
+export const openaiApiKey = (): string | undefined => process.env.OPENAI_API_KEY || undefined;
+
 export function anthropicApiKey(): string {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) {
