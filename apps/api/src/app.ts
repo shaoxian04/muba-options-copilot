@@ -26,12 +26,13 @@ import { proposeTrade, proposeChosenOrder, NoSuitableOrder, QuoteMoved } from ".
 import { buildDeck } from "./thetanuts/deck.js";
 import { reviewIntent } from "./agents/review.js";
 import { practiceRoutes, practiceHoldings } from "./practice.js";
+import { safeErrorResponse } from "./errors.js";
 import { realHoldings } from "./thetanuts/holdings.js";
 import { usd } from "./format.js";
 import { executeFill, RiskBudgetExceeded, UnsafeOrder } from "./thetanuts/execute.js";
 import {
   sessionFor, remainingBudget, setRiskBudget,
-  rememberProposal, recallProposal, rememberCard, recallCard, type Session,
+  rememberProposal, recallProposal, rememberCard, recallCard, ProposalIdBody, type Session,
 } from "./sessions.js";
 import { buildScenario } from "./forecast/scenario.js";
 import { analyzeNews } from "./forecast/news.js";
@@ -265,7 +266,11 @@ export async function buildApp(): Promise<FastifyInstance> {
         return;
       }
       if (e instanceof NoSuitableOrder) return { kind: "NO_ORDER", message: e.message };
-      throw e;
+      // Anything else may be a raw ethers/RPC error -- THETANUTS_RPC_URL carries the
+      // provider API key as a URL path segment, and that key must never reach a
+      // response body. See errors.ts.
+      reply.code(502).send(safeErrorResponse(req.log, e, "Could not price that trade. Try again."));
+      return;
     }
   });
 
@@ -275,8 +280,9 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.post("/fill", async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const { proposalId } = (req.body ?? {}) as { proposalId?: string };
-    if (!proposalId) return reply.code(400).send({ error: "proposalId required" });
+    const parsedBody = ProposalIdBody.safeParse(req.body);
+    if (!parsedBody.success) return reply.code(400).send({ error: "proposalId required" });
+    const { proposalId } = parsedBody.data;
     if (!canSign()) return reply.code(503).send({ error: "No signer configured. Set THETANUTS_PRIVATE_KEY." });
 
     const s = sessionFor(req.headers);
@@ -304,7 +310,9 @@ export async function buildApp(): Promise<FastifyInstance> {
       s.spentUsdc -= found.proposal.maxLossUsdc; // the fill never happened -- release the reservation
       if (e instanceof RiskBudgetExceeded) return reply.code(403).send({ error: e.message });
       if (e instanceof UnsafeOrder) return reply.code(403).send({ error: e.message });
-      return reply.code(502).send({ error: e?.message ?? "Fill failed" });
+      // Raw ethers/RPC error text can carry the provider API key embedded in
+      // THETANUTS_RPC_URL -- never forward e.message to the caller. See errors.ts.
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Fill failed. Try again, or ask for a fresh quote if this keeps happening."));
     }
   });
 
@@ -318,7 +326,8 @@ export async function buildApp(): Promise<FastifyInstance> {
    * It does not refuse without a wallet. A Trader who has only practised still has a
    * board, and an empty page would teach them nothing.
    */
-  app.get("/positions", async (req) => {
+  app.get("/positions", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
     const session = sessionFor(req.headers);
     const spot = await spotPrice().catch(() => null);
 

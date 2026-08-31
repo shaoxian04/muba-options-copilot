@@ -72,9 +72,16 @@ export const RiskBenefitView = z.object({
 });
 export type RiskBenefitView = z.infer<typeof RiskBenefitView>;
 
+/**
+ * `horizon` gets spliced into LLM prompts in forecast/price.ts and forecast/riskBenefit.ts
+ * (delimited there, but this bound exists so an instruction-shaped payload never has the
+ * room to be one -- a real horizon is a short phrase like "7 days" or "next week").
+ */
+export const HORIZON_MAX_LENGTH = 40;
+
 export const ChatQueryRequest = z.object({
   coin: z.string(),
-  horizon: z.string(),
+  horizon: z.string().max(HORIZON_MAX_LENGTH),
   analyses: z.array(z.enum(["news", "price", "risk-benefit", "market"])),
 });
 export type ChatQueryRequest = z.infer<typeof ChatQueryRequest>;

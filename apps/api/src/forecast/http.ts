@@ -1,8 +1,15 @@
+import { HORIZON_MAX_LENGTH } from "@copilot/shared";
 import { UnknownSymbol, MarketDataUnavailable, MarketDataDivergence } from "./marketData.js";
 import { ForecastGenerationFailed } from "./agent.js";
 import { ForbiddenPhraseUsed } from "./guardrails.js";
 import { IncompleteQuestion } from "./ask.js";
 
+/**
+ * This is a SEPARATE entry point from ChatQueryRequest -- a caller hitting
+ * GET /forecast/price or /forecast/risk-benefit directly supplies `horizon` here and
+ * never touches the shared schema's `.max()` bound at all. The same bound is enforced
+ * here for the same reason: `horizon` gets spliced into an LLM prompt downstream.
+ */
 export function parseForecastQuery(
   query: Record<string, unknown> | undefined
 ): { symbol: string; horizon: string } | { error: string } {
@@ -10,6 +17,8 @@ export function parseForecastQuery(
   const horizon = typeof query?.horizon === "string" ? query.horizon.trim() : "";
   if (!symbol) return { error: "symbol query parameter is required" };
   if (!horizon) return { error: "horizon query parameter is required" };
+  if (horizon.length > HORIZON_MAX_LENGTH)
+    return { error: `horizon must be ${HORIZON_MAX_LENGTH} characters or fewer` };
   return { symbol, horizon };
 }
 
