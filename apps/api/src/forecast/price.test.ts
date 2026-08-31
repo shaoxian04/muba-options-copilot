@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { MarketScenario } from "@copilot/shared";
 import { predictPrice } from "./price.js";
+import { ForbiddenPhraseUsed } from "./guardrails.js";
 import type { ClaudeCreateFn } from "./claude.js";
 
 const scenario = (): MarketScenario => ({
@@ -41,4 +42,21 @@ test("predictPrice builds a full PricePrediction and echoes the grounding market
   assert.deepEqual(result.predictedRange, { low: 2300, high: 2650 });
   assert.equal(result.groundedOn.price, 2450);
   assert.equal(result.groundedOn.priceSource, "thetanuts");
+});
+
+test("predictPrice refuses a response whose rationale uses the forbidden phrase 'max loss'", async () => {
+  const fakeCreate: ClaudeCreateFn = async () => ({
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          direction: "down",
+          predictedRange: { low: 2200, high: 2400 },
+          confidence: "low",
+          rationale: "Your max loss on a move like this could be substantial.",
+        }),
+      },
+    ],
+  });
+  await assert.rejects(() => predictPrice(scenario(), fakeCreate), ForbiddenPhraseUsed);
 });

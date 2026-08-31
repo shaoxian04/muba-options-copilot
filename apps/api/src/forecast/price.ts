@@ -1,5 +1,6 @@
 import { PricePrediction, FORECAST_DISCLAIMER, type MarketScenario } from "@copilot/shared";
 import { callClaudeForJson, type ClaudeCreateFn } from "./claude.js";
+import { assertNoForbiddenPhrase } from "./guardrails.js";
 
 const PricePredictionModel = PricePrediction.omit({
   symbol: true,
@@ -24,6 +25,7 @@ export async function predictPrice(scenario: MarketScenario, create?: ClaudeCrea
       `Headlines:\n${scenario.headlines.map((h) => `- ${h.text}`).join("\n")}`,
     create
   );
+  assertNoForbiddenPhrase(model.rationale);
   return {
     symbol: scenario.symbol,
     horizon: scenario.horizon,

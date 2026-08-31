@@ -1,6 +1,6 @@
 import { UnknownSymbol, MarketDataUnavailable, MarketDataDivergence } from "./marketData.js";
 import { ForecastGenerationFailed } from "./claude.js";
-import { ForbiddenPhraseUsed } from "./riskBenefit.js";
+import { ForbiddenPhraseUsed } from "./guardrails.js";
 
 export function parseForecastQuery(
   query: Record<string, unknown> | undefined

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { parseForecastQuery, forecastErrorStatus } from "./http.js";
 import { UnknownSymbol, MarketDataUnavailable, MarketDataDivergence } from "./marketData.js";
 import { ForecastGenerationFailed } from "./claude.js";
-import { ForbiddenPhraseUsed } from "./riskBenefit.js";
+import { ForbiddenPhraseUsed } from "./guardrails.js";
 
 test("parseForecastQuery requires both symbol and horizon", () => {
   assert.deepEqual(parseForecastQuery(undefined), { error: "symbol query parameter is required" });

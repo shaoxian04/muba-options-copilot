@@ -1,5 +1,6 @@
 import { RiskBenefitView, FORECAST_DISCLAIMER, type MarketScenario } from "@copilot/shared";
 import { callClaudeForJson, type ClaudeCreateFn } from "./claude.js";
+import { assertNoForbiddenPhrase } from "./guardrails.js";
 
 const RiskBenefitModel = RiskBenefitView.omit({
   symbol: true,
@@ -8,10 +9,6 @@ const RiskBenefitModel = RiskBenefitView.omit({
   disclaimer: true,
   generatedAt: true,
 });
-
-const FORBIDDEN_PHRASE = /max\s*loss/i;
-
-export class ForbiddenPhraseUsed extends Error {}
 
 export async function assessRiskBenefit(scenario: MarketScenario, create?: ClaudeCreateFn): Promise<RiskBenefitView> {
   const { marketData } = scenario;
@@ -29,8 +26,8 @@ export async function assessRiskBenefit(scenario: MarketScenario, create?: Claud
     create
   );
 
-  if (FORBIDDEN_PHRASE.test(model.upside) || FORBIDDEN_PHRASE.test(model.downside))
-    throw new ForbiddenPhraseUsed('Model output used the forbidden phrase "max loss" -- refusing to return this response.');
+  assertNoForbiddenPhrase(model.upside);
+  assertNoForbiddenPhrase(model.downside);
 
   return {
     symbol: scenario.symbol,

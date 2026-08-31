@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { MarketScenario } from "@copilot/shared";
-import { assessRiskBenefit, ForbiddenPhraseUsed } from "./riskBenefit.js";
+import { assessRiskBenefit } from "./riskBenefit.js";
+import { ForbiddenPhraseUsed } from "./guardrails.js";
 import type { ClaudeCreateFn } from "./claude.js";
 
 const scenario = (): MarketScenario => ({

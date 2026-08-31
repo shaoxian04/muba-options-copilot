@@ -6,6 +6,7 @@
 import { z } from "zod";
 import { Headline, NewsAnalysis, FORECAST_DISCLAIMER, type MarketScenario } from "@copilot/shared";
 import { callClaudeForJson, type ClaudeCreateFn } from "./claude.js";
+import { assertNoForbiddenPhrase } from "./guardrails.js";
 
 const HeadlineList = z.object({ headlines: z.array(Headline) });
 
@@ -38,6 +39,7 @@ export async function analyzeNews(scenario: MarketScenario, create?: ClaudeCreat
     `Symbol: ${scenario.symbol}\nHeadlines:\n${scenario.headlines.map((h) => `- ${h.text}`).join("\n")}`,
     create
   );
+  assertNoForbiddenPhrase(model.summary);
   return {
     symbol: scenario.symbol,
     horizon: scenario.horizon,
