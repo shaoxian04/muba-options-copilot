@@ -113,26 +113,30 @@ export async function answerQuestion(
     settled.map(async (s): Promise<CoinAskResult> => {
       if (!s.ok) return { symbol: s.symbol, error: s.error };
 
-      const otherCoins: CoinSummary[] | undefined = query.isComparison
-        ? successful
-            .filter((c) => c.symbol !== s.data.symbol)
-            .map((c) => ({ symbol: c.symbol, market: c.market, news: c.news, price: c.price, riskBenefit: c.riskBenefit }))
-        : undefined;
+      try {
+        const otherCoins: CoinSummary[] | undefined = query.isComparison
+          ? successful
+              .filter((c) => c.symbol !== s.data.symbol)
+              .map((c) => ({ symbol: c.symbol, market: c.market, news: c.news, price: c.price, riskBenefit: c.riskBenefit }))
+          : undefined;
 
-      const answer = await synthesizeAnswer(
-        question,
-        s.data.symbol,
-        { market: s.data.market, news: s.data.news, price: s.data.price, riskBenefit: s.data.riskBenefit, otherCoins },
-        deps?.create
-      );
+        const answer = await synthesizeAnswer(
+          question,
+          s.data.symbol,
+          { market: s.data.market, news: s.data.news, price: s.data.price, riskBenefit: s.data.riskBenefit, otherCoins },
+          deps?.create
+        );
 
-      const result: CoinAskResult = { symbol: s.data.symbol, market: s.data.market, answer };
-      if (s.data.news) result.news = s.data.news;
-      if (s.data.price) result.price = s.data.price;
-      if (s.data.riskBenefit) result.riskBenefit = s.data.riskBenefit;
-      if (s.data.news || s.data.price || s.data.riskBenefit) result.disclaimer = FORECAST_DISCLAIMER;
+        const result: CoinAskResult = { symbol: s.data.symbol, market: s.data.market, answer };
+        if (s.data.news) result.news = s.data.news;
+        if (s.data.price) result.price = s.data.price;
+        if (s.data.riskBenefit) result.riskBenefit = s.data.riskBenefit;
+        if (s.data.news || s.data.price || s.data.riskBenefit) result.disclaimer = FORECAST_DISCLAIMER;
 
-      return result;
+        return result;
+      } catch (e: any) {
+        return { symbol: s.data.symbol, error: e?.message ?? "Failed to analyze this coin" };
+      }
     })
   );
 

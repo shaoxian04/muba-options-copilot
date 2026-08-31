@@ -204,6 +204,49 @@ test("answerQuestion returns partial success when one of several coins fails", a
   assert.equal(results.NOTACOIN.news, undefined);
 });
 
+test("answerQuestion returns partial success when synthesis fails for one of several coins, not just data-gathering", async () => {
+  const create: AgentCreateFn = async (params) => {
+    if (params.system.includes("extract structured information"))
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              requests: [
+                { coin: "ETH", horizon: "", analyses: ["market"] },
+                { coin: "BTC", horizon: "", analyses: ["market"] },
+              ],
+              isComparison: false,
+            }),
+          },
+        ],
+      };
+    if (params.system.includes("answer a user's question")) {
+      const userMsg = params.messages[0].content;
+      if (userMsg.includes("Asset: BTC")) throw new Error("synthesis blew up for BTC");
+      return { content: [{ type: "text", text: JSON.stringify({ answer: "ETH is fine." }) }] };
+    }
+    throw new Error(`unexpected AI call for system prompt starting: ${params.system.slice(0, 40)}`);
+  };
+
+  const btcRow: CoinGeckoMarket = { ...cgRow, id: "bitcoin", current_price: 60010 };
+  const marketData: MarketDataDeps = {
+    getThetanutsPrices: async () => ({ ETH: 2451, BTC: 60000 }),
+    fetchCoinGeckoMarket: async (id) => (id === "bitcoin" ? btcRow : cgRow),
+    resolveViaCoinGeckoSearch: async () => {
+      throw new Error("should not be called for majors");
+    },
+  };
+
+  const results = await answerQuestion("how are ETH and BTC doing?", { create, marketData });
+
+  assert.equal(Object.keys(results).length, 2);
+  assert.equal(results.ETH.answer, "ETH is fine.");
+  assert.equal(results.ETH.error, undefined);
+  assert.ok(results.BTC.error, "BTC should have failed during synthesis, mirroring a Phase-1 failure's shape");
+  assert.equal(results.BTC.answer, undefined);
+});
+
 test("answerQuestion propagates IncompleteQuestion instead of swallowing it into a per-coin error", async () => {
   const create = jsonCreate({ requests: [], isComparison: false });
   await assert.rejects(
