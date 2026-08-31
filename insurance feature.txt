@@ -1,0 +1,83 @@
+I'm building liquidation insurance for DeFi borrowers, for a hackathon on the
+Thetanuts options protocol. Base mainnet, chainId 8453.
+
+BEFORE WRITING ANY CODE:
+1. Fetch llms-full.txt from https://github.com/Thetanuts-Finance/thetanuts-sdk
+   and read it. Do not guess method names — if you're unsure of an API, read the
+   docs at docs.thetanuts.finance/for-builders/sdk or the repo README.
+2. Run this connectivity check and confirm it prints live data:
+
+   const client = new ThetanutsClient({
+     chainId: 8453,
+     provider: new ethers.JsonRpcProvider(process.env.THETANUTS_RPC_URL),
+   });
+   console.log((await client.api.fetchOrders()).length, 'live orders');
+   console.log(await client.api.getMarketData());
+
+3. Report back what put options are actually available — strikes, expiries,
+   underlyings — before building anything. The design depends on this.
+
+WHAT THE PRODUCT DOES:
+A user has a borrow position on Aave V3 on Base. Their position has a
+liquidation price. We read it, and buy them a cash-settled put option that
+pays out in USDC if the collateral falls, so they can repay debt and avoid
+being liquidated.
+
+BUILD THESE MODULES, IN ORDER:
+
+1. aave.ts — read the position
+   - Call getUserAccountData(address) on the Aave V3 Pool on Base
+   - Get the Pool address from Aave's official docs, not from a blog post
+   - Return: total collateral (USD), total debt (USD), liquidation threshold,
+     health factor
+   - Also identify which collateral asset they hold (WETH or cbBTC)
+
+2. risk.ts — pure functions, no network calls
+   - liquidationPrice = totalDebt / (collateralAmount * liquidationThreshold)
+   - strike = liquidationPrice * 1.10
+     (10% buffer ABOVE the liquidation price — the option must have value
+     BEFORE the user is at risk, so there's time to act. A strike equal to the
+     liquidation price is useless: it only pays out at the moment bots
+     liquidate.)
+   - contracts = collateralAmount * liquidationThreshold
+     (Each $1 the collateral falls increases the required repayment by
+     $liquidationThreshold, but a put pays $1 per $1 of decline. So this size
+     matches the hedge exactly.)
+   - Write unit tests for these with hand-checked numbers.
+
+3. options.ts — get the cover
+   - Search OptionBook for a put on the right underlying at or near the target
+     strike
+   - If a suitable order exists, fill it
+   - If not, use RFQ (OptionFactory) for a custom strike
+   - Must be CASH-SETTLED. The user's collateral is locked in Aave, so they
+     cannot deliver the underlying. Cash settlement is what makes this work.
+   - Return a quote before executing: strike, expiry, premium, size
+
+4. guard.ts — validation layer, runs before ANY signing
+   Reject the transaction if any check fails:
+   - Strike is within 5% of the computed target (catches misparsed values)
+   - It's a PUT, on the correct underlying
+   - Premium is below a hard cap (start at 5 USDC)
+   - The confirmation ID hasn't been seen before (idempotency — a retried
+     confirm must not open a second position)
+   - The quote is less than 60 seconds old (else re-quote)
+   These are hard checks in code. No LLM output can bypass them.
+
+5. execute.ts — sign and send
+   - Load key from THETANUTS_PRIVATE_KEY env var, never hardcoded
+   - Approve the exact amount needed, never MaxUint256
+   - Dry-run first, then execute
+   - Return the tx hash
+
+CONSTRAINTS:
+- TypeScript, Node 18+
+- Real mainnet, real funds, tiny size. Trades of 1-2 USDC are fine and expected.
+- Use a fresh disposable wallet. Never commit a private key. Add .env to
+  .gitignore before anything else.
+- Handle failure explicitly: no maker response to an RFQ, quote expiry,
+  insufficient balance, no matching strike. Don't swallow errors.
+
+START WITH: modules 1 and 2 plus their tests. Show me the computed liquidation
+price and target strike for a real Aave address before writing any execution
+code.

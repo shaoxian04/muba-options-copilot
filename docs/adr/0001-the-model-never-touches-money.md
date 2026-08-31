@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0006
+---
+
 # The model never selects an Order and never produces a number
 
 The Copilot turns natural language into real mainnet trades, so the boundary between the LLM
