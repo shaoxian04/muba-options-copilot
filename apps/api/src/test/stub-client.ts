@@ -51,7 +51,7 @@ export function getClient(): any {
     api: {
       fetchOrders: spies.fetchOrders,
       getMarketData: spies.getMarketData,
-      getPositions: async () => state.positions,
+      getUserPositionsFromIndexer: async () => state.positions,
     },
     optionBook: {
       previewFillOrder: spies.previewFillOrder,
@@ -63,3 +63,6 @@ export function getClient(): any {
 }
 
 export const canSign = (): boolean => state.canSign;
+
+export const TRADER_ADDRESS = "0x1111111111111111111111111111111111111111";
+export const walletAddress = (): string | null => (state.canSign ? TRADER_ADDRESS : null);

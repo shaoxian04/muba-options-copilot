@@ -156,8 +156,9 @@ describe("POST /propose", () => {
   it("reports an empty book as a market condition, not a failure", async () => {
     state.book = [];
     const res = await propose({ underlying: "ETH", direction: "DOWN", sizeUsdc: 2, horizonDays: 1 });
-    expect(res.statusCode).toBe(409);
-    expect(res.json().error).toMatch(/liquidity/i);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().kind).toBe("NO_ORDER");
+    expect(res.json().message).toMatch(/liquidity/i);
   });
 });
 

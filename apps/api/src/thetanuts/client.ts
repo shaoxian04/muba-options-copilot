@@ -30,3 +30,15 @@ export function getClient(): ThetanutsClient {
 }
 
 export const canSign = (): boolean => Boolean(privateKey());
+
+/**
+ * The address whose Positions the board shows, or null with no wallet configured.
+ *
+ * Here rather than at the call site so the private key is read in exactly one module.
+ * A route that wants to know who the Trader is should not have to handle their key to
+ * find out.
+ */
+export const walletAddress = (): string | null => {
+  const pk = privateKey();
+  return pk ? new ethers.Wallet(pk).address : null;
+};

@@ -20,12 +20,22 @@ import { buyableOrders, CALL, PUT, daysToExpiry } from "./orders.js";
 import { priceOrder, StakeTooSmall, type OrderEconomics } from "./pricing.js";
 import { spotPrice } from "./market.js";
 
+/**
+ * Nothing on the book expresses what the Trader asked for.
+ *
+ * This becomes a NO_ORDER result, which a Trader reads as a market condition rather
+ * than a broken app -- so every message ends by naming when maker liquidity reloads.
+ * "Nothing found" leaves them refreshing; a time leaves them with something to do.
+ */
 export class NoSuitableOrder extends Error {
   constructor(readonly intent: TradeIntent, message: string) {
-    super(message);
+    super(`${message} ${RELOADS}`);
     this.name = "NoSuitableOrder";
   }
 }
+
+/** When makers repost. Worth saying every time there is nothing to sell. */
+const RELOADS = "Maker liquidity renews around 09:00 UTC.";
 
 /**
  * Choose the order that best matches the Trader's view.
@@ -180,7 +190,7 @@ export async function proposeTrade(
 ): Promise<{ proposal: TradeProposal; order: OrderWithSignature; economics: OrderEconomics }> {
   const orders = await buyableOrders();
   if (!orders.length)
-    throw new NoSuitableOrder(intent, "The order book is empty right now. Maker liquidity renews around 09:00 UTC.");
+    throw new NoSuitableOrder(intent, "The order book is empty right now.");
 
   return proposeOrder(intent, selectOrder(orders, intent));
 }

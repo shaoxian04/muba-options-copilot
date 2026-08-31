@@ -16,6 +16,9 @@
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
 import type { TradeProposal } from "@copilot/shared";
+// Type-only, so this does not become a runtime import cycle -- and so `practice.ts`
+// keeps an import graph with no signer in it.
+import type { PracticePosition } from "./practice.js";
 
 export interface Session {
   id: string;
@@ -30,6 +33,12 @@ export interface Session {
    * one Trader resolves to nothing in anyone else's Deck.
    */
   cardKey: Buffer;
+  /**
+   * Practice Runs, in memory. Never persisted and never mixed with real holdings:
+   * `GET /positions` labels every holding, and a Practice Run must never be presented
+   * in a way that could be mistaken for one (ADR-0003 keeps real money on the chain).
+   */
+  practice: PracticePosition[];
 }
 
 const sessions = new Map<string, Session>();
@@ -50,11 +59,16 @@ export function getSession(id = "default"): Session {
       proposals: new Map(),
       cards: new Map(),
       cardKey: randomBytes(32),
+      practice: [],
     };
     sessions.set(id, s);
   }
   return s;
 }
+
+/** The session named by an unauthenticated `x-session-id` header -- see the note above. */
+export const sessionFor = (headers: Record<string, unknown>): Session =>
+  getSession(typeof headers["x-session-id"] === "string" ? (headers["x-session-id"] as string) : "default");
 
 export const remainingBudget = (s: Session): number => Math.max(0, s.riskBudgetUsdc - s.spentUsdc);
 

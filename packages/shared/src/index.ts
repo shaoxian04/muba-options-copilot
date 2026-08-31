@@ -162,6 +162,80 @@ export const Deck = z.object({
 });
 export type Deck = z.infer<typeof Deck>;
 
+/**
+ * One thing a Trader holds, real or practised.
+ *
+ * `kind` is mandatory and first, because the single rule the board must never break is
+ * that a Practice Run is never presented in a way that could be mistaken for a real
+ * holding. A holding that reached the surface without a label would be exactly that.
+ *
+ * Real holdings are read from the chain on every request -- there is no `positions`
+ * table and no balance cache, ever (ADR-0003). Practice holdings live in the session's
+ * memory and need not survive a restart.
+ */
+export const Holding = z.object({
+  kind: z.enum(["REAL", "PRACTICE"]),
+  strike: Figure,
+  contracts: Figure,
+  /** What was paid. Zero for a Practice Run -- it is what the Trader would have paid. */
+  premiumUsdc: Figure,
+  maxLossUsdc: Figure,
+  breakevenPrice: Figure,
+  /** The fixed moment it ends, so the surface can draw a countdown rather than a date. */
+  expiry: Figure,
+  /** When it was opened, so a time bar knows how much of the life has drained. */
+  openedAt: Figure,
+  /**
+   * What it is worth right now at live spot. An observation, not a Forecast: it is the
+   * intrinsic value the contract would settle at if the market stopped moving.
+   * Null when the chain did not give enough to derive one -- never a guess.
+   */
+  currentValueUsdc: Figure.nullable(),
+  payoutAsset: z.enum(["USDC", "WETH"]),
+  direction: z.enum(["UP", "DOWN"]),
+});
+export type Holding = z.infer<typeof Holding>;
+
+/**
+ * What POST /propose returns: a result the surface renders against, not an error to
+ * interpret. All three are ordinary outcomes of asking a live market for a trade.
+ *
+ * VETO exists in this contract before its producer does. The Review Agent is a Python
+ * service that has not been started (ADR-0007), so it is stubbed as always-agreeing and
+ * VETO is reachable in development through a fixture -- which lets the halt states be
+ * built and tested without waiting on another team.
+ *
+ * A VETO stops the flow. The absence of one authorises nothing: every hard check runs
+ * regardless of what the Review Agent said (ADR-0006).
+ */
+export const ProposeResult = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("PROPOSAL"),
+    proposal: TradeProposal,
+    proposalId: z.string(),
+    remainingUsdc: z.number(),
+  }),
+  z.object({
+    kind: z.literal("VETO"),
+    /** What the Trade Agent understood. */
+    tradeIntent: TradeIntent,
+    /** What the Review Agent understood, reading the Trader independently. */
+    reviewIntent: TradeIntent,
+    /** Where the two readings disagree, so a Trader sees why rather than "something went wrong". */
+    clashingFields: z.array(z.string()),
+  }),
+  z.object({
+    kind: z.literal("NO_ORDER"),
+    /**
+     * Read by a Trader when no maker is quoting what they asked for. It has to read as
+     * a market condition rather than a broken app, and it says when maker liquidity
+     * reloads so there is something to act on.
+     */
+    message: z.string(),
+  }),
+]);
+export type ProposeResult = z.infer<typeof ProposeResult>;
+
 /** Router output -- see Q14. TRADE_INTENT has no access to the analysis module (ADR-0005). */
 export const RouterResult = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("TRADE_INTENT"), intent: TradeIntent }),

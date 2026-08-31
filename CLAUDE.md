@@ -16,10 +16,13 @@ Two contexts: the **Copilot** (a sentence becomes an option Position) and **Liqu
 ## Repository status
 
 The SDK integration and the backend API are built and verified against mainnet: order
-selection, proposal, execution, Risk Budget, server-side proposal store. **No frontend exists
-yet** — `apps/web` holds only a throwaway prototype. **No tests exist yet.** The three agents
-(Trade, Review, Strategy) are a separate Python service that has not been started. Cover has a
-glossary and an ADR but no code.
+selection, proposal, execution, Risk Budget, server-side proposal store. The Deck backend is
+built and tested (issues #3-#8): `GET /deck`, Implied Chance, the `cardRef` indirection,
+`PROPOSAL | VETO | NO_ORDER`, and `POST /practice`. **No frontend exists yet** — `apps/web`
+holds only a throwaway prototype (issues #9-#14). Vitest is established with the Thetanuts
+client stubbed at its module boundary; there are no React tests, deliberately. The three
+agents (Trade, Review, Strategy) are a separate Python service that has not been started —
+the Review Agent is stubbed as always-agreeing. Cover has a glossary and an ADR but no code.
 
 Source lives in `apps/api` (backend + scripts), `packages/shared` (zod schemas shared across
 the stack), `apps/web` (frontend, empty).
@@ -34,7 +37,8 @@ the stack), `apps/web` (frontend, empty).
 | Fill CLI (live) | `npm run fill -- --live` | **Spends real USDC on mainnet** |
 | Wallet | `npm run wallet -- new` / `npm run wallet` | Create / check the disposable wallet |
 | Prototype | `npm run prototype` | Opens the throwaway design prototype |
-| Tests | — | None yet. Issue #1 introduces Vitest |
+| Tests | `npm test` | Vitest. No network, no chain, no wallet |
+| Typecheck | `npm run typecheck` | |
 
 Setup: `npm install`, then `cp .env.example .env` and fill in `THETANUTS_RPC_URL`. The public
 Base endpoint throttles and the failures look exactly like bugs in your own code — use a real
@@ -64,8 +68,15 @@ These are needed on every task. Violating one silently breaks the product's cent
   state, not a cache. (ADR-0003)
 - **A Forecast never appears beside a Max Loss** or inside a confirmation. Implied Move and
   Implied Chance are observations, not opinions, and may appear anywhere. (ADR-0005)
-- **One pricing path.** The Deck and the Trade Proposal must come from the same
-  `previewFillOrder` call, or a Trader is shown one price and filled at another. (Issue #1)
+- **One pricing path.** The Deck and the Trade Proposal both come from `priceOrder` in
+  `apps/api/src/thetanuts/pricing.ts`. Nothing else may derive option economics, or a Trader
+  is shown one price and filled at another. (Issue #1)
+- **The server formats every number.** Figures cross the wire as `{ value, display }`. The
+  frontend renders `display` verbatim — a `toFixed` in React undoes ADR-0006 invisibly.
+- **A cardRef selects; it never supplies a value.** The Order is re-fetched off the live book
+  and every number re-derived, so an override passes every check an agent-chosen Card does.
+- **Practice can never spend.** `/practice` is a separate route, not a flag, and its module
+  imports nothing that can sign. A test walks the import graph. (Issue #8)
 - **The book has one door.** Everything reaches Orders through the single buyable filter, where
   ADR-0002 is enforced. Nothing else fetches orders directly.
 - **Cover only for single-collateral Loans.** Refuse anything else and say why — the liquidation

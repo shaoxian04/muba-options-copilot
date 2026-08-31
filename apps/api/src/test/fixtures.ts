@@ -146,3 +146,42 @@ export function calculatePayout(args: {
   // 8-dec price * 6-dec contracts -> 6-dec collateral
   return (intrinsic8 * args.numContracts) / 100_000_000n;
 }
+
+/**
+ * A Position as `getUserPositionsFromIndexer` returns it.
+ *
+ * Shaped from the SDK's own `Position` declaration. Nobody has held one of these on
+ * mainnet yet, so the units here are the declaration's claim rather than an observation
+ * -- if the board ever reads wrong against a real holding, start by doubting this.
+ */
+export function makePosition(spec: {
+  strike: number;
+  contracts: number;
+  perContract: number;
+  days: number;
+  isCall?: boolean;
+  side?: "buyer" | "seller";
+  currentValue?: number;
+}) {
+  const { strike, contracts, perContract, days, isCall = false, side = "buyer", currentValue } = spec;
+  return {
+    id: `position-${strike}`,
+    optionAddress: "0x00000000000000000000000000000000000000FF",
+    side,
+    amount: BigInt(Math.round(contracts * 1e6)),
+    entryPrice: BigInt(Math.round(contracts * perContract * 1e6)),
+    ...(currentValue === undefined ? {} : { currentValue: BigInt(Math.round(currentValue * 1e6)) }),
+    pnl: 0n,
+    option: {
+      underlying: WETH_ADDRESS,
+      collateral: USDC_ADDRESS,
+      strikes: [price8(strike)],
+      expiry: expiryAt(days),
+      optionType: isCall ? 0 : 1,
+    },
+    status: "open",
+    entryTimestamp: BigInt(Math.floor(NOW / 1000)),
+    collateralDecimals: 6,
+    collateralSymbol: "USDC",
+  };
+}

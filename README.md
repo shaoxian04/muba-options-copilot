@@ -37,13 +37,28 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 | `GET /book` | no | spot, how many options are buyable, the Implied Move |
 | `GET /session` | no | Risk Budget and what is left of it |
 | `POST /session/budget` | no | set the Risk Budget |
-| `POST /propose` | **no** | TradeIntent in, TradeProposal out: premium, exact Max Loss, breakeven, Settlement Scenarios. Prices a real order, signs nothing. |
+| `GET /deck` | no | every Order buyable right now for one direction and one expiry, as Cards. `?direction=DOWN\|UP&horizonDays=1\|2\|3&sizeUsdc=n` |
+| `POST /propose` | **no** | TradeIntent in, `PROPOSAL \| VETO \| NO_ORDER` out. Prices a real order, signs nothing. Takes an optional `cardRef`. |
+| `POST /practice` | **no** | opens a simulated Position from a `proposalId`. No token, no Risk Budget, no signer in reach. |
 | `POST /fill` | **yes** | takes a proposalId from `/propose` and buys it |
-| `GET /positions` | no | read from the chain, never from the database |
+| `GET /positions` | no | the board: real holdings read from the chain plus this session's Practice Runs, each labelled |
 
 `/propose` is what fills the confirmation card; `/fill` is what the button does. The chosen
 order is held server-side and only a `proposalId` goes out, so no caller can ask us to fill
 an order we never priced.
+
+Every number a Trader reads crosses the wire as `{ value, display }` -- formatted once, on
+the server. The frontend renders `display` verbatim and never formats or recomputes; if it
+ever does, ADR-0006 has been undone in the least visible place in the codebase.
+
+A `cardRef` works the same way a `proposalId` does: it is a capability, not a label. It
+SELECTS an Order and never supplies a value -- the server re-fetches that Order off the live
+book and re-derives every number, so an override passes exactly the checks an agent-chosen
+Card does. No maker address, nonce or signature ever reaches the browser.
+
+`/practice` is a distinct route rather than a flag on `/fill`, because a boolean that
+switches a money route into a non-money route fails open under a typo or a merge. Its module
+imports nothing that can sign, and a test walks the import graph to keep it that way.
 
 This process holds a funded key, so it is locked down by default: it binds to **loopback**,
 CORS is an explicit allowlist (never `origin: true`), and `/fill` requires
@@ -72,12 +87,23 @@ The reasoning behind this project is written down, not assumed:
 apps/web              Next.js frontend (UI only)
 apps/api
   src/thetanuts/
-    client.ts         one configured ThetanutsClient
+    units.ts          addresses and decimals -- no RPC, no key
+    client.ts         one configured ThetanutsClient. The seam the test suite stubs
+    market.ts         live spot, from the protocol's own market data
     orders.ts         which orders we may buy -- ADR-0002 enforced here, once
-    propose.ts        TradeIntent -> TradeProposal (all numbers from the SDK)
+    pricing.ts        an Order + a stake -> its economics. THE one pricing path
+    implied-chance.ts the market's own probability of finishing in the money. Pure
+    deck.ts           a Deck of Cards, for one direction and one expiry
+    propose.ts        selects an Order, then calls pricing.ts. Derives nothing itself
     execute.ts        the only module that spends money
-  src/server.ts       Fastify API -- the only thing the browser talks to
-  src/sessions.ts     Risk Budget + server-side proposal store
+  src/agents/
+    review.ts         the Review Agent, stubbed. It may only veto, never authorise
+  src/app.ts          the Fastify routes -- the only thing the browser talks to
+  src/server.ts       binds the port. Importing app.ts opens no socket
+  src/practice.ts     POST /practice, in a module with no signer in its import graph
+  src/format.ts       every number becomes a string here, and nowhere else
+  src/sessions.ts     Risk Budget + the server-side proposal and Card stores
+  src/test/           fixtures and the stubbed client. No network, no chain, no wallet
   src/scripts/
     explore.ts        read-only diagnostic
     fill.ts           thin CLI over propose + execute
@@ -89,10 +115,15 @@ packages/shared       zod schemas -- the TradeIntent wall from ADR-0001
 
 - [x] SDK integration: order selection, proposal, execution modules
 - [x] Backend API: /propose, /fill, /book, /session
+- [x] Vitest, with the Thetanuts client stubbed at its module boundary
+- [x] One pricing path: the Deck and the Trade Proposal derive from the same call
+- [x] Implied Chance
+- [x] `GET /deck` and the `cardRef` indirection
+- [x] `PROPOSAL | VETO | NO_ORDER`, with the Review Agent stubbed
+- [x] `POST /practice` and the merged board
+- [ ] The frontend. `apps/web` is still only the prototype (issues #9-#14)
 - [ ] First real mainnet fill
 - [ ] Trade Intent extraction
-- [ ] Confirmation card with exact Max Loss
-- [ ] Positions panel
 - [ ] RFQ fallback when the book is empty
 - [ ] News analysis
 
