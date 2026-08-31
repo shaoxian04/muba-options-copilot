@@ -27,6 +27,7 @@ test("synthesizeAnswer returns the model's answer for market-only context", asyn
   assert.equal(answer, "PEPE is at $0.00001, up 2.1% over 24h.");
   assert.match(capturedUser, /Real current market data/);
   assert.match(capturedUser, /what's PEPE's current price\?/);
+  assert.match(capturedUser, /Question:\n"""\n/);
 });
 
 test("synthesizeAnswer says plainly that nothing was gathered when context is empty", async () => {

@@ -89,6 +89,7 @@ export type ChatQuery = z.infer<typeof ChatQuery>;
 export const CoinAskResult = z.object({
   symbol: z.string(),
   answer: z.string().optional(),
+  disclaimer: z.string().optional(),
   market: MarketData.optional(),
   news: NewsAnalysis.optional(),
   price: PricePrediction.optional(),

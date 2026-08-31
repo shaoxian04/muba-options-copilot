@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { extractChatQuery, answerQuestion, IncompleteQuestion } from "./ask.js";
 import type { AgentCreateFn } from "./agent.js";
 import type { MarketDataDeps, CoinGeckoMarket } from "./marketData.js";
+import { FORECAST_DISCLAIMER } from "@copilot/shared";
 
 function jsonCreate(payload: unknown): AgentCreateFn {
   return async () => ({ content: [{ type: "text", text: JSON.stringify(payload) }] });
@@ -94,7 +95,8 @@ test("answerQuestion runs only the requested analysis, plus the answer synthesis
   assert.equal(results.ETH.answer, "ETH news is steady this week.");
   assert.equal(results.ETH.price, undefined);
   assert.equal(results.ETH.riskBenefit, undefined);
-  assert.equal(results.ETH.market, undefined);
+  assert.equal(results.ETH.market?.price, 2451);
+  assert.equal(results.ETH.disclaimer, FORECAST_DISCLAIMER);
 });
 
 test("answerQuestion answers a 'market' question with real data alone -- no news/price/risk-benefit call", async () => {
@@ -126,6 +128,7 @@ test("answerQuestion answers a 'market' question with real data alone -- no news
   assert.equal(results.ETH.news, undefined);
   assert.equal(results.ETH.price, undefined);
   assert.equal(results.ETH.riskBenefit, undefined);
+  assert.equal(results.ETH.disclaimer, undefined);
 });
 
 test("answerQuestion returns partial success when one of several coins fails", async () => {
@@ -166,4 +169,63 @@ test("answerQuestion propagates IncompleteQuestion instead of swallowing it into
     () => answerQuestion("will it go down or drop?", { create, marketData: workingMarketDataDeps }),
     IncompleteQuestion
   );
+});
+
+test("extractChatQuery requires a horizon when 'price' or 'risk-benefit' is requested, even with a coin named", async () => {
+  const create = jsonCreate({ coins: ["ETH"], horizon: "", analyses: ["price"] });
+  await assert.rejects(() => extractChatQuery("will ETH go up?", create), (e: unknown) => {
+    assert.ok(e instanceof IncompleteQuestion);
+    assert.match((e as Error).message, /timeframe/);
+    return true;
+  });
+});
+
+test("answerQuestion runs price and risk-benefit together, attaches market data and the Forecast disclaimer", async () => {
+  const create: AgentCreateFn = async (params) => {
+    if (params.system.includes("extract structured information"))
+      return {
+        content: [{ type: "text", text: JSON.stringify({ coins: ["ETH"], horizon: "7d", analyses: ["price", "risk-benefit"] }) }],
+      };
+    if (params.system.includes("invent plausible"))
+      return {
+        content: [
+          { type: "text", text: JSON.stringify({ headlines: [{ text: "ETH steady", sentiment: "neutral", source: "simulated" }] }) },
+        ],
+      };
+    if (params.system.includes("speculative price prediction"))
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              direction: "up",
+              predictedRange: { low: 2300, high: 2600 },
+              confidence: "medium",
+              rationale: "Momentum looks positive.",
+            }),
+          },
+        ],
+      };
+    if (params.system.includes("qualitative risk/benefit view"))
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              upside: "Could see a move toward resistance if sentiment holds.",
+              downside: "Could pull back toward recent lows on any negative catalyst.",
+            }),
+          },
+        ],
+      };
+    return { content: [{ type: "text", text: JSON.stringify({ answer: "ETH looks modestly bullish with a two-sided risk picture." }) }] };
+  };
+
+  const results = await answerQuestion("will ETH go up, and what's the risk?", { create, marketData: workingMarketDataDeps });
+
+  assert.equal(results.ETH.market?.price, 2451);
+  assert.ok(results.ETH.price);
+  assert.ok(results.ETH.riskBenefit);
+  assert.equal(results.ETH.disclaimer, FORECAST_DISCLAIMER);
+  assert.equal(results.ETH.answer, "ETH looks modestly bullish with a two-sided risk picture.");
 });

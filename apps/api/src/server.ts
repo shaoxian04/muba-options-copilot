@@ -244,10 +244,12 @@ app.get("/forecast/risk-benefit", { config: COST_ROUTE_LIMIT }, async (req, repl
 
 /**
  * Free-text entry point: extracts which coin(s), horizon, and analyses a question is
- * asking for, then runs the same read-only pipeline as the routes above, once per coin.
- * One coin failing does not fail the others -- see CoinAskResult. Token-gated and
- * rate-limited like every other /forecast/* route; a single question can trigger
- * several real AI calls (one extraction, then per coin per requested analysis).
+ * asking for, then runs only the existing analyses each question actually calls for,
+ * once per coin, and finishes with one synthesized answer grounded in whatever real
+ * data was gathered. One coin failing does not fail the others -- see CoinAskResult.
+ * Token-gated and rate-limited like every other /forecast/* route; a single question
+ * can trigger several real AI calls per coin (extraction once, then up to one call per
+ * requested analysis, plus one final answer-synthesis call).
  */
 app.post("/forecast/ask", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
   if (!requireToken(req, reply)) return;

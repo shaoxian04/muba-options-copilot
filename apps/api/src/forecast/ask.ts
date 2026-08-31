@@ -4,7 +4,7 @@
  * then synthesizes one final answer per coin from the original question plus whatever
  * real data was gathered -- see synthesizeAnswer in answer.ts.
  */
-import { ChatQuery, CoinAskResult, type MarketData, type MarketScenario } from "@copilot/shared";
+import { ChatQuery, CoinAskResult, FORECAST_DISCLAIMER, type MarketData, type MarketScenario } from "@copilot/shared";
 import { callAgentForJson, type AgentCreateFn } from "./agent.js";
 import { buildScenario } from "./scenario.js";
 import { fetchMarketData, type MarketDataDeps } from "./marketData.js";
@@ -32,7 +32,11 @@ export async function extractChatQuery(question: string, create?: AgentCreateFn)
     create
   );
 
-  if (result.coins.length === 0) throw new IncompleteQuestion("Please specify which coin(s) you're asking about.");
+  const missing: string[] = [];
+  if (result.coins.length === 0) missing.push("which coin(s) you're asking about");
+  const needsHorizon = result.analyses.includes("price") || result.analyses.includes("risk-benefit");
+  if (needsHorizon && !result.horizon.trim()) missing.push("what timeframe you mean");
+  if (missing.length > 0) throw new IncompleteQuestion(`Please specify ${missing.join(" and ")}.`);
 
   return result;
 }
@@ -55,8 +59,7 @@ async function answerForCoin(
     marketData = await fetchMarketData(coin, deps?.marketData);
   }
 
-  const result: CoinAskResult = { symbol: marketData.symbol };
-  if (query.analyses.includes("market")) result.market = marketData;
+  const result: CoinAskResult = { symbol: marketData.symbol, market: marketData };
   if (query.analyses.includes("news") && scenario) result.news = await analyzeNews(scenario, deps?.create);
   if (query.analyses.includes("price") && scenario) result.price = await predictPrice(scenario, deps?.create);
   if (query.analyses.includes("risk-benefit") && scenario)
@@ -68,6 +71,7 @@ async function answerForCoin(
     { market: marketData, news: result.news, price: result.price, riskBenefit: result.riskBenefit },
     deps?.create
   );
+  if (result.news || result.price || result.riskBenefit) result.disclaimer = FORECAST_DISCLAIMER;
 
   return result;
 }
