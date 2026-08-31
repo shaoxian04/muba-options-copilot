@@ -152,7 +152,8 @@ export async function buildApp(): Promise<FastifyInstance> {
    * bar would be a number the server never vouched for, sitting directly beside a Max
    * Loss (ADR-0006).
    */
-  app.get("/session", async (req) => {
+  app.get("/session", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
     const s = sessionFor(req.headers);
     const remaining = remainingBudget(s);
     return {
@@ -168,6 +169,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   app.post("/session/budget", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
     const { riskBudgetUsdc } = (req.body ?? {}) as { riskBudgetUsdc?: number };
     if (typeof riskBudgetUsdc !== "number" || riskBudgetUsdc <= 0)
       return reply.code(400).send({ error: "riskBudgetUsdc must be a positive number" });
@@ -282,12 +284,24 @@ export async function buildApp(): Promise<FastifyInstance> {
     if (!found)
       return reply.code(410).send({ error: "That quote has expired. Prices move -- ask for a fresh one." });
 
+    // Reserve the spend and consume the proposal SYNCHRONOUSLY, before the await below.
+    // Node has no threads, so nothing can interleave between this check and this mutation --
+    // that's what makes it atomic. Doing this after the await (the old code) left a window
+    // where two concurrent /fill calls could both pass the budget check before either one's
+    // spend was recorded.
+    const remaining = remainingBudget(s);
+    if (found.proposal.maxLossUsdc > remaining)
+      return reply.code(403).send({
+        error: `This trade risks $${found.proposal.maxLossUsdc.toFixed(2)} but only $${remaining.toFixed(2)} of the Risk Budget remains.`,
+      });
+    s.proposals.delete(proposalId);
+    s.spentUsdc += found.proposal.maxLossUsdc;
+
     try {
-      const result = await executeFill(found.proposal, found.order, remainingBudget(s));
-      s.spentUsdc += found.proposal.maxLossUsdc;
-      s.proposals.delete(proposalId);
+      const result = await executeFill(found.proposal, found.order, remainingBudget(s) + found.proposal.maxLossUsdc);
       return { ...result, remainingUsdc: remainingBudget(s) };
     } catch (e: any) {
+      s.spentUsdc -= found.proposal.maxLossUsdc; // the fill never happened -- release the reservation
       if (e instanceof RiskBudgetExceeded) return reply.code(403).send({ error: e.message });
       if (e instanceof UnsafeOrder) return reply.code(403).send({ error: e.message });
       return reply.code(502).send({ error: e?.message ?? "Fill failed" });
