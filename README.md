@@ -19,6 +19,9 @@ You need a Base RPC key (alchemy.com → create app → Base Mainnet). The publi
 throttles and the failures look like bugs in your own code.
 
 ```bash
+npm run wallet -- new          # generate a disposable wallet; fund it ON BASE
+npm run wallet                 # check it received USDC (to trade) and ETH (for gas)
+npm run dev                    # start the API on :3001
 npm run explore                # read-only. No wallet needed. Verifies the connection.
 npm run fill                   # dry run: previews a real order, signs nothing
 npm run fill -- --live         # SPENDS REAL USDC on Base mainnet
@@ -26,6 +29,21 @@ npm run fill -- --live         # SPENDS REAL USDC on Base mainnet
 
 For a wallet: `npm i -g @thetanuts-finance/cli && thetanuts wallet create`. Use a **disposable**
 one and fund it with ~3 USDC plus a few cents of ETH for gas.
+
+## API
+
+| Route | Spends money? | What it does |
+|---|---|---|
+| `GET /book` | no | spot, how many options are buyable, the Implied Move |
+| `GET /session` | no | Risk Budget and what is left of it |
+| `POST /session/budget` | no | set the Risk Budget |
+| `POST /propose` | **no** | TradeIntent in, TradeProposal out: premium, exact Max Loss, breakeven, Settlement Scenarios. Prices a real order, signs nothing. |
+| `POST /fill` | **yes** | takes a proposalId from `/propose` and buys it |
+| `GET /positions` | no | read from the chain, never from the database |
+
+`/propose` is what fills the confirmation card; `/fill` is what the button does. The chosen
+order is held server-side and only a `proposalId` goes out, so no caller can ask us to fill
+an order we never priced.
 
 ## Design
 
@@ -49,15 +67,19 @@ apps/api
     orders.ts         which orders we may buy -- ADR-0002 enforced here, once
     propose.ts        TradeIntent -> TradeProposal (all numbers from the SDK)
     execute.ts        the only module that spends money
+  src/server.ts       Fastify API -- the only thing the browser talks to
+  src/sessions.ts     Risk Budget + server-side proposal store
   src/scripts/
     explore.ts        read-only diagnostic
     fill.ts           thin CLI over propose + execute
+    wallet.ts         create / check the disposable wallet
 packages/shared       zod schemas -- the TradeIntent wall from ADR-0001
 ```
 
 ## Status
 
 - [x] SDK integration: order selection, proposal, execution modules
+- [x] Backend API: /propose, /fill, /book, /session
 - [ ] First real mainnet fill
 - [ ] Trade Intent extraction
 - [ ] Confirmation card with exact Max Loss
