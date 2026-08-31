@@ -32,9 +32,10 @@ const setupHint = envFileMissing
 export function requireRpc(): string {
   const rpc = process.env.THETANUTS_RPC_URL;
   if (!rpc || rpc.includes("YOUR_KEY")) {
-    console.error(`\n  THETANUTS_RPC_URL is not set.${setupHint}`);
-    console.error("  alchemy.com -> create app -> Base Mainnet -> paste the URL\n");
-    process.exit(1);
+    throw new Error(
+      `\n  THETANUTS_RPC_URL is not set.${setupHint}\n` +
+        "  alchemy.com -> create app -> Base Mainnet -> paste the URL\n"
+    );
   }
   if (rpc.includes("mainnet.base.org"))
     console.warn("  WARNING: public Base endpoint. It throttles, and it looks exactly like a bug in your code.\n");

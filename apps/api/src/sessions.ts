@@ -14,6 +14,7 @@
  * here is money -- positions and balances are always read from the chain.
  */
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { z } from "zod";
 import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
 import type { TradeProposal } from "@copilot/shared";
 // Type-only, so this does not become a runtime import cycle -- and so `practice.ts`
@@ -76,6 +77,14 @@ export function setRiskBudget(s: Session, usdc: number): void {
   if (usdc < s.spentUsdc) throw new Error(`Already spent $${s.spentUsdc.toFixed(2)} this session.`);
   s.riskBudgetUsdc = usdc;
 }
+
+/**
+ * Runtime shape for `/fill` and `/practice` request bodies. A bare `as { proposalId?:
+ * string }` type assertion is compile-time only -- a JSON number, boolean, or object
+ * passes it unchanged and then throws inside `Buffer.from()` in `constantTimeFind`
+ * below. Validate with this before ever touching a proposal id.
+ */
+export const ProposalIdBody = z.object({ proposalId: z.string() });
 
 /** Proposals and Cards are priced against a live book and go stale fast. */
 const PROPOSAL_TTL_MS = 60_000;

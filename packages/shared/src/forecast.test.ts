@@ -1,6 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Headline, MarketData, MarketScenario, NewsAnalysis, PricePrediction, RiskBenefitView } from "./forecast.js";
+import {
+  Headline,
+  MarketData,
+  MarketScenario,
+  NewsAnalysis,
+  PricePrediction,
+  RiskBenefitView,
+  ChatQuery,
+  CoinAskResult,
+} from "./forecast.js";
 
 const validMarketData = {
   symbol: "ETH",
@@ -89,4 +98,77 @@ test("RiskBenefitView requires a groundedOn MarketData object", () => {
     generatedAt: new Date().toISOString(),
   });
   assert.equal(result.success, false);
+});
+
+test("ChatQuery accepts a multi-coin extraction with per-coin horizon and analyses", () => {
+  const result = ChatQuery.safeParse({
+    requests: [
+      { coin: "ETH", horizon: "2 weeks", analyses: ["news", "price"] },
+      { coin: "BTC", horizon: "", analyses: ["market"] },
+    ],
+    isComparison: false,
+  });
+  assert.equal(result.success, true);
+});
+
+test("ChatQuery accepts an empty requests array (extraction found no coin)", () => {
+  const result = ChatQuery.safeParse({ requests: [], isComparison: false });
+  assert.equal(result.success, true);
+});
+
+test("ChatQuery rejects an unknown analysis type", () => {
+  const result = ChatQuery.safeParse({
+    requests: [{ coin: "ETH", horizon: "7d", analyses: ["sentiment"] }],
+    isComparison: false,
+  });
+  assert.equal(result.success, false);
+});
+
+test("CoinAskResult accepts a successful per-coin result with a subset of analyses", () => {
+  const result = CoinAskResult.safeParse({
+    symbol: "ETH",
+    news: {
+      symbol: "ETH",
+      horizon: "7d",
+      overallSentiment: "bullish",
+      summary: "Leaning positive.",
+      headlines: [],
+      source: "simulated",
+      disclaimer: "opinion",
+      generatedAt: new Date().toISOString(),
+    },
+  });
+  assert.equal(result.success, true);
+});
+
+test("CoinAskResult accepts a failed per-coin result with only an error", () => {
+  const result = CoinAskResult.safeParse({ symbol: "XYZABC", error: "Unrecognized symbol: XYZABC" });
+  assert.equal(result.success, true);
+});
+
+test("ChatQuery accepts the 'market' analysis category and isComparison flag", () => {
+  const result = ChatQuery.safeParse({
+    requests: [{ coin: "PEPE", horizon: "", analyses: ["market"] }],
+    isComparison: true,
+  });
+  assert.equal(result.success, true);
+  assert.deepEqual(result.success && result.data.isComparison, true);
+});
+
+test("ChatQuery defaults isComparison to false when omitted", () => {
+  const result = ChatQuery.safeParse({ requests: [{ coin: "ETH", horizon: "", analyses: ["market"] }] });
+  assert.equal(result.success, true);
+  assert.equal(result.success && result.data.isComparison, false);
+});
+
+test("CoinAskResult round-trips a synthesized answer and raw market data", () => {
+  const input = {
+    symbol: "PEPE",
+    answer: "PEPE is currently trading at $0.00001, up 2% over the last 24 hours.",
+    market: validMarketData,
+  };
+  const result = CoinAskResult.safeParse(input);
+  assert.equal(result.success, true);
+  assert.equal(result.success && result.data.answer, input.answer);
+  assert.deepEqual(result.success && result.data.market, validMarketData);
 });

@@ -13,3 +13,5 @@ out/
 *.key
 wallet.json
 config.json
+.claude
+.worktrees/
