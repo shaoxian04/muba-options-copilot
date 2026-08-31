@@ -46,9 +46,12 @@ order is held server-side and only a `proposalId` goes out, so no caller can ask
 an order we never priced.
 
 This process holds a funded key, so it is locked down by default: it binds to **loopback**,
-CORS is an explicit allowlist (never `origin: true`), and `/fill` requires
-`Authorization: Bearer $COPILOT_API_TOKEN` whenever that is set. Do not bind it to `0.0.0.0`
-on shared WiFi -- anyone on the network could then spend from the wallet.
+CORS is an explicit allowlist (never `origin: true`), and `/fill`, `/propose`, and
+`/forecast/*` all require `Authorization: Bearer $COPILOT_API_TOKEN` whenever that is set --
+not just `/fill`. `/propose` and `/forecast/*` are also rate-limited (30/min per IP)
+regardless of the token, since they cost real Thetanuts/AI API usage even though they never
+move funds. Do not bind it to `0.0.0.0` on shared WiFi -- anyone on the network could then
+spend from the wallet, or run up your API bill.
 
 ## Design
 
@@ -94,7 +97,7 @@ packages/shared       zod schemas -- the TradeIntent wall from ADR-0001
 - [ ] Confirmation card with exact Max Loss
 - [ ] Positions panel
 - [ ] RFQ fallback when the book is empty
-- [ ] News analysis
+- [x] News analysis
 
 ## Next steps
 

@@ -10,25 +10,37 @@
  */
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
 import { TradeIntent } from "@copilot/shared";
+import { backendEndpoint } from "./env.js";
 import { getClient, canSign, fromPrice, fromUsdc } from "./thetanuts/client.js";
 import { buyableOrders, impliedVol, daysToExpiry, PUT } from "./thetanuts/orders.js";
 import { proposeTrade, NoSuitableOrder } from "./thetanuts/propose.js";
 import { executeFill, RiskBudgetExceeded, UnsafeOrder } from "./thetanuts/execute.js";
 import { getSession, remainingBudget, setRiskBudget, rememberProposal, recallProposal } from "./sessions.js";
+import { buildScenario } from "./forecast/scenario.js";
+import { analyzeNews } from "./forecast/news.js";
+import { predictPrice } from "./forecast/price.js";
+import { assessRiskBenefit } from "./forecast/riskBenefit.js";
+import { parseForecastQuery, forecastErrorStatus } from "./forecast/http.js";
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 
 /**
- * This process holds a funded key and exposes a route that spends money, so it is
- * locked down by default and opened deliberately.
+ * This process holds a funded key and exposes routes that spend money or cost real API
+ * credits (Thetanuts pricing calls, AI calls), so it is locked down by default and
+ * opened deliberately.
  *
  * - Bound to loopback unless HOST says otherwise. Binding to 0.0.0.0 on shared venue
- *   WiFi would let anyone on the network call /fill.
+ *   WiFi would let anyone on the network call these routes.
  * - CORS is an explicit allowlist, never `origin: true`. Reflecting any origin lets a
  *   malicious page the Trader happens to visit POST to localhost and spend their money.
- * - /fill additionally requires a bearer token whenever one is configured. A cross-site
- *   page cannot read it, so it defeats CSRF even if an origin check is misconfigured.
+ * - /fill, /propose, and /forecast/* additionally require a bearer token whenever one is
+ *   configured. A cross-site page cannot read it, so it defeats CSRF even if an origin
+ *   check is misconfigured.
+ * - /propose and /forecast/* are also rate-limited (per IP, regardless of the token),
+ *   since they cost real Thetanuts/AI API usage even though they never move funds --
+ *   the token alone doesn't bound cost if it leaks or is never set.
  */
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGIN ?? "http://localhost:3000")
   .split(",")
@@ -37,11 +49,15 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGIN ?? "http://localhost:3000")
 const API_TOKEN = process.env.COPILOT_API_TOKEN;
 
 await app.register(cors, { origin: ALLOWED_ORIGINS, credentials: false });
+await app.register(rateLimit, { global: false });
+
+/** Applied to routes that cost real Thetanuts/AI API usage, whether or not a token is set. */
+const COST_ROUTE_LIMIT = { rateLimit: { max: 30, timeWindow: "1 minute" } };
 
 const sessionOf = (req: { headers: Record<string, unknown> }) =>
   getSession(typeof req.headers["x-session-id"] === "string" ? (req.headers["x-session-id"] as string) : "default");
 
-/** Guards the routes that move money. No token configured means loopback-only trust. */
+/** Guards the routes that move money or cost real API credits. No token configured means loopback-only trust. */
 function requireToken(req: any, reply: any): boolean {
   if (!API_TOKEN) return true;
   const header = String(req.headers["authorization"] ?? "");
@@ -92,8 +108,11 @@ app.post("/session/budget", async (req, reply) => {
 /**
  * TradeIntent -> TradeProposal. Read-only: prices a real order, signs nothing.
  * The chosen order is kept server-side and only its proposal id goes out.
+ * Token-gated and rate-limited: it never moves funds, but every call is a real
+ * Thetanuts pricing request.
  */
-app.post("/propose", async (req, reply) => {
+app.post("/propose", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
+  if (!requireToken(req, reply)) return;
   const parsed = TradeIntent.safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: "Invalid trade intent", issues: parsed.error.issues });
 
@@ -153,10 +172,56 @@ app.get("/positions", async (req, reply) => {
   }
 });
 
+/**
+ * Read-only opinion surface -- ADR-0005. Never imported by /propose or /fill, and never
+ * imports from them. Every response is attributed opinion, not a trade input.
+ * Token-gated and rate-limited: never moves funds, but every call is a real AI API call
+ * (billed to the operator, not the caller).
+ */
+app.get("/forecast/news", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
+  if (!requireToken(req, reply)) return;
+  const parsed = parseForecastQuery((req.query ?? {}) as Record<string, unknown>);
+  if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
+  try {
+    const scenario = await buildScenario(parsed.symbol, parsed.horizon);
+    return await analyzeNews(scenario);
+  } catch (e) {
+    const { status, error } = forecastErrorStatus(e);
+    return reply.code(status).send({ error });
+  }
+});
+
+app.get("/forecast/price", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
+  if (!requireToken(req, reply)) return;
+  const parsed = parseForecastQuery((req.query ?? {}) as Record<string, unknown>);
+  if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
+  try {
+    const scenario = await buildScenario(parsed.symbol, parsed.horizon);
+    return await predictPrice(scenario);
+  } catch (e) {
+    const { status, error } = forecastErrorStatus(e);
+    return reply.code(status).send({ error });
+  }
+});
+
+app.get("/forecast/risk-benefit", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
+  if (!requireToken(req, reply)) return;
+  const parsed = parseForecastQuery((req.query ?? {}) as Record<string, unknown>);
+  if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
+  try {
+    const scenario = await buildScenario(parsed.symbol, parsed.horizon);
+    return await assessRiskBenefit(scenario);
+  } catch (e) {
+    const { status, error } = forecastErrorStatus(e);
+    return reply.code(status).send({ error });
+  }
+});
+
 const port = Number(process.env.PORT ?? 3001);
 const host = process.env.HOST ?? "127.0.0.1";
 
 await app.listen({ port, host });
+app.log.info(`endpoint: ${backendEndpoint()}`);
 app.log.info(`cors: ${ALLOWED_ORIGINS.join(", ")}`);
 app.log.info(`signer ${canSign() ? "attached" : "ABSENT -- /propose works, /fill will refuse"}`);
 
@@ -164,4 +229,11 @@ if (host !== "127.0.0.1" && host !== "localhost" && canSign() && !API_TOKEN)
   app.log.error(
     `REACHABLE ON THE NETWORK (${host}) with a funded signer and no COPILOT_API_TOKEN. ` +
     `Anyone who can reach this port can spend from the wallet, up to the Risk Budget.`
+  );
+
+if (host !== "127.0.0.1" && host !== "localhost" && !API_TOKEN)
+  app.log.warn(
+    `REACHABLE ON THE NETWORK (${host}) with no COPILOT_API_TOKEN. ` +
+    `/propose and /forecast/* are rate-limited (${COST_ROUTE_LIMIT.rateLimit.max}/min per IP) but still ` +
+    `callable by anyone who can reach this port, at your Thetanuts/AI API cost.`
   );
