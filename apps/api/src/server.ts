@@ -8,6 +8,7 @@
  * Nothing here talks to a model. The language layer sits in front of this and hands it a
  * TradeIntent that has already been validated -- see ADR-0001.
  */
+import { timingSafeEqual } from "node:crypto";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
@@ -58,11 +59,20 @@ const COST_ROUTE_LIMIT = { rateLimit: { max: 30, timeWindow: "1 minute" } };
 const sessionOf = (req: { headers: Record<string, unknown> }) =>
   getSession(typeof req.headers["x-session-id"] === "string" ? (req.headers["x-session-id"] as string) : "default");
 
-/** Guards the routes that move money or cost real API credits. No token configured means loopback-only trust. */
+/**
+ * Guards the routes that move money or cost real API credits. No token configured means
+ * loopback-only trust.
+ *
+ * Constant-time comparison, so response timing does not leak how much of the token was
+ * right -- the same reasoning as `recallProposal`'s proposal-id lookup in sessions.ts.
+ */
 function requireToken(req: any, reply: any): boolean {
   if (!API_TOKEN) return true;
   const header = String(req.headers["authorization"] ?? "");
-  if (header === `Bearer ${API_TOKEN}`) return true;
+  const expected = `Bearer ${API_TOKEN}`;
+  const a = Buffer.from(header);
+  const b = Buffer.from(expected);
+  if (a.length === b.length && timingSafeEqual(a, b)) return true;
   reply.code(401).send({ error: "Unauthorized" });
   return false;
 }
@@ -88,12 +98,14 @@ app.get("/book", async () => {
   };
 });
 
-app.get("/session", async (req) => {
+app.get("/session", async (req, reply) => {
+  if (!requireToken(req, reply)) return;
   const s = sessionOf(req as any);
   return { riskBudgetUsdc: s.riskBudgetUsdc, spentUsdc: s.spentUsdc, remainingUsdc: remainingBudget(s) };
 });
 
 app.post("/session/budget", async (req, reply) => {
+  if (!requireToken(req, reply)) return;
   const { riskBudgetUsdc } = (req.body ?? {}) as { riskBudgetUsdc?: number };
   if (typeof riskBudgetUsdc !== "number" || riskBudgetUsdc <= 0)
     return reply.code(400).send({ error: "riskBudgetUsdc must be a positive number" });
@@ -149,12 +161,24 @@ app.post("/fill", async (req, reply) => {
   if (!found)
     return reply.code(410).send({ error: "That quote has expired. Prices move -- ask for a fresh one." });
 
+  // Reserve the spend and consume the proposal SYNCHRONOUSLY, before the await below.
+  // Node has no threads, so nothing can interleave between this check and this mutation --
+  // that's what makes it atomic. Doing this after the await (the old code) left a window
+  // where two concurrent /fill calls could both pass the budget check before either one's
+  // spend was recorded.
+  const remaining = remainingBudget(s);
+  if (found.proposal.maxLossUsdc > remaining)
+    return reply.code(403).send({
+      error: `This trade risks $${found.proposal.maxLossUsdc.toFixed(2)} but only $${remaining.toFixed(2)} of the Risk Budget remains.`,
+    });
+  s.proposals.delete(proposalId);
+  s.spentUsdc += found.proposal.maxLossUsdc;
+
   try {
-    const result = await executeFill(found.proposal, found.order, remainingBudget(s));
-    s.spentUsdc += found.proposal.maxLossUsdc;
-    s.proposals.delete(proposalId);
+    const result = await executeFill(found.proposal, found.order, remainingBudget(s) + found.proposal.maxLossUsdc);
     return { ...result, remainingUsdc: remainingBudget(s) };
   } catch (e: any) {
+    s.spentUsdc -= found.proposal.maxLossUsdc; // the fill never happened -- release the reservation
     if (e instanceof RiskBudgetExceeded) return reply.code(403).send({ error: e.message });
     if (e instanceof UnsafeOrder) return reply.code(403).send({ error: e.message });
     return reply.code(502).send({ error: e?.message ?? "Fill failed" });
