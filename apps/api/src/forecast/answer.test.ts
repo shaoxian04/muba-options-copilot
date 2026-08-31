@@ -49,3 +49,30 @@ test("synthesizeAnswer refuses a response using the forbidden phrase 'max loss'"
     ForbiddenPhraseUsed
   );
 });
+
+test("synthesizeAnswer includes comparison context for other coins when provided", async () => {
+  let capturedUser = "";
+  const otherMarketData: MarketData = {
+    symbol: "SHIB",
+    price: 0.00000505,
+    priceSource: "coingecko",
+    change24h: -2.9,
+    high24h: 0.00000523,
+    low24h: 0.00000491,
+    volume24h: 77_000_000,
+    statsSource: "coingecko",
+    asOf: new Date().toISOString(),
+  };
+  const fakeCreate: AgentCreateFn = async (params) => {
+    capturedUser = params.messages[0].content;
+    return { content: [{ type: "text", text: JSON.stringify({ answer: "PEPE looks stronger than SHIB." }) }] };
+  };
+  await synthesizeAnswer(
+    "which is stronger, PEPE or SHIB?",
+    "PEPE",
+    { market: marketData, otherCoins: [{ symbol: "SHIB", market: otherMarketData }] },
+    fakeCreate
+  );
+  assert.match(capturedUser, /SHIB:/);
+  assert.match(capturedUser, /comparison/i);
+});
