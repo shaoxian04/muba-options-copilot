@@ -13,6 +13,7 @@
  * In memory for now. Per ADR-0003 the database is for the conversation, and nothing in
  * here is money -- positions and balances are always read from the chain.
  */
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
 import type { TradeProposal } from "@copilot/shared";
 
@@ -26,6 +27,11 @@ export interface Session {
 const sessions = new Map<string, Session>();
 const DEFAULT_BUDGET = Number(process.env.DEFAULT_RISK_BUDGET_USDC ?? 5);
 
+/**
+ * NOTE: session ids come from an unauthenticated `x-session-id` header, so a caller can
+ * name any session and use its Risk Budget. That is acceptable only because /fill is
+ * loopback-only and token-gated. If this is ever exposed, sessions need real auth.
+ */
 export function getSession(id = "default"): Session {
   let s = sessions.get(id);
   if (!s) {
@@ -45,18 +51,30 @@ export function setRiskBudget(s: Session, usdc: number): void {
 /** Proposals are priced against a live book and go stale fast. */
 const PROPOSAL_TTL_MS = 60_000;
 
+/**
+ * A proposal id is the ONLY thing /fill needs to spend money -- it is a capability, not
+ * a label. So it must be unguessable: `Date.now()` plus `Math.random()` is neither
+ * unpredictable nor uniform, and an attacker who reaches /fill could enumerate live
+ * proposals and buy one. randomUUID() is a CSPRNG.
+ */
 export function rememberProposal(s: Session, p: { proposal: TradeProposal; order: OrderWithSignature }): string {
-  const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const id = randomUUID();
   s.proposals.set(id, { ...p, at: Date.now() });
   for (const [k, v] of s.proposals) if (Date.now() - v.at > PROPOSAL_TTL_MS) s.proposals.delete(k);
   return id;
 }
 
+/** Constant-time lookup, so response timing does not leak how much of an id was right. */
 export function recallProposal(s: Session, id: string) {
-  const found = s.proposals.get(id);
-  if (!found) return undefined;
+  const key = [...s.proposals.keys()].find((k) => {
+    const a = Buffer.from(k);
+    const b = Buffer.from(id);
+    return a.length === b.length && timingSafeEqual(a, b);
+  });
+  const found = key ? s.proposals.get(key) : undefined;
+  if (!found || !key) return undefined;
   if (Date.now() - found.at > PROPOSAL_TTL_MS) {
-    s.proposals.delete(id);
+    s.proposals.delete(key);
     return undefined;
   }
   return found;
