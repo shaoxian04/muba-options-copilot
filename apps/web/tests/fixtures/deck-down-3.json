@@ -1,0 +1,13 @@
+{
+  "direction": "DOWN",
+  "horizonDays": 3,
+  "sizeUsdc": 2,
+  "spotUsd": {
+    "value": 2445.49,
+    "display": "$2,445.49"
+  },
+  "expiry": null,
+  "cards": [],
+  "gradientLegible": false,
+  "message": "No maker is quoting this right now. Maker liquidity renews around 09:00 UTC -- or ask for a different expiry."
+}

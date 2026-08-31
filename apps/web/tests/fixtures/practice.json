@@ -1,0 +1,37 @@
+{
+  "holding": {
+    "kind": "PRACTICE",
+    "strike": {
+      "value": 2360,
+      "display": "$2,360.00"
+    },
+    "contracts": {
+      "value": 0.961538,
+      "display": "0.961538"
+    },
+    "premiumUsdc": {
+      "value": 1.999999,
+      "display": "$2.00"
+    },
+    "maxLossUsdc": {
+      "value": 1.999999,
+      "display": "$2.00"
+    },
+    "breakevenPrice": {
+      "value": 2357.92,
+      "display": "$2,357.92"
+    },
+    "expiry": {
+      "value": 1768550400000,
+      "display": "16 Jan, 08:00 UTC"
+    },
+    "openedAt": {
+      "value": 1768478400000,
+      "display": "15 Jan, 12:00 UTC"
+    },
+    "currentValueUsdc": null,
+    "payoutAsset": "USDC",
+    "direction": "DOWN"
+  },
+  "remainingUsdc": 5
+}

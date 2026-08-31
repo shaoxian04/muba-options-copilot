@@ -1,0 +1,142 @@
+{
+  "direction": "DOWN",
+  "horizonDays": 1,
+  "sizeUsdc": 2,
+  "spotUsd": {
+    "value": 2445.49,
+    "display": "$2,445.49"
+  },
+  "expiry": {
+    "value": 1768550400000,
+    "display": "16 Jan, 08:00 UTC"
+  },
+  "cards": [
+    {
+      "cardRef": "card-0",
+      "strike": {
+        "value": 2440,
+        "display": "$2,440.00"
+      },
+      "perContractUsd": {
+        "value": 9.6,
+        "display": "$9.60"
+      },
+      "contracts": {
+        "value": 0.208333,
+        "display": "0.208333"
+      },
+      "premiumUsdc": {
+        "value": 1.999996,
+        "display": "$2.00"
+      },
+      "maxLossUsdc": {
+        "value": 1.999996,
+        "display": "$2.00"
+      },
+      "breakevenPrice": {
+        "value": 2430.4,
+        "display": "$2,430.40"
+      },
+      "impliedChance": {
+        "value": 0.46264436552635996,
+        "display": "46%"
+      },
+      "chanceLabel": "under even odds",
+      "chanceBand": 2,
+      "availableUsdc": {
+        "value": 500,
+        "display": "$500.00"
+      },
+      "expiry": {
+        "value": 1768550400000,
+        "display": "16 Jan, 08:00 UTC"
+      },
+      "payoutAsset": "USDC"
+    },
+    {
+      "cardRef": "card-1",
+      "strike": {
+        "value": 2445,
+        "display": "$2,445.00"
+      },
+      "perContractUsd": {
+        "value": 10.4,
+        "display": "$10.40"
+      },
+      "contracts": {
+        "value": 0.192307,
+        "display": "0.192307"
+      },
+      "premiumUsdc": {
+        "value": 1.999992,
+        "display": "$2.00"
+      },
+      "maxLossUsdc": {
+        "value": 1.999992,
+        "display": "$2.00"
+      },
+      "breakevenPrice": {
+        "value": 2434.6,
+        "display": "$2,434.60"
+      },
+      "impliedChance": {
+        "value": 0.5005710080395878,
+        "display": "50%"
+      },
+      "chanceLabel": "over even odds",
+      "chanceBand": 3,
+      "availableUsdc": {
+        "value": 500,
+        "display": "$500.00"
+      },
+      "expiry": {
+        "value": 1768550400000,
+        "display": "16 Jan, 08:00 UTC"
+      },
+      "payoutAsset": "USDC"
+    },
+    {
+      "cardRef": "card-2",
+      "strike": {
+        "value": 2450,
+        "display": "$2,450.00"
+      },
+      "perContractUsd": {
+        "value": 11.2,
+        "display": "$11.20"
+      },
+      "contracts": {
+        "value": 0.178571,
+        "display": "0.178571"
+      },
+      "premiumUsdc": {
+        "value": 1.999995,
+        "display": "$2.00"
+      },
+      "maxLossUsdc": {
+        "value": 1.999995,
+        "display": "$2.00"
+      },
+      "breakevenPrice": {
+        "value": 2438.8,
+        "display": "$2,438.80"
+      },
+      "impliedChance": {
+        "value": 0.5384152455414138,
+        "display": "54%"
+      },
+      "chanceLabel": "over even odds",
+      "chanceBand": 3,
+      "availableUsdc": {
+        "value": 500,
+        "display": "$500.00"
+      },
+      "expiry": {
+        "value": 1768550400000,
+        "display": "16 Jan, 08:00 UTC"
+      },
+      "payoutAsset": "USDC"
+    }
+  ],
+  "gradientLegible": false
+}

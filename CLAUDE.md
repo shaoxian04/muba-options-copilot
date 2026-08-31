@@ -16,13 +16,28 @@ Two contexts: the **Copilot** (a sentence becomes an option Position) and **Liqu
 ## Repository status
 
 The SDK integration and the backend API are built and verified against mainnet: order
-selection, proposal, execution, Risk Budget, server-side proposal store. **No frontend exists
-yet** — `apps/web` holds only a throwaway prototype. **No tests exist yet.** The three agents
-(Trade, Review, Strategy) are a separate Python service that has not been started. Cover has a
-glossary and an ADR but no code.
+selection, proposal, execution, Risk Budget, server-side proposal store. The Deck backend is
+built and tested (issues #3-#8): `GET /deck`, Implied Chance, the `cardRef` indirection,
+`PROPOSAL | VETO | NO_ORDER`, and `POST /practice`. **The trading surface is built**
+(issues #9-#14): the Deck, selection and override, the payoff strip, the commit bar, Practice
+Run, the board, and both halt states. The three agents (Trade, Review, Strategy) are a
+separate Python service that has not been started — the Review Agent is stubbed as
+always-agreeing, and the surface's only way to ask for a proposal is the seed prompts on the
+left. Cover has a glossary and an ADR but no code.
+
+**Forecast analysis** is built as three read-only routes (`GET /forecast/news|price|risk-benefit`)
+plus `npm run forecast`. It is opinion, quarantined from the trade flow by ADR-0005: nothing on
+the money path imports it, and no surface shows it beside a Max Loss. Its tests are written
+against `node:test` and run under `npm run test:node`, not Vitest.
+
+There are still no React component tests, deliberately. The frontend is held to its bar in a
+browser instead — Playwright and axe-core — and by two source-level checks that run under
+Vitest: `apps/web/tests/support/no-arithmetic.test.ts` fails if a component formats a number, and
+`apps/web/tests/support/ramp.test.ts` measures the Implied Chance palette against the same ΔE 8 bar
+red/green was held to and failed.
 
 Source lives in `apps/api` (backend + scripts), `packages/shared` (zod schemas shared across
-the stack), `apps/web` (frontend, empty).
+the stack), `apps/web` (the Next.js surface).
 
 ## Build / run / test
 
@@ -33,12 +48,23 @@ the stack), `apps/web` (frontend, empty).
 | Fill CLI (dry) | `npm run fill` | Previews a real order, signs nothing |
 | Fill CLI (live) | `npm run fill -- --live` | **Spends real USDC on mainnet** |
 | Wallet | `npm run wallet -- new` / `npm run wallet` | Create / check the disposable wallet |
+| Frontend | `npm run web` | Next.js on `localhost:3000`. Needs the API running |
+| Forecast CLI | `npm run forecast` | Read-only opinion. Costs a real AI API call |
 | Prototype | `npm run prototype` | Opens the throwaway design prototype |
-| Tests | — | None yet. Issue #1 introduces Vitest |
+| Tests | `npm test` | Vitest, then `node:test`, then Playwright. No network, no chain, no wallet |
+| Unit tests only | `npm run test:unit` | Vitest alone — seconds, no browser |
+| Forecast tests | `npm run test:node` | The `node:test` suites, under `tsx --test` |
+| Browser tests | `npm run test:e2e` | Playwright + axe. Builds the app first |
+| API fixtures | `npm run fixtures` | Regenerate what the browser suite stubs against |
+| Typecheck | `npm run typecheck` | Both workspaces |
 
 Setup: `npm install`, then `cp .env.example .env` and fill in `THETANUTS_RPC_URL`. The public
 Base endpoint throttles and the failures look exactly like bugs in your own code — use a real
-RPC key.
+RPC key. For the browser suite, `npx playwright install chromium` once.
+
+The browser suite stubs the API from `apps/web/tests/fixtures/`, which the real Fastify app
+generated. A deliberate contract change means `npm run fixtures`; an accidental one fails
+`web-fixtures.test.ts` with that instruction.
 
 ## Stack at a glance
 
@@ -64,8 +90,21 @@ These are needed on every task. Violating one silently breaks the product's cent
   state, not a cache. (ADR-0003)
 - **A Forecast never appears beside a Max Loss** or inside a confirmation. Implied Move and
   Implied Chance are observations, not opinions, and may appear anywhere. (ADR-0005)
-- **One pricing path.** The Deck and the Trade Proposal must come from the same
-  `previewFillOrder` call, or a Trader is shown one price and filled at another. (Issue #1)
+- **One pricing path.** The Deck and the Trade Proposal both come from `priceOrder` in
+  `apps/api/src/thetanuts/pricing.ts`. Nothing else may derive option economics, or a Trader
+  is shown one price and filled at another. (Issue #1)
+- **The server formats every number.** Figures cross the wire as `{ value, display }`. The
+  frontend renders `display` verbatim — a `toFixed` in React undoes ADR-0006 invisibly. Two
+  files may do arithmetic, each saying why: `lib/clock.ts` (durations, which no response can
+  carry) and `lib/geometry.ts` (coordinates, never read as text). A test enforces the rest.
+- **Nothing that names an Order crosses to the browser.** Not a maker address, not a nonce,
+  not a signature — and not a string built out of them. `TradeProposal` carried
+  `orderId: "<maker>:<nonce>"` until issue #14 walked the surface and found it; the Order is
+  named by an opaque `cardRef` instead.
+- **A cardRef selects; it never supplies a value.** The Order is re-fetched off the live book
+  and every number re-derived, so an override passes every check an agent-chosen Card does.
+- **Practice can never spend.** `/practice` is a separate route, not a flag, and its module
+  imports nothing that can sign. A test walks the import graph. (Issue #8)
 - **The book has one door.** Everything reaches Orders through the single buyable filter, where
   ADR-0002 is enforced. Nothing else fetches orders directly.
 - **Cover only for single-collateral Loans.** Refuse anything else and say why — the liquidation
