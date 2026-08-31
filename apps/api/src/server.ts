@@ -18,10 +18,37 @@ import { executeFill, RiskBudgetExceeded, UnsafeOrder } from "./thetanuts/execut
 import { getSession, remainingBudget, setRiskBudget, rememberProposal, recallProposal } from "./sessions.js";
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
-await app.register(cors, { origin: true });
+
+/**
+ * This process holds a funded key and exposes a route that spends money, so it is
+ * locked down by default and opened deliberately.
+ *
+ * - Bound to loopback unless HOST says otherwise. Binding to 0.0.0.0 on shared venue
+ *   WiFi would let anyone on the network call /fill.
+ * - CORS is an explicit allowlist, never `origin: true`. Reflecting any origin lets a
+ *   malicious page the Trader happens to visit POST to localhost and spend their money.
+ * - /fill additionally requires a bearer token whenever one is configured. A cross-site
+ *   page cannot read it, so it defeats CSRF even if an origin check is misconfigured.
+ */
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGIN ?? "http://localhost:3000")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+const API_TOKEN = process.env.COPILOT_API_TOKEN;
+
+await app.register(cors, { origin: ALLOWED_ORIGINS, credentials: false });
 
 const sessionOf = (req: { headers: Record<string, unknown> }) =>
   getSession(typeof req.headers["x-session-id"] === "string" ? (req.headers["x-session-id"] as string) : "default");
+
+/** Guards the routes that move money. No token configured means loopback-only trust. */
+function requireToken(req: any, reply: any): boolean {
+  if (!API_TOKEN) return true;
+  const header = String(req.headers["authorization"] ?? "");
+  if (header === `Bearer ${API_TOKEN}`) return true;
+  reply.code(401).send({ error: "Unauthorized" });
+  return false;
+}
 
 app.get("/health", async () => ({ ok: true, canSign: canSign() }));
 
@@ -92,6 +119,7 @@ app.post("/propose", async (req, reply) => {
  * so a caller cannot hand us an order we never priced or vetted.
  */
 app.post("/fill", async (req, reply) => {
+  if (!requireToken(req, reply)) return;
   const { proposalId } = (req.body ?? {}) as { proposalId?: string };
   if (!proposalId) return reply.code(400).send({ error: "proposalId required" });
   if (!canSign()) return reply.code(503).send({ error: "No signer configured. Set THETANUTS_PRIVATE_KEY." });
@@ -126,5 +154,14 @@ app.get("/positions", async (req, reply) => {
 });
 
 const port = Number(process.env.PORT ?? 3001);
-await app.listen({ port, host: "0.0.0.0" });
+const host = process.env.HOST ?? "127.0.0.1";
+
+await app.listen({ port, host });
+app.log.info(`cors: ${ALLOWED_ORIGINS.join(", ")}`);
 app.log.info(`signer ${canSign() ? "attached" : "ABSENT -- /propose works, /fill will refuse"}`);
+
+if (host !== "127.0.0.1" && host !== "localhost" && canSign() && !API_TOKEN)
+  app.log.error(
+    `REACHABLE ON THE NETWORK (${host}) with a funded signer and no COPILOT_API_TOKEN. ` +
+    `Anyone who can reach this port can spend from the wallet, up to the Risk Budget.`
+  );

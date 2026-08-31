@@ -45,6 +45,11 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 order is held server-side and only a `proposalId` goes out, so no caller can ask us to fill
 an order we never priced.
 
+This process holds a funded key, so it is locked down by default: it binds to **loopback**,
+CORS is an explicit allowlist (never `origin: true`), and `/fill` requires
+`Authorization: Bearer $COPILOT_API_TOKEN` whenever that is set. Do not bind it to `0.0.0.0`
+on shared WiFi -- anyone on the network could then spend from the wallet.
+
 ## Design
 
 The reasoning behind this project is written down, not assumed:
