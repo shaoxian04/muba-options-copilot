@@ -69,13 +69,25 @@ without saying so.
 ### News (simulated, permanently)
 
 News headlines are never fetched from a real source in this feature — this is a
-deliberate design choice, not a placeholder. One Claude call fabricates 3-5 plausible
-headlines for the requested symbol, explicitly tagged `source: "simulated"` in the
-response. If a real news source is added later, the shared `MarketScenario` schema
-already keeps `source` as a per-field/per-item value rather than a blanket boolean, so
-adding a `fetchLiveHeadlines()` alongside the simulated one is additive — the
-`NewsAnalysis` function itself doesn't change, it just receives headlines tagged
-`source: "live"` instead.
+deliberate design choice, not a placeholder, and not a roadmap item.
+
+`news.ts` exposes `fetchNews(symbol): Promise<Headline[]>` — the same call shape a
+real news integration would have (takes a symbol, returns headlines), so the rest of
+the module (`scenario.ts`, `NewsAnalysis`) is written against an interface rather than
+against "Claude makes this up." But the *only* implementation that may exist behind
+that call is one Claude call fabricating 3-5 plausible headlines, every single time,
+with no branch, env var, or config flag that could make it call a real endpoint.
+Every headline it returns is tagged `source: "simulated"`, and `NewsAnalysis`'s
+disclaimer says so explicitly — the response must never be presentable as real news.
+
+The call shape existing is not permission to wire up a real provider later without a
+deliberate decision to revisit this section — it exists only so `fetchNews`'s single
+implementation is easy to read in isolation, not because a live swap is planned. Unlike
+market data (real by design, with a documented fallback-on-failure rule), news has no
+live path, no fallback rule, and no "if the API key is missing" branch — because there
+is no API key and never will be one for this feature. Contrast with the market-data
+section above, where "real, falls back to refusal on failure" is the rule; here
+"simulated, unconditionally" is the rule.
 
 ## Architecture
 
@@ -91,8 +103,9 @@ apps/api/src/forecast/
   marketData.ts       fetchMarketData(symbol) -> merges Thetanuts + CoinGecko per the
                        rules above; symbol resolution; divergence check
   scenario.ts          buildScenario(symbol, horizon) -> MarketScenario:
-                       fetchMarketData() + one Claude call that fabricates headlines
-  news.ts               analyzeNews(scenario) -> NewsAnalysis
+                       fetchMarketData() + news.ts's fetchNews(symbol)
+  news.ts               fetchNews(symbol) -> Headline[] (simulated, unconditionally --
+                       see "News" above); analyzeNews(scenario) -> NewsAnalysis
   price.ts              predictPrice(scenario) -> PricePrediction
   riskBenefit.ts         assessRiskBenefit(scenario) -> RiskBenefitView
 
