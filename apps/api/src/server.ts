@@ -16,6 +16,11 @@ import { buyableOrders, impliedVol, daysToExpiry, PUT } from "./thetanuts/orders
 import { proposeTrade, NoSuitableOrder } from "./thetanuts/propose.js";
 import { executeFill, RiskBudgetExceeded, UnsafeOrder } from "./thetanuts/execute.js";
 import { getSession, remainingBudget, setRiskBudget, rememberProposal, recallProposal } from "./sessions.js";
+import { buildScenario } from "./forecast/scenario.js";
+import { analyzeNews } from "./forecast/news.js";
+import { predictPrice } from "./forecast/price.js";
+import { assessRiskBenefit } from "./forecast/riskBenefit.js";
+import { parseForecastQuery, forecastErrorStatus } from "./forecast/http.js";
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 
@@ -150,6 +155,46 @@ app.get("/positions", async (req, reply) => {
     return { address: addr, positions: await (getClient().api as any).getPositions?.(addr) ?? [] };
   } catch (e: any) {
     return reply.code(502).send({ error: e?.message ?? "Could not read positions" });
+  }
+});
+
+/**
+ * Read-only opinion surface -- ADR-0005. Never imported by /propose or /fill, and never
+ * imports from them. Every response is attributed opinion, not a trade input.
+ */
+app.get("/forecast/news", async (req, reply) => {
+  const parsed = parseForecastQuery((req.query ?? {}) as Record<string, unknown>);
+  if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
+  try {
+    const scenario = await buildScenario(parsed.symbol, parsed.horizon);
+    return await analyzeNews(scenario);
+  } catch (e) {
+    const { status, error } = forecastErrorStatus(e);
+    return reply.code(status).send({ error });
+  }
+});
+
+app.get("/forecast/price", async (req, reply) => {
+  const parsed = parseForecastQuery((req.query ?? {}) as Record<string, unknown>);
+  if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
+  try {
+    const scenario = await buildScenario(parsed.symbol, parsed.horizon);
+    return await predictPrice(scenario);
+  } catch (e) {
+    const { status, error } = forecastErrorStatus(e);
+    return reply.code(status).send({ error });
+  }
+});
+
+app.get("/forecast/risk-benefit", async (req, reply) => {
+  const parsed = parseForecastQuery((req.query ?? {}) as Record<string, unknown>);
+  if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
+  try {
+    const scenario = await buildScenario(parsed.symbol, parsed.horizon);
+    return await assessRiskBenefit(scenario);
+  } catch (e) {
+    const { status, error } = forecastErrorStatus(e);
+    return reply.code(status).send({ error });
   }
 });
 
