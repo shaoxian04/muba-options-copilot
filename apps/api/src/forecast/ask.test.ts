@@ -438,3 +438,83 @@ test("answerQuestion gives every successful coin comparison context about the ot
   assert.equal(results.PEPE.answer, "PEPE comparison answer");
   assert.equal(results.SHIB.answer, "SHIB comparison answer");
 });
+
+test("extractChatQuery merges duplicate requests for the same coin, unioning analyses and keeping a real horizon", async () => {
+  const create = jsonCreate({
+    requests: [
+      { coin: "ETH", horizon: "", analyses: ["news"] },
+      { coin: "eth", horizon: "7d", analyses: ["market"] },
+    ],
+    isComparison: false,
+  });
+  const result = await extractChatQuery("what's the news on ETH, and what's ETH's price this week?", create);
+  assert.equal(result.requests.length, 1);
+  assert.equal(result.requests[0].coin, "ETH");
+  assert.equal(result.requests[0].horizon, "7d");
+  assert.deepEqual(new Set(result.requests[0].analyses), new Set(["news", "market"]));
+});
+
+test("comparison context passed to other coins is restricted to market data, never opinion content", async () => {
+  const capturedSynthesis: Record<string, string> = {};
+
+  const create: AgentCreateFn = async (params) => {
+    if (params.system.includes("extract structured information")) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              requests: [
+                { coin: "ETH", horizon: "7d", analyses: ["price"] },
+                { coin: "PEPE", horizon: "", analyses: ["market"] },
+              ],
+              isComparison: true,
+            }),
+          },
+        ],
+      };
+    }
+    if (params.system.includes("invent plausible"))
+      return {
+        content: [
+          { type: "text", text: JSON.stringify({ headlines: [{ text: "ETH steady", sentiment: "neutral", source: "simulated" }] }) },
+        ],
+      };
+    if (params.system.includes("speculative price prediction"))
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              direction: "up",
+              predictedRange: { low: 2300, high: 2600 },
+              confidence: "medium",
+              rationale: "Momentum looks positive.",
+            }),
+          },
+        ],
+      };
+    if (params.system.includes("answer a user's question")) {
+      const userMsg = params.messages[0].content;
+      const symbol = userMsg.match(/Asset: (\w+)/)?.[1] ?? "UNKNOWN";
+      capturedSynthesis[symbol] = userMsg;
+      return { content: [{ type: "text", text: JSON.stringify({ answer: `${symbol} comparison answer` }) }] };
+    }
+    throw new Error(`unexpected AI call for system prompt starting: ${params.system.slice(0, 40)}`);
+  };
+
+  const marketData: MarketDataDeps = {
+    getThetanutsPrices: async () => ({ ETH: 2451 }),
+    fetchCoinGeckoMarket: async () => cgRow,
+    resolveViaCoinGeckoSearch: async (query) => (query === "PEPE" ? { id: "pepecoin", symbol: "pepe" } : undefined),
+  };
+
+  const results = await answerQuestion("compare ETH and PEPE", { create, marketData });
+
+  assert.equal(results.ETH.disclaimer, FORECAST_DISCLAIMER, "ETH's own price prediction should carry the disclaimer");
+  assert.equal(results.PEPE.disclaimer, undefined, "PEPE's own data is market-only, so no disclaimer even though ETH's opinion exists elsewhere");
+
+  assert.ok(capturedSynthesis.PEPE.includes("ETH:"), "PEPE's prompt should include ETH as comparison context");
+  assert.ok(!capturedSynthesis.PEPE.includes("Momentum looks positive"), "PEPE's comparison context should never include ETH's speculative price rationale");
+  assert.ok(!capturedSynthesis.PEPE.includes("Price prediction"), "PEPE's comparison context should never include an opinion label for ETH");
+});

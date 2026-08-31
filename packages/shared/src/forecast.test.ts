@@ -155,6 +155,12 @@ test("ChatQuery accepts the 'market' analysis category and isComparison flag", (
   assert.deepEqual(result.success && result.data.isComparison, true);
 });
 
+test("ChatQuery defaults isComparison to false when omitted", () => {
+  const result = ChatQuery.safeParse({ requests: [{ coin: "ETH", horizon: "", analyses: ["market"] }] });
+  assert.equal(result.success, true);
+  assert.equal(result.success && result.data.isComparison, false);
+});
+
 test("CoinAskResult round-trips a synthesized answer and raw market data", () => {
   const input = {
     symbol: "PEPE",

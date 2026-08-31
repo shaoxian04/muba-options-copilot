@@ -26,6 +26,24 @@ import { synthesizeAnswer, type CoinSummary } from "./answer.js";
 
 export class IncompleteQuestion extends Error {}
 
+function dedupeRequests(requests: ChatQueryRequest[]): ChatQueryRequest[] {
+  const byCoin = new Map<string, ChatQueryRequest>();
+  for (const r of requests) {
+    const key = r.coin.trim().toUpperCase();
+    const existing = byCoin.get(key);
+    if (!existing) {
+      byCoin.set(key, r);
+    } else {
+      byCoin.set(key, {
+        coin: existing.coin,
+        horizon: existing.horizon.trim() ? existing.horizon : r.horizon,
+        analyses: Array.from(new Set([...existing.analyses, ...r.analyses])),
+      });
+    }
+  }
+  return Array.from(byCoin.values());
+}
+
 export async function extractChatQuery(question: string, create?: AgentCreateFn): Promise<ChatQuery> {
   const result = await callAgentForJson(
     ChatQuery,
@@ -45,15 +63,17 @@ export async function extractChatQuery(question: string, create?: AgentCreateFn)
     create
   );
 
+  const deduped: ChatQuery = { ...result, requests: dedupeRequests(result.requests) };
+
   const missing: string[] = [];
-  if (result.requests.length === 0) missing.push("which coin(s) you're asking about");
-  const missingHorizonFor = result.requests
+  if (deduped.requests.length === 0) missing.push("which coin(s) you're asking about");
+  const missingHorizonFor = deduped.requests
     .filter((r) => (r.analyses.includes("price") || r.analyses.includes("risk-benefit")) && !r.horizon.trim())
     .map((r) => r.coin);
   if (missingHorizonFor.length > 0) missing.push(`what timeframe you mean for ${missingHorizonFor.join(", ")}`);
   if (missing.length > 0) throw new IncompleteQuestion(`Please specify ${missing.join(" and ")}.`);
 
-  return result;
+  return deduped;
 }
 
 interface GatheredCoin {
@@ -117,7 +137,7 @@ export async function answerQuestion(
         const otherCoins: CoinSummary[] | undefined = query.isComparison
           ? successful
               .filter((c) => c.symbol !== s.data.symbol)
-              .map((c) => ({ symbol: c.symbol, market: c.market, news: c.news, price: c.price, riskBenefit: c.riskBenefit }))
+              .map((c) => ({ symbol: c.symbol, market: c.market }))
           : undefined;
 
         const answer = await synthesizeAnswer(

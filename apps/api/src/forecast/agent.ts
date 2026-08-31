@@ -122,9 +122,15 @@ export async function realCreateWithFallback(
   return deps.claudeCreate(params);
 }
 
-/** Calls the configured agent, expects a single JSON object back, validates it against `schema`. */
+/**
+ * Calls the configured agent, expects a single JSON object back, validates it against
+ * `schema`. The schema's Input type param is widened to `any` here so a schema with a
+ * `.default()` field (whose Input and Output types differ) can still be assigned to
+ * `ZodType<T>` -- otherwise TypeScript infers T from the narrower Input type instead of
+ * the Output type, and every caller ends up with an incorrectly-optional field.
+ */
 export async function callAgentForJson<T>(
-  schema: ZodType<T>,
+  schema: ZodType<T, any, any>,
   system: string,
   user: string,
   create: AgentCreateFn = realCreateWithFallback

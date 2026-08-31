@@ -89,7 +89,7 @@ export type ChatQueryRequest = z.infer<typeof ChatQueryRequest>;
  */
 export const ChatQuery = z.object({
   requests: z.array(ChatQueryRequest),
-  isComparison: z.boolean(),
+  isComparison: z.boolean().default(false),
 });
 export type ChatQuery = z.infer<typeof ChatQuery>;
 
