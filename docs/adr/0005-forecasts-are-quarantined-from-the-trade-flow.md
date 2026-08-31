@@ -18,10 +18,15 @@ numbers is certain, and the product's central promise quietly becomes a marketin
 you are adding a "our model says ETH will rise" line to the confirmation card, you are undoing
 this decision.
 
-## Open: can the chat see a Forecast?
+## Resolved: a Suggestion may cross, narrowed to a Trade Intent
 
-Whether the conversational layer may surface a Forecast when a Trader asks for one is
-deliberately not yet decided. Until it is, the safe default holds by construction: the
-`QUESTION` branch of the router has access to the analysis module and the `TRADE_INTENT`
-branch does not. That separation lives in the routing, not in a prompt, so widening it later
-has to be a deliberate act rather than a drifting one.
+The Strategy Agent may act on a Forecast, but only through a channel narrow enough to carry
+nothing else: its output crossing into the trade flow is a **Suggestion** -- a Trade Intent
+and nothing more. No prose, no confidence, no price target rides along, because the schema has
+nowhere to put them. The reasoning and its sources live on the analysis surface; the
+confirmation card still shows only SDK-derived numbers, and the Trader still confirms.
+
+That separation is enforced by the shape of the type, not by a prompt -- the same trick as
+ADR-0006. It is also a frontend fact: the analysis surface is a separate route from the
+confirmation card, so that rendering a Forecast beside a Max Loss requires someone to move
+code rather than to forget a rule.

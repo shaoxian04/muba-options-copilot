@@ -19,6 +19,44 @@ The person using the Copilot. Crypto-native — owns a wallet, holds USDC on Bas
 gas. Options-naive — does not know what a strike, an expiry, or an inverse call is.
 _Avoid_: user, investor, customer, newbie
 
+### The agents
+
+**Trade Agent**:
+The agent that turns a Trader's message into a Trade Intent and chooses which Order on the
+book expresses it. It names an Order; it never prices one.
+_Avoid_: agent 1, executor, trading bot
+
+**Review Agent**:
+A second agent that reads the Trader's original message independently and derives its own
+Trade Intent, so that a misreading by the Trade Agent shows up as a disagreement rather than
+as a confident wrong trade.
+_Avoid_: agent 2, validator, approver, judge
+
+**Strategy Agent**:
+The agent that produces Forecasts and Suggestions from news, calendar events and technical
+indicators. It sits outside the trade flow entirely.
+_Avoid_: agent 3, advisor, analyst
+
+**Veto**:
+The Review Agent's only power: to stop a Fill. A Veto blocks; the absence of one authorises
+nothing, because every hard check runs regardless.
+_Avoid_: rejection, approval, sign-off
+
+**Deck**:
+Every Order a Trader may buy right now for one direction and one horizon, laid out as Cards so
+they can be compared rather than accepted one at a time.
+_Avoid_: chain, book (the OptionBook is the protocol's), list, grid
+
+**Card**:
+One Order in a Deck, together with the economics derived for the Trader's stake. A Card never
+carries a maker address or a signature -- only an opaque reference the backend can resolve.
+_Avoid_: tile, option (unqualified), row
+
+**Practice Run**:
+A simulated Fill. It opens a Position that exists only in the session, spends nothing, and can
+never reach a signer. It is how a Trader learns the flow before any money is at stake.
+_Avoid_: paper trade, demo, simulation, dry run
+
 ### The protocol (terms we adopt from Thetanuts, not invent)
 
 **Order**:
@@ -68,6 +106,12 @@ features (news analysis, volatility modelling). A Forecast is always presented a
 always attributed to its source, and never appears inside the confirmation flow.
 _Avoid_: signal, call, recommendation, advice, prediction
 
+**Suggestion**:
+A Forecast narrowed to a Trade Intent -- what the strategy agent proposes a Trader do. It
+carries no prose, price target or confidence alongside it, and never becomes a Position
+without the Trader confirming it.
+_Avoid_: recommendation, signal, advice, auto-trade
+
 **Implied Move**:
 The size of the move the options market itself is pricing over a given period, derived from
 live Thetanuts premiums. Unlike a Forecast, an Implied Move is an observation rather than an
@@ -75,6 +119,12 @@ opinion, so it may appear anywhere -- including next to a trade.
 _Avoid_: expected move, IV, volatility (unqualified)
 
 ### Language and money
+
+**Implied Chance**:
+The market's own probability that a contract finishes in the money, derived from the maker's
+quoted volatility. Like an Implied Move it is an observation rather than an opinion, so it may
+sit beside a Max Loss; unlike a Forecast, no model produces it.
+_Avoid_: odds, probability (unqualified), likelihood, confidence
 
 **Trade Intent**:
 The validated structured description of what a Trader asked for -- underlying, direction,

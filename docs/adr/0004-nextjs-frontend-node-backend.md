@@ -1,3 +1,7 @@
+---
+status: partially superseded by ADR-0007 -- the agents are Python
+---
+
 # Next.js frontend and a separate Node backend, all TypeScript
 
 The frontend is a Next.js app that renders UI only. A separate Node service owns the
