@@ -14,30 +14,17 @@ test("extractChatQuery returns a full ChatQuery when the model finds coins and a
   assert.deepEqual(result, { coins: ["ETH", "BTC"], horizon: "2 weeks", analyses: ["news", "price"] });
 });
 
+test("extractChatQuery accepts an empty horizon -- not every question needs a timeframe", async () => {
+  const create = jsonCreate({ coins: ["PEPE"], horizon: "", analyses: ["market"] });
+  const result = await extractChatQuery("what's PEPE's current price?", create);
+  assert.deepEqual(result, { coins: ["PEPE"], horizon: "", analyses: ["market"] });
+});
+
 test("extractChatQuery throws IncompleteQuestion when no coin was found", async () => {
-  const create = jsonCreate({ coins: [], horizon: "7d", analyses: ["price"] });
+  const create = jsonCreate({ coins: [], horizon: "", analyses: ["price"] });
   await assert.rejects(() => extractChatQuery("will it go down?", create), (e: unknown) => {
     assert.ok(e instanceof IncompleteQuestion);
     assert.match((e as Error).message, /which coin/);
-    return true;
-  });
-});
-
-test("extractChatQuery throws IncompleteQuestion when no horizon was found", async () => {
-  const create = jsonCreate({ coins: ["ETH"], horizon: "", analyses: ["price"] });
-  await assert.rejects(() => extractChatQuery("will ETH go down?", create), (e: unknown) => {
-    assert.ok(e instanceof IncompleteQuestion);
-    assert.match((e as Error).message, /timeframe/);
-    return true;
-  });
-});
-
-test("extractChatQuery combines both clauses when coin and horizon are both missing", async () => {
-  const create = jsonCreate({ coins: [], horizon: "", analyses: ["price"] });
-  await assert.rejects(() => extractChatQuery("will it go down or drop?", create), (e: unknown) => {
-    assert.ok(e instanceof IncompleteQuestion);
-    assert.match((e as Error).message, /which coin/);
-    assert.match((e as Error).message, /timeframe/);
     return true;
   });
 });
@@ -54,13 +41,16 @@ const cgRow: CoinGeckoMarket = {
 const workingMarketDataDeps: MarketDataDeps = {
   getThetanutsPrices: async () => ({ ETH: 2451 }),
   fetchCoinGeckoMarket: async () => cgRow,
-  resolveViaCoinGeckoSearch: async () => { throw new Error("should not be called for a major"); },
+  resolveViaCoinGeckoSearch: async () => {
+    throw new Error("should not be called for a major");
+  },
 };
 
-test("answerQuestion runs only the requested analysis and skips the others", async () => {
+test("answerQuestion runs only the requested analysis, plus the answer synthesis, and skips the rest", async () => {
   let sawExtraction = false;
   let sawHeadlineCall = false;
   let sawNewsAnalysis = false;
+  let sawAnswerSynthesis = false;
   let sawPriceOrRiskBenefit = false;
 
   const create: AgentCreateFn = async (params) => {
@@ -68,7 +58,7 @@ test("answerQuestion runs only the requested analysis and skips the others", asy
       sawExtraction = true;
       return { content: [{ type: "text", text: JSON.stringify({ coins: ["ETH"], horizon: "7d", analyses: ["news"] }) }] };
     }
-    if (params.system.includes("invent")) {
+    if (params.system.includes("invent plausible")) {
       sawHeadlineCall = true;
       return {
         content: [
@@ -79,6 +69,10 @@ test("answerQuestion runs only the requested analysis and skips the others", asy
     if (params.system.includes("sentiment read")) {
       sawNewsAnalysis = true;
       return { content: [{ type: "text", text: JSON.stringify({ overallSentiment: "neutral", summary: "Steady." }) }] };
+    }
+    if (params.system.includes("answer a user's question")) {
+      sawAnswerSynthesis = true;
+      return { content: [{ type: "text", text: JSON.stringify({ answer: "ETH news is steady this week." }) }] };
     }
     sawPriceOrRiskBenefit = true;
     throw new Error("price/risk-benefit should not have been called -- only news was requested");
@@ -92,10 +86,44 @@ test("answerQuestion runs only the requested analysis and skips the others", asy
   assert.ok(sawExtraction);
   assert.ok(sawHeadlineCall);
   assert.ok(sawNewsAnalysis);
+  assert.ok(sawAnswerSynthesis);
   assert.equal(sawPriceOrRiskBenefit, false);
 
   assert.equal(Object.keys(results).length, 1);
   assert.ok(results.ETH.news);
+  assert.equal(results.ETH.answer, "ETH news is steady this week.");
+  assert.equal(results.ETH.price, undefined);
+  assert.equal(results.ETH.riskBenefit, undefined);
+  assert.equal(results.ETH.market, undefined);
+});
+
+test("answerQuestion answers a 'market' question with real data alone -- no news/price/risk-benefit call", async () => {
+  let sawExtraction = false;
+  let sawUnexpectedCall = false;
+  let sawAnswerSynthesis = false;
+
+  const create: AgentCreateFn = async (params) => {
+    if (params.system.includes("extract structured information")) {
+      sawExtraction = true;
+      return { content: [{ type: "text", text: JSON.stringify({ coins: ["ETH"], horizon: "", analyses: ["market"] }) }] };
+    }
+    if (params.system.includes("answer a user's question")) {
+      sawAnswerSynthesis = true;
+      return { content: [{ type: "text", text: JSON.stringify({ answer: "ETH is at $2451 right now." }) }] };
+    }
+    sawUnexpectedCall = true;
+    throw new Error("no scenario-building call (news/price/risk-benefit) should happen for a market-only question");
+  };
+
+  const results = await answerQuestion("what's ETH's current price?", { create, marketData: workingMarketDataDeps });
+
+  assert.ok(sawExtraction);
+  assert.ok(sawAnswerSynthesis);
+  assert.equal(sawUnexpectedCall, false);
+
+  assert.equal(results.ETH.market?.price, 2451);
+  assert.equal(results.ETH.answer, "ETH is at $2451 right now.");
+  assert.equal(results.ETH.news, undefined);
   assert.equal(results.ETH.price, undefined);
   assert.equal(results.ETH.riskBenefit, undefined);
 });
@@ -103,14 +131,18 @@ test("answerQuestion runs only the requested analysis and skips the others", asy
 test("answerQuestion returns partial success when one of several coins fails", async () => {
   const create: AgentCreateFn = async (params) => {
     if (params.system.includes("extract structured information"))
-      return { content: [{ type: "text", text: JSON.stringify({ coins: ["ETH", "NOTACOIN"], horizon: "7d", analyses: ["news"] }) }] };
-    if (params.system.includes("invent"))
+      return {
+        content: [{ type: "text", text: JSON.stringify({ coins: ["ETH", "NOTACOIN"], horizon: "7d", analyses: ["news"] }) }],
+      };
+    if (params.system.includes("invent plausible"))
       return {
         content: [
           { type: "text", text: JSON.stringify({ headlines: [{ text: "steady", sentiment: "neutral", source: "simulated" }] }) },
         ],
       };
-    return { content: [{ type: "text", text: JSON.stringify({ overallSentiment: "neutral", summary: "Steady." }) }] };
+    if (params.system.includes("sentiment read"))
+      return { content: [{ type: "text", text: JSON.stringify({ overallSentiment: "neutral", summary: "Steady." }) }] };
+    return { content: [{ type: "text", text: JSON.stringify({ answer: "ETH news is steady." }) }] };
   };
 
   const marketData: MarketDataDeps = {
