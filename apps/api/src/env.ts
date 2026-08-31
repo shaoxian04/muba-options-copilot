@@ -12,17 +12,27 @@ import { existsSync } from "node:fs";
 const here = dirname(fileURLToPath(import.meta.url));   // apps/api/src
 const rootEnv = resolve(here, "../../../.env");          // repo root
 
-if (!existsSync(rootEnv)) {
-  console.error(`\n  No .env found at ${rootEnv}`);
-  console.error("  Run:  cp .env.example .env   then fill in THETANUTS_RPC_URL\n");
-  process.exit(1);
-}
-config({ path: rootEnv });
+/**
+ * A missing .env is reported where a value is actually needed, never at import.
+ *
+ * This module used to `process.exit(1)` here, which was safe while only the CLI scripts
+ * and `client.ts` imported it -- and `client.ts` is stubbed in every test, so it never
+ * really loaded. `app.ts` now reaches this transitively through `forecast/agent.ts`, so
+ * a module-level exit takes the whole test run down on any checkout without a .env. CI
+ * is exactly that checkout; a developer's laptop is not, which is how it stayed hidden.
+ */
+const envFileMissing = !existsSync(rootEnv);
+if (!envFileMissing) config({ path: rootEnv });
+
+/** Appended to the "you need to set X" messages, so the fix is one line away. */
+const setupHint = envFileMissing
+  ? `\n  There is no .env at ${rootEnv} at all.\n  Run:  cp .env.example .env   then fill it in`
+  : `\n  Set it in ${rootEnv}`;
 
 export function requireRpc(): string {
   const rpc = process.env.THETANUTS_RPC_URL;
   if (!rpc || rpc.includes("YOUR_KEY")) {
-    console.error(`\n  THETANUTS_RPC_URL is not set in ${rootEnv}`);
+    console.error(`\n  THETANUTS_RPC_URL is not set.${setupHint}`);
     console.error("  alchemy.com -> create app -> Base Mainnet -> paste the URL\n");
     process.exit(1);
   }
@@ -45,7 +55,7 @@ export function anthropicApiKey(): string {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) {
     throw new Error(
-      `\n  ANTHROPIC_API_KEY is not set in ${rootEnv}\n` +
+      `\n  ANTHROPIC_API_KEY is not set.${setupHint}\n` +
         "  console.anthropic.com -> API keys -> paste it in\n"
     );
   }
