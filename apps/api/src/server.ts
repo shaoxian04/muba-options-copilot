@@ -12,6 +12,7 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import { TradeIntent } from "@copilot/shared";
+import { backendEndpoint } from "./env.js";
 import { getClient, canSign, fromPrice, fromUsdc } from "./thetanuts/client.js";
 import { buyableOrders, impliedVol, daysToExpiry, PUT } from "./thetanuts/orders.js";
 import { proposeTrade, NoSuitableOrder } from "./thetanuts/propose.js";
@@ -220,6 +221,7 @@ const port = Number(process.env.PORT ?? 3001);
 const host = process.env.HOST ?? "127.0.0.1";
 
 await app.listen({ port, host });
+app.log.info(`endpoint: ${backendEndpoint()}`);
 app.log.info(`cors: ${ALLOWED_ORIGINS.join(", ")}`);
 app.log.info(`signer ${canSign() ? "attached" : "ABSENT -- /propose works, /fill will refuse"}`);
 
