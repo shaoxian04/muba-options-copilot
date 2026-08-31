@@ -5,8 +5,10 @@
   "scripts": {
     "explore": "tsx src/scripts/explore.ts",
     "fill": "tsx src/scripts/fill.ts",
+    "forecast": "tsx src/scripts/forecast.ts",
     "dev": "tsx watch src/server.ts",
-    "wallet": "tsx src/scripts/wallet.ts"
+    "wallet": "tsx src/scripts/wallet.ts",
+    "test": "tsx --test src/forecast/*.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
