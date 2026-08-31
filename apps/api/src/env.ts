@@ -33,3 +33,21 @@ export function requireRpc(): string {
 
 export const privateKey = () => process.env.THETANUTS_PRIVATE_KEY;
 export const maxFillUsdc = () => Number(process.env.MAX_FILL_USDC ?? 2);
+
+/** The URL a client should use to reach this backend -- may differ from HOST/PORT
+ *  (what this process binds to) once this sits behind a reverse proxy or gets deployed. */
+export const backendEndpoint = (): string => process.env.BACKEND_ENDPOINT ?? "http://127.0.0.1:3001";
+
+export const openaiApiKey = (): string | undefined => process.env.OPENAI_API_KEY || undefined;
+export const groqApiKey = (): string | undefined => process.env.GROQ_API_KEY || undefined;
+
+export function anthropicApiKey(): string {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) {
+    throw new Error(
+      `\n  ANTHROPIC_API_KEY is not set in ${rootEnv}\n` +
+        "  console.anthropic.com -> API keys -> paste it in\n"
+    );
+  }
+  return key;
+}
