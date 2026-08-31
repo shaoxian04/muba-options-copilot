@@ -1,5 +1,5 @@
 import { PricePrediction, FORECAST_DISCLAIMER, type MarketScenario } from "@copilot/shared";
-import { callClaudeForJson, type AgentCreateFn } from "./agent.js";
+import { callAgentForJson, type AgentCreateFn } from "./agent.js";
 import { assertNoForbiddenPhrase } from "./guardrails.js";
 
 const PricePredictionModel = PricePrediction.omit({
@@ -12,7 +12,7 @@ const PricePredictionModel = PricePrediction.omit({
 
 export async function predictPrice(scenario: MarketScenario, create?: AgentCreateFn): Promise<PricePrediction> {
   const { marketData } = scenario;
-  const model = await callClaudeForJson(
+  const model = await callAgentForJson(
     PricePredictionModel,
     'You produce a speculative price prediction for a crypto asset given real current market data ' +
       'and simulated news headlines. This is opinion, not certainty. ' +

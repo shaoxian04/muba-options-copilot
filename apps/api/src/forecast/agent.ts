@@ -86,7 +86,7 @@ export async function realCreateWithFallback(
 }
 
 /** Calls the configured agent, expects a single JSON object back, validates it against `schema`. */
-export async function callClaudeForJson<T>(
+export async function callAgentForJson<T>(
   schema: ZodType<T>,
   system: string,
   user: string,

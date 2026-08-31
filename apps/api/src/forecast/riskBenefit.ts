@@ -1,5 +1,5 @@
 import { RiskBenefitView, FORECAST_DISCLAIMER, type MarketScenario } from "@copilot/shared";
-import { callClaudeForJson, type AgentCreateFn } from "./agent.js";
+import { callAgentForJson, type AgentCreateFn } from "./agent.js";
 import { assertNoForbiddenPhrase } from "./guardrails.js";
 
 const RiskBenefitModel = RiskBenefitView.omit({
@@ -12,7 +12,7 @@ const RiskBenefitModel = RiskBenefitView.omit({
 
 export async function assessRiskBenefit(scenario: MarketScenario, create?: AgentCreateFn): Promise<RiskBenefitView> {
   const { marketData } = scenario;
-  const model = await callClaudeForJson(
+  const model = await callAgentForJson(
     RiskBenefitModel,
     'You write a qualitative risk/benefit view of a crypto asset given real market data and ' +
       'simulated news. This is illustrative opinion, never a guarantee. ' +
