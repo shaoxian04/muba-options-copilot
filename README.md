@@ -90,7 +90,7 @@ packages/shared       zod schemas -- the TradeIntent wall from ADR-0001
 - [ ] Confirmation card with exact Max Loss
 - [ ] Positions panel
 - [ ] RFQ fallback when the book is empty
-- [ ] News analysis
+- [x] News analysis
 
 ## Next steps
 
