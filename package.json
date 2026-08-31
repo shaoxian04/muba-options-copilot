@@ -10,6 +10,12 @@
     "fill": "npm run fill -w @copilot/api",
     "wallet": "npm run wallet -w @copilot/api",
     "dev": "npm run dev -w @copilot/api",
-    "prototype": "node -e \"require('child_process').exec((process.platform==='win32'?'start \\\"\\\" ':'open ')+'apps/web/prototype-copilot.html')\""
+    "prototype": "node -e \"require('child_process').exec((process.platform==='win32'?'start \\\"\\\" ':'open ')+'apps/web/prototype-copilot.html')\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p apps/api/tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.9"
   }
 }

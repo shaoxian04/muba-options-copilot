@@ -7,7 +7,8 @@
  *
  * This should never grow features. It reports; it does not decide.
  */
-import { getClient, chain, USDC, fromPrice, fromUsdc } from "../thetanuts/client.js";
+import { getClient, chain } from "../thetanuts/client.js";
+import { USDC, fromPrice, fromUsdc } from "../thetanuts/units.js";
 import { buyableOrders, isBuyable, isEth, isUsdcCollateral, impliedVol, daysToExpiry, PUT } from "../thetanuts/orders.js";
 
 const json = (v: unknown) => JSON.stringify(v, (_k, x) => (typeof x === "bigint" ? `${x}n` : x), 2);

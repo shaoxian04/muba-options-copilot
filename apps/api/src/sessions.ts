@@ -13,7 +13,7 @@
  * In memory for now. Per ADR-0003 the database is for the conversation, and nothing in
  * here is money -- positions and balances are always read from the chain.
  */
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
 import type { TradeProposal } from "@copilot/shared";
 
@@ -22,6 +22,14 @@ export interface Session {
   riskBudgetUsdc: number;
   spentUsdc: number;
   proposals: Map<string, { proposal: TradeProposal; order: OrderWithSignature; at: number }>;
+  /** Cards dealt this session, keyed by the opaque ref the browser was given. */
+  cards: Map<string, { order: OrderWithSignature; at: number }>;
+  /**
+   * Per-session key that turns an Order's identity into its cardRef. Random, so a ref
+   * is unguessable and reveals nothing about the maker; per-session, so a ref dealt to
+   * one Trader resolves to nothing in anyone else's Deck.
+   */
+  cardKey: Buffer;
 }
 
 const sessions = new Map<string, Session>();
@@ -35,7 +43,14 @@ const DEFAULT_BUDGET = Number(process.env.DEFAULT_RISK_BUDGET_USDC ?? 5);
 export function getSession(id = "default"): Session {
   let s = sessions.get(id);
   if (!s) {
-    s = { id, riskBudgetUsdc: DEFAULT_BUDGET, spentUsdc: 0, proposals: new Map() };
+    s = {
+      id,
+      riskBudgetUsdc: DEFAULT_BUDGET,
+      spentUsdc: 0,
+      proposals: new Map(),
+      cards: new Map(),
+      cardKey: randomBytes(32),
+    };
     sessions.set(id, s);
   }
   return s;
@@ -48,8 +63,9 @@ export function setRiskBudget(s: Session, usdc: number): void {
   s.riskBudgetUsdc = usdc;
 }
 
-/** Proposals are priced against a live book and go stale fast. */
+/** Proposals and Cards are priced against a live book and go stale fast. */
 const PROPOSAL_TTL_MS = 60_000;
+const CARD_TTL_MS = PROPOSAL_TTL_MS;
 
 /**
  * A proposal id is the ONLY thing /fill needs to spend money -- it is a capability, not
@@ -66,11 +82,7 @@ export function rememberProposal(s: Session, p: { proposal: TradeProposal; order
 
 /** Constant-time lookup, so response timing does not leak how much of an id was right. */
 export function recallProposal(s: Session, id: string) {
-  const key = [...s.proposals.keys()].find((k) => {
-    const a = Buffer.from(k);
-    const b = Buffer.from(id);
-    return a.length === b.length && timingSafeEqual(a, b);
-  });
+  const key = constantTimeFind([...s.proposals.keys()], id);
   const found = key ? s.proposals.get(key) : undefined;
   if (!found || !key) return undefined;
   if (Date.now() - found.at > PROPOSAL_TTL_MS) {
@@ -78,4 +90,52 @@ export function recallProposal(s: Session, id: string) {
     return undefined;
   }
   return found;
+}
+
+/**
+ * Deal a Card and return the reference the browser sees.
+ *
+ * Derived from the Order's identity under the session's own key rather than drawn at
+ * random, so polling the Deck twice hands back the same ref for the same Order and a
+ * Trader's selection does not evaporate under them every few seconds. It stays opaque:
+ * without the session key the ref reveals nothing, and it resolves in no other session.
+ *
+ * The ref is a capability -- it is the only thing /propose needs to name an Order --
+ * so the key is CSPRNG bytes and the ref is a full 128 bits of HMAC output.
+ */
+export function rememberCard(s: Session, order: OrderWithSignature): string {
+  const identity = `${order.makerAddress}:${order.order.nonce}:${order.order.expiry}`;
+  const ref = createHmac("sha256", s.cardKey).update(identity).digest("hex").slice(0, 32);
+  s.cards.set(ref, { order, at: Date.now() });
+  for (const [k, v] of s.cards) if (Date.now() - v.at > CARD_TTL_MS) s.cards.delete(k);
+  return ref;
+}
+
+/**
+ * Resolve a Card reference back to the Order it names.
+ *
+ * Returns undefined for a ref that is unknown, expired, or from another session -- the
+ * caller cannot tell which, and does not need to: all three mean the same thing to a
+ * Trader, which is that the quote has moved.
+ */
+export function recallCard(s: Session, ref: string) {
+  const key = constantTimeFind([...s.cards.keys()], ref);
+  const found = key ? s.cards.get(key) : undefined;
+  if (!found || !key) return undefined;
+  if (Date.now() - found.at > CARD_TTL_MS) {
+    s.cards.delete(key);
+    return undefined;
+  }
+  return found;
+}
+
+/** Compare against every candidate without letting the clock reveal how close a guess was. */
+function constantTimeFind(keys: string[], candidate: string): string | undefined {
+  const b = Buffer.from(candidate);
+  let match: string | undefined;
+  for (const k of keys) {
+    const a = Buffer.from(k);
+    if (a.length === b.length && timingSafeEqual(a, b)) match = k;
+  }
+  return match;
 }

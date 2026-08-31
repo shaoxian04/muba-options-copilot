@@ -7,7 +7,8 @@
  */
 import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
 import type { TradeProposal, FillResult } from "@copilot/shared";
-import { getClient, chain, canSign, toUsdc } from "./client.js";
+import { getClient, chain, canSign } from "./client.js";
+import { toUsdc } from "./units.js";
 import { isBuyable, isUsdcCollateral } from "./orders.js";
 
 export class RiskBudgetExceeded extends Error {}

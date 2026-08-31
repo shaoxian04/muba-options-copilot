@@ -1,0 +1,89 @@
+/**
+ * An Order plus a stake, priced. The only place option economics are derived.
+ *
+ * This exists because a Deck and a Trade Proposal that each did their own arithmetic
+ * would eventually disagree, and the way a Trader experiences that disagreement is
+ * being filled at a price they were never shown. So there is one call, and both use it.
+ *
+ * Every figure comes back with the string a Trader will read (see `format.ts`), because
+ * two code paths agreeing on `1.999999` while one renders "$2.00" and the other "$2"
+ * is the same failure wearing a better disguise.
+ *
+ * Read-only. `previewFillOrder` is synchronous and local, so pricing a whole Deck costs
+ * nothing -- there is never a reason to cache this or to approximate it.
+ */
+import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
+import type { Figure } from "@copilot/shared";
+import { getClient } from "./client.js";
+import { fromPrice, fromUsdc, fromContracts, toUsdc } from "./units.js";
+import { usd, contracts as fmtContracts, moment } from "../format.js";
+
+/** The stake is too small to buy any of this Order at the maker's price. */
+export class StakeTooSmall extends Error {
+  constructor(readonly sizeUsdc: number) {
+    super(`$${sizeUsdc} is too small to buy any of this option.`);
+    this.name = "StakeTooSmall";
+  }
+}
+
+export interface OrderEconomics {
+  /** Where the option starts paying. */
+  strike: Figure;
+  /** What one contract costs. */
+  perContractUsd: Figure;
+  /** How many contracts the stake buys. */
+  contracts: Figure;
+  /** What the Trader pays. */
+  premiumUsdc: Figure;
+  /** ADR-0002: we only ever buy, so this is exactly the premium. Not an estimate. */
+  maxLossUsdc: Figure;
+  /** The price past which the Trader is ahead. */
+  breakevenPrice: Figure;
+  /** What the maker still has posted against this Order. */
+  availableUsdc: Figure;
+  /** The fixed moment the contract ends. */
+  expiry: Figure;
+  expiryIso: string;
+  /** An inverse call settles in WETH -- a Trader should not be surprised by that. */
+  payoutAsset: "USDC" | "WETH";
+  isCall: boolean;
+  /** PUT / INVERSE_CALL. Never shown to the Trader (Q10). */
+  instrument: string;
+  /**
+   * Preview values downstream maths needs in their protocol units. Never serialised:
+   * a bigint would not survive JSON anyway, which is a useful accident.
+   */
+  raw: { strikes: bigint[]; numContracts: bigint };
+}
+
+/**
+ * Price one Order for one stake.
+ *
+ * @param sizeUsdc  The Trader's stake. An Order's `availableAmount` is a collateral
+ *                  budget, not a contract count -- never size a fill from it.
+ */
+export function priceOrder(order: OrderWithSignature, sizeUsdc: number): OrderEconomics {
+  const preview = getClient().optionBook.previewFillOrder(order, toUsdc(sizeUsdc));
+  if (!preview || preview.numContracts <= 0n) throw new StakeTooSmall(sizeUsdc);
+
+  const strike = fromPrice(preview.strikes[0]!);
+  const perContract = fromPrice(preview.pricePerContract);
+  const premium = fromUsdc(preview.totalCollateral);
+  const expiryIso = new Date(Number(preview.expiry) * 1000).toISOString();
+
+  return {
+    strike: usd(strike),
+    perContractUsd: usd(perContract),
+    contracts: fmtContracts(fromContracts(preview.numContracts)),
+    premiumUsdc: usd(premium),
+    maxLossUsdc: usd(premium),
+    breakevenPrice: usd(Number((preview.isCall ? strike + perContract : strike - perContract).toFixed(2))),
+    availableUsdc: usd(fromUsdc(order.availableAmount)),
+    expiry: moment(expiryIso),
+    expiryIso,
+    payoutAsset: preview.isCall ? "WETH" : "USDC",
+    isCall: preview.isCall,
+    instrument: preview.isCall ? "INVERSE_CALL" : "PUT",
+    raw: { strikes: preview.strikes, numContracts: preview.numContracts },
+  };
+}
