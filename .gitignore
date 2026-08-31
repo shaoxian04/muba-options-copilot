@@ -13,3 +13,10 @@ out/
 *.key
 wallet.json
 config.json
+
+# Python (apps/agents)
+.venv/
+__pycache__/
+*.pyc
+# saved strategies are local state, not source (apps/agents/strategy/store.py)
+apps/agents/data/
