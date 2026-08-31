@@ -1,0 +1,520 @@
+<!--
+  PROTOTYPE - throwaway. Not the real frontend.
+
+  Left = language (the agent only ever proposes). Right = money (the only thing that spends).
+
+  Deck data is the real ETH put AND call chain off the OptionBook on Base, read
+  2026-08-31 with spot at $2,445.49. Every strike, premium and IV below came off the
+  book; every percentage is computed on the page from that IV via N(±d2) - the market's
+  own implied chance the contract finishes in the money. Nothing is invented.
+
+  ?state=live|veto|empty
+-->
+<title>Options Deck</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Martian+Mono:wght@500;600;700&display=swap">
+<style>
+:root{
+  color-scheme: light;
+  --ground:#E7ECF1; --well:#DEE5EC; --surface:#FFFFFF; --surface-2:#F2F5F8;
+  --line:#D3DBE4; --line-2:#E6EBF0;
+  --ink:#111820; --ink-2:#4C5A69; --ink-3:#7C8B9A;
+  --hue:#2a78d6; --hue-soft:#DCEAFA; --hue-deep:#1c5cab;
+  --r0:#cde2fb; --r1:#9ec5f4; --r2:#6da7ec; --r3:#3987e5; --r4:#256abf; --r5:#184f95;
+  --fillA:.30;
+  --good:#0ca30c; --warn:#fab219; --crit:#d03b3b;
+  --btn:#111820; --btn-ink:#FFFFFF;
+  --lift:0 1px 2px rgba(17,24,32,.07), 0 12px 28px rgba(17,24,32,.10);
+  --deal:0 2px 4px rgba(17,24,32,.10), 0 18px 40px rgba(17,24,32,.18);
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  color-scheme: dark;
+  --ground:#0C1218; --well:#080D12; --surface:#151D25; --surface-2:#1C2630;
+  --line:#2A3742; --line-2:#212C36;
+  --ink:#E7EDF3; --ink-2:#A2B1BF; --ink-3:#6C7E8E;
+  --hue:#3987e5; --hue-soft:#14304F; --hue-deep:#86b6ef;
+  --r0:#104281; --r1:#184f95; --r2:#1c5cab; --r3:#2a78d6; --r4:#5598e7; --r5:#86b6ef;
+  --fillA:.34;
+  --btn:#E7EDF3; --btn-ink:#0C1218;
+  --lift:0 1px 2px rgba(0,0,0,.5), 0 12px 28px rgba(0,0,0,.45);
+  --deal:0 2px 6px rgba(0,0,0,.6), 0 20px 44px rgba(0,0,0,.55);
+}}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --ground:#0C1218; --well:#080D12; --surface:#151D25; --surface-2:#1C2630;
+  --line:#2A3742; --line-2:#212C36;
+  --ink:#E7EDF3; --ink-2:#A2B1BF; --ink-3:#6C7E8E;
+  --hue:#3987e5; --hue-soft:#14304F; --hue-deep:#86b6ef;
+  --r0:#104281; --r1:#184f95; --r2:#1c5cab; --r3:#2a78d6; --r4:#5598e7; --r5:#86b6ef;
+  --fillA:.34;
+  --btn:#E7EDF3; --btn-ink:#0C1218;
+  --lift:0 1px 2px rgba(0,0,0,.5), 0 12px 28px rgba(0,0,0,.45);
+  --deal:0 2px 6px rgba(0,0,0,.6), 0 20px 44px rgba(0,0,0,.55);
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--ground);color:var(--ink);overflow:hidden;
+  font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;font-size:14px;line-height:1.45;
+  -webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;text-align:left}
+:focus-visible{outline:2px solid var(--hue);outline-offset:2px;border-radius:8px}
+.n{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+.hero{font-family:"Martian Mono","IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
+  letter-spacing:-.05em}
+.lbl{font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3);font-weight:500}
+
+.app{display:grid;grid-template-columns:344px minmax(0,1fr);height:100vh}
+
+/* ================= left: language ================= */
+.chat{display:flex;flex-direction:column;background:var(--surface);border-right:1px solid var(--line);min-width:0}
+.chat .hd{padding:15px 18px;border-bottom:1px solid var(--line-2);display:flex;
+  justify-content:space-between;align-items:center;gap:10px}
+.chat .hd .who{font-weight:600;letter-spacing:-.01em}
+.chat .log{flex:1;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:13px}
+.chat .you{align-self:flex-end;max-width:88%;background:var(--surface-2);border:1px solid var(--line);
+  padding:8px 12px;border-radius:14px 14px 4px 14px}
+.chat .bot{color:var(--ink-2);max-width:94%}
+.chat .seeds{padding:10px 18px 4px;display:flex;flex-direction:column;gap:6px}
+.chat .seeds button{border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:13px;
+  color:var(--ink-2);background:var(--surface);transition:border-color .14s,color .14s,transform .14s}
+.chat .seeds button:hover{border-color:var(--ink-3);color:var(--ink);transform:translateX(2px)}
+.chat .box{margin:6px 18px 18px;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:11px;padding:10px 12px;color:var(--ink-3);font-size:13px}
+
+/* ================= right: money ================= */
+.rig{display:flex;flex-direction:column;min-width:0;overflow:hidden;background:var(--ground)}
+.tape{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:0 20px;
+  height:58px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.tape .px{display:flex;align-items:baseline;gap:9px}
+.tape .px b{font-family:"Martian Mono","IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
+  font-size:19px;font-weight:600;letter-spacing:-.06em}
+.tape .tick{font-size:11px;font-family:"IBM Plex Mono",monospace;min-width:52px}
+.exp{display:flex;gap:2px;padding:3px;border-radius:10px;background:var(--well);border:1px solid var(--line)}
+.exp button{padding:5px 11px;border-radius:8px;display:flex;flex-direction:column;gap:0;align-items:center;
+  transition:background .14s}
+.exp button .d{font-size:12px;font-weight:500;color:var(--ink-3)}
+.exp button .t{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
+  font-size:10px;color:var(--ink-3)}
+.exp button.on{background:var(--surface);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.exp button.on .d{color:var(--ink)} .exp button.on .t{color:var(--hue-deep)}
+
+.body{flex:1;overflow:auto;padding:16px 20px 20px;display:flex;flex-direction:column;gap:16px}
+.sect{display:flex;flex-direction:column;gap:9px}
+.cap{display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:24px}
+
+/* ---- direction flipper ---- */
+.dir{display:flex;gap:2px;padding:3px;border-radius:999px;background:var(--well);border:1px solid var(--line)}
+.dir button{padding:5px 15px;border-radius:999px;font-size:12.5px;color:var(--ink-3);font-weight:500;
+  transition:background .16s,color .16s}
+.dir button.on{background:var(--ink);color:var(--ground)}
+
+/* ---- the table + deck ---- */
+.well{background:var(--well);border-radius:16px;padding:16px 14px 14px;
+  box-shadow:inset 0 1px 3px rgba(0,0,0,.09)}
+.deck{display:flex;gap:11px;overflow-x:auto;overflow-y:hidden;padding:14px 4px 16px;
+  perspective:900px;scroll-snap-type:x proximity}
+.deck.flip{animation:flip .34s cubic-bezier(.4,0,.2,1)}
+@keyframes flip{0%{transform:rotateX(0);opacity:1}
+  45%{transform:rotateX(-58deg) translateY(-6px);opacity:.25}
+  100%{transform:rotateX(0);opacity:1}}
+.card{position:relative;flex:none;width:122px;height:158px;border:1px solid var(--line);
+  border-radius:13px;background:var(--surface);overflow:hidden;scroll-snap-align:center;
+  display:flex;flex-direction:column;justify-content:space-between;padding:13px 13px 11px;
+  transform-style:preserve-3d;
+  transition:transform .2s cubic-bezier(.2,.8,.25,1.1), box-shadow .2s, border-color .16s}
+.card .fill{position:absolute;left:0;right:0;bottom:0;opacity:var(--fillA);
+  transition:height .45s cubic-bezier(.3,.8,.3,1), background .3s}
+.card .edge{position:absolute;left:0;right:0;bottom:0;height:3px;transition:background .3s}
+.card>*{position:relative}
+.card .od{font-size:29px;font-weight:700;line-height:.9}
+.card .od i{font-size:13px;font-weight:500;font-style:normal;color:var(--ink-3);letter-spacing:0}
+.card .k{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
+  font-size:15px;font-weight:600;letter-spacing:-.01em}
+.card .mi{font-size:10px;color:var(--ink-3);line-height:1.35}
+.card:hover{transform:translateY(-5px) rotateX(5deg);border-color:var(--ink-3)}
+.card.on{border-color:var(--ink);box-shadow:var(--lift);transform:translateY(-9px) rotateX(3deg)}
+.card.dealt{box-shadow:var(--deal)}
+.card.dealt:before{content:"";position:absolute;inset:-1px;border-radius:13px;
+  border:1.5px solid var(--hue);pointer-events:none}
+.card.deal-in{animation:dealin .42s cubic-bezier(.2,.9,.25,1.15)}
+@keyframes dealin{0%{transform:translateY(46px) rotateX(24deg) scale(.9);opacity:0}
+  100%{transform:translateY(-9px) rotateX(3deg) scale(1);opacity:1}}
+.tag{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--hue-deep);
+  display:flex;align-items:center;gap:5px}
+.tag.mine{color:var(--warn)}
+.tag i{width:6px;height:6px;border-radius:50%;background:currentColor}
+
+/* ---- payoff strip ---- */
+.strip{border:1px solid var(--line);border-radius:13px;background:var(--surface);overflow:hidden}
+.strip .plot{position:relative;padding:14px 14px 2px;cursor:crosshair}
+.strip svg{display:block;width:100%;height:110px;touch-action:none}
+.strip .cross{position:absolute;top:8px;pointer-events:none;transform:translateX(-50%);
+  background:var(--ink);color:var(--ground);border-radius:7px;padding:3px 8px;white-space:nowrap;
+  font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;font-size:11px;font-weight:500;
+  opacity:0;transition:opacity .12s}
+.strip .plot:hover .cross{opacity:1}
+.strip .rd{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--line-2)}
+.strip .rd>div{padding:10px 14px;border-right:1px solid var(--line-2);display:flex;flex-direction:column;gap:2px}
+.strip .rd>div:last-child{border-right:0}
+.strip .rd b{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
+  font-size:16px;font-weight:600;letter-spacing:-.01em}
+
+/* ---- your board ---- */
+.board{display:flex;gap:10px;overflow-x:auto;padding-bottom:3px}
+.hold{flex:none;width:172px;border:1px solid var(--line);border-radius:12px;background:var(--surface);
+  padding:11px 13px;display:flex;flex-direction:column;gap:7px}
+.hold.prac{border-style:dashed;background:transparent}
+.hold .row{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.hold .k{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:14px}
+.hold .pl{font-family:"Martian Mono",monospace;font-variant-numeric:tabular-nums;font-size:14px;
+  font-weight:600;letter-spacing:-.05em}
+.hold .pl.up{color:var(--hue-deep)} .hold .pl.dn{color:var(--ink-3)}
+.hold .clk{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
+  font-size:11px;color:var(--ink-3)}
+.hold .rail{height:4px;border-radius:2px;background:var(--surface-2);overflow:hidden}
+.hold .rail i{display:block;height:100%;background:var(--hue);border-radius:2px;transition:width 1s linear}
+.hold .t2{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+.emptyb{border:1px dashed var(--line);border-radius:12px;padding:15px;color:var(--ink-3);font-size:13px}
+
+/* ---- commit ---- */
+.commit{border-top:1px solid var(--line);background:var(--surface);padding:13px 20px;
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.risk{flex:1;min-width:190px;display:flex;flex-direction:column;gap:5px}
+.risk .bar{height:10px;border-radius:6px;background:var(--well);border:1px solid var(--line);
+  overflow:hidden;display:flex}
+.risk .bar i{display:block;height:100%;background:var(--hue);transition:width .3s}
+.risk .bar i.pend{opacity:.4;animation:breathe 2.1s ease-in-out infinite}
+@keyframes breathe{0%,100%{opacity:.24}50%{opacity:.52}}
+.risk .rowx{display:flex;justify-content:space-between;font-size:11px;color:var(--ink-3)}
+.gate{display:flex;gap:5px}
+.gate span{display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:9px;
+  border:1px solid var(--line);font-size:11.5px;color:var(--ink-3);transition:all .2s}
+.gate span i{width:7px;height:7px;border-radius:50%;background:var(--line);flex:none;transition:background .2s}
+.gate span.pass{color:var(--ink-2)} .gate span.pass i{background:var(--good)}
+.gate span.fail{color:var(--crit);border-color:color-mix(in srgb,var(--crit) 35%,var(--line))}
+.gate span.fail i{background:var(--crit)}
+.go{background:var(--btn);color:var(--btn-ink);padding:12px 22px;border-radius:11px;font-weight:600;
+  font-size:14px;white-space:nowrap;font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
+  transition:transform .12s,opacity .12s}
+.go:hover{opacity:.9;transform:translateY(-1px)}
+.go.prac{background:transparent;color:var(--ink-2);border:1px solid var(--line);font-weight:500}
+.mode{display:flex;gap:2px;padding:3px;border-radius:999px;background:var(--well);border:1px solid var(--line)}
+.mode button{padding:5px 12px;border-radius:999px;font-size:11.5px;color:var(--ink-3)}
+.mode button.on{background:var(--surface);color:var(--ink);font-weight:500;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+
+/* ---- veto: two cards that don't match ---- */
+.halt{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:22px;padding:28px}
+.halt h2{margin:0;font-size:23px;letter-spacing:-.025em;text-align:center}
+.halt .sub{color:var(--ink-2);text-align:center;max-width:46ch;margin:0;font-size:13.5px}
+.face{display:flex;align-items:stretch;gap:0}
+.face .rd2{width:196px;border:1px solid var(--line);border-radius:13px;background:var(--surface);
+  padding:15px;display:flex;flex-direction:column;gap:9px;box-shadow:var(--lift)}
+.face .rd2.a{transform:rotate(-2.2deg)}
+.face .rd2.b{transform:rotate(2.2deg);border-color:color-mix(in srgb,var(--crit) 45%,var(--line))}
+.face .split{width:44px;display:flex;align-items:center;justify-content:center;color:var(--crit);
+  font-size:22px;font-weight:600}
+.face dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:5px 10px;font-size:12px}
+.face dt{color:var(--ink-3)}
+.face dd{margin:0;font-family:"IBM Plex Mono",monospace;text-align:right}
+.face dd.bad{color:var(--crit);font-weight:600}
+.said{border-left:2px solid var(--line);padding-left:12px;color:var(--ink-2);font-style:italic;
+  max-width:48ch;font-size:13px}
+
+.sw{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:99;display:flex;
+  align-items:center;gap:2px;background:#0A0E13;color:#F2F6FA;border-radius:999px;padding:5px;
+  box-shadow:0 6px 30px rgba(0,0,0,.5);font-family:"IBM Plex Mono",monospace;font-size:11.5px}
+.sw .t{padding:0 11px;color:#6E7F8F}
+.sw button{border-radius:999px;padding:0 12px;height:25px;color:#93A3B3}
+.sw button.on{background:rgba(255,255,255,.16);color:#F2F6FA}
+
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+@media (max-width:900px){.app{grid-template-columns:1fr;grid-template-rows:auto 1fr}body{overflow:auto}}
+</style>
+
+<div class="app" id="app"></div>
+<div class="sw" id="sw"></div>
+
+<script>
+// ================================================================ live off the book
+var SPOT = 2445.49, BUDGET = 5;
+
+/* [strike, $ per contract, maker IV] - read from the OptionBook, spot $2,445.49 */
+var CHAIN = {
+  DOWN: {
+    1:[[2360,2.08,.459],[2380,3.84,.440],[2400,7.06,.424],[2420,12.67,.416],[2440,21.29,.415]],
+    2:[[2320,3.52,.492],[2340,5.18,.475],[2360,7.68,.461],[2380,11.43,.450],[2400,16.85,.443],[2420,24.04,.437],[2440,33.33,.435]],
+    3:[[2280,3.61,.502],[2300,4.92,.487],[2320,6.87,.476],[2340,9.58,.467],[2360,13.32,.459],[2380,18.32,.453],[2400,24.68,.447],[2420,32.61,.443],[2440,42.39,.443]]
+  },
+  UP: {
+    1:[[2550,1.80,.487],[2540,2.35,.477],[2520,3.96,.456],[2500,6.73,.437],[2480,11.40,.421],[2460,18.82,.413]],
+    2:[[2580,3.35,.472],[2560,4.99,.462],[2540,7.43,.454],[2520,10.95,.446],[2500,16.14,.444],[2480,22.60,.436],[2460,31.25,.435]],
+    3:[[2640,3.33,.509],[2620,4.42,.498],[2600,5.87,.488],[2580,7.82,.478],[2560,10.47,.470],[2540,13.95,.462],[2520,18.54,.455],[2500,24.33,.448],[2480,31.64,.443],[2460,40.77,.443]]
+  }
+};
+var VETO = { said:"eth's been ripping, i think it gives some back before the weekend",
+  a:{underlying:"ETH",direction:"UP",sizeUsdc:2,horizonDays:3},
+  b:{underlying:"ETH",direction:"DOWN",sizeUsdc:2,horizonDays:3}, clash:["direction"] };
+
+function ncdf(x){
+  var t=1/(1+.2316419*Math.abs(x)), d=.3989422804014327*Math.exp(-x*x/2);
+  var p=d*t*(.31938153+t*(-.356563782+t*(1.781477937+t*(-1.821255978+t*1.330274429))));
+  return x>0?1-p:p;
+}
+function money(n,d){ d=d==null?2:d; return n.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d}); }
+function sgn(n){ return (n>=0?"+$":"−$")+money(Math.abs(n)); }
+
+function opt(dir,days,i,stake){
+  var r=CHAIN[dir][days][i], K=r[0], perCt=r[1], iv=r[2], T=days/365, s=iv*Math.sqrt(T);
+  var d2=(Math.log(SPOT/K)-.5*iv*iv*T)/s;
+  var put = dir==="DOWN";
+  var c = stake/perCt;
+  return { K:K, perCt:perCt, iv:iv, days:days, stake:stake, put:put, contracts:c,
+    chance: put ? ncdf(-d2) : ncdf(d2),
+    breakeven: put ? K-perCt : K+perCt,
+    pays: put ? "USDC" : "ETH",
+    payoff: function(P){ return (put ? Math.max(0,K-P) : Math.max(0,P-K))*c - stake; } };
+}
+function expiryAt(n){
+  var d=new Date(), e=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate(),8,0,0));
+  if(e<=d) e=new Date(e.getTime()+864e5);
+  return new Date(e.getTime()+(n-1)*864e5);
+}
+function clock(ms){ if(ms<0) return "00:00:00";
+  var s=Math.floor(ms/1000),h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;
+  var p=function(v){return (v<10?"0":"")+v;}; return p(h)+":"+p(m)+":"+p(x); }
+function ramp(ch){ return "var(--r"+Math.max(0,Math.min(5,Math.floor(ch*5.999)))+")"; }
+
+// ================================================================ state
+var S = { view:"live", dir:"DOWN", days:1, idx:0, stake:2, practice:true, dealt:null,
+  spot:SPOT, flip:false, dealAnim:false, log:[],
+  held:[{K:2360,days:1,stake:2,perCt:2.08,put:true,practice:true}] };
+var q0=new URLSearchParams(location.search);
+if(["live","veto","empty"].indexOf(q0.get("state"))>-1) S.view=q0.get("state");
+
+// ================================================================ left
+function chat(){
+  return '<div class="chat"><div class="hd"><span class="who">Copilot</span>' +
+    '<span class="lbl">proposes · never spends</span></div><div class="log" id="log">' +
+    (S.log.length ? S.log.map(function(l){ return '<div class="'+l[0]+'">'+l[1]+'</div>'; }).join("")
+      : '<div class="bot">Deck’s on the right. Have a poke — nothing is bought until you press the button.</div>') +
+    '</div><div class="seeds" id="seeds">' +
+    [["I think ETH drops before Friday","deal"],
+     ["Give me the longest shot you’ve got","long"],
+     ["What is this, in one line?","teach"]].map(function(s){
+      return '<button data-a="'+s[1]+'">'+s[0]+'</button>'; }).join("") +
+    '</div><div class="box">Say what you think happens…</div></div>';
+}
+
+// ================================================================ right
+function tape(){
+  return '<div class="tape"><div class="px"><b class="hero" id="spot">$'+money(S.spot)+'</b>' +
+    '<span class="lbl">ETH</span><span class="tick" id="tick"></span></div>' +
+    '<div class="exp" id="exp">'+[1,2,3].map(function(d){
+      return '<button data-d="'+d+'" class="'+(d===S.days?"on":"")+'"><span class="d">'+d+'d</span>' +
+        '<span class="t" data-clk="'+d+'">--:--:--</span></button>'; }).join("")+'</div></div>';
+}
+
+function deck(){
+  var rows=CHAIN[S.dir][S.days];
+  return '<div class="well"><div class="deck'+(S.flip?" flip":"")+'" id="deck">'+rows.map(function(r,i){
+    var o=opt(S.dir,S.days,i,S.stake), pct=Math.round(o.chance*100);
+    var cls="card"+(i===S.idx?" on":"")+(S.dealt===i?" dealt":"")+(S.dealt===i&&S.dealAnim?" deal-in":"");
+    return '<button class="'+cls+'" data-i="'+i+'" aria-label="Strike '+o.K+', '+pct+' percent chance">' +
+      '<i class="fill" style="height:'+Math.max(5,o.chance*100).toFixed(1)+'%;background:'+ramp(o.chance)+'"></i>' +
+      '<i class="edge" style="background:'+ramp(o.chance)+'"></i>' +
+      '<span><span class="od hero">'+pct+'<i>%</i></span><br><span class="lbl">chance</span></span>' +
+      '<span><span class="k">'+money(o.K,0)+'</span>' +
+      '<div class="mi">'+(o.put?"pays below":"pays above")+'<br>'+o.contracts.toFixed(2)+' × $'+money(o.stake)+'</div></span>' +
+      '</button>'; }).join("")+'</div></div>';
+}
+
+function strip(){
+  var o=opt(S.dir,S.days,S.idx,S.stake);
+  var lo=SPOT*0.90, hi=SPOT*1.08, H=110, pt=10, pb=17;
+  var top=Math.max(o.payoff(lo),o.payoff(hi)), bot=-o.stake;
+  var x=function(p){ return (p-lo)/(hi-lo)*100; };
+  var y=function(v){ return pt+(top-v)/(top-bot)*(H-pt-pb); };
+  var ks=[lo,o.K,hi].map(function(p){ return x(p).toFixed(2)+","+y(o.payoff(p)).toFixed(2); }).join(" ");
+  var z=y(0);
+  return '<div class="strip"><div class="plot" id="plot">' +
+    '<div class="cross" id="cross"></div>' +
+    '<svg viewBox="0 0 100 '+H+'" preserveAspectRatio="none" id="psvg" role="img" ' +
+      'aria-label="What you get back at each finishing price">' +
+      '<line x1="0" x2="100" y1="'+z+'" y2="'+z+'" stroke="var(--line-2)" stroke-width="1" vector-effect="non-scaling-stroke"/>' +
+      '<polygon points="0,'+z+' '+ks+' 100,'+z+'" fill="var(--hue)" opacity=".14"/>' +
+      '<polyline points="'+ks+'" fill="none" stroke="var(--hue)" stroke-width="2" ' +
+        'vector-effect="non-scaling-stroke" stroke-linejoin="round"/>' +
+      '<line x1="'+x(SPOT)+'" x2="'+x(SPOT)+'" y1="'+pt+'" y2="'+(H-pb)+'" stroke="var(--ink-3)" ' +
+        'stroke-width="1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>' +
+      '<line id="cl" x1="-9" x2="-9" y1="'+pt+'" y2="'+(H-pb)+'" stroke="var(--ink)" stroke-width="1.5" ' +
+        'vector-effect="non-scaling-stroke" opacity="0"/>' +
+      '<text x="'+x(SPOT)+'" y="'+(H-4)+'" text-anchor="middle" fill="var(--ink-3)" font-size="9" font-family="IBM Plex Mono">now</text>' +
+      '<text x="1" y="'+(H-4)+'" fill="var(--ink-3)" font-size="9" font-family="IBM Plex Mono">$'+money(lo,0)+'</text>' +
+      '<text x="99" y="'+(H-4)+'" text-anchor="end" fill="var(--ink-3)" font-size="9" font-family="IBM Plex Mono">$'+money(hi,0)+'</text>' +
+    '</svg></div><div class="rd">' +
+      '<div><span class="lbl">You pay</span><b>$'+money(o.stake)+'</b></div>' +
+      '<div><span class="lbl">Most you lose</span><b>$'+money(o.stake)+'</b></div>' +
+      '<div><span class="lbl">Break even</span><b>$'+money(o.breakeven,0)+'</b></div>' +
+    '</div></div>';
+}
+
+function board(){
+  if(!S.held.length) return '<div class="emptyb">Nothing open. A practice run lands here too.</div>';
+  return '<div class="board">'+S.held.map(function(h,i){
+    var c=h.stake/h.perCt;
+    var now=(h.put?Math.max(0,h.K-S.spot):Math.max(0,S.spot-h.K))*c-h.stake;
+    var end=expiryAt(h.days).getTime(), life=864e5*h.days, left=Math.max(0,end-Date.now());
+    return '<div class="hold '+(h.practice?"prac":"")+'">' +
+      '<div class="row"><span class="k">'+money(h.K,0)+(h.put?" ▾":" ▴")+'</span>' +
+      '<span class="pl '+(now>0?"up":"dn")+'">'+sgn(now)+'</span></div>' +
+      '<div class="rail"><i data-rail="'+i+'" style="width:'+(100*left/life).toFixed(1)+'%"></i></div>' +
+      '<div class="row"><span class="clk" data-hold="'+i+'">--:--:--</span>' +
+      '<span class="t2">'+(h.practice?"practice":"live")+'</span></div></div>'; }).join("")+'</div>';
+}
+
+function commit(){
+  var o=opt(S.dir,S.days,S.idx,S.stake);
+  var spent=S.held.filter(function(h){return !h.practice;}).reduce(function(a,h){return a+h.stake;},0);
+  var pend=S.practice?0:o.stake;
+  var g = S.dealt===null ? [["","Trade Agent"],["","Review Agent"],["","You"]]
+    : S.dealt===S.idx ? [["pass","Trade Agent"],["pass","Review Agent"],["","You"]]
+    : [["pass","Trade Agent"],["pass","Review · your override"],["","You"]];
+  return '<div class="commit"><div class="risk"><div class="bar">' +
+    '<i style="width:'+(100*spent/BUDGET)+'%"></i><i class="pend" style="width:'+(100*pend/BUDGET)+'%"></i>' +
+    '</div><div class="rowx"><span>Risk budget</span><span class="n">$'+money(BUDGET-spent-pend)+' of $'+money(BUDGET)+'</span></div></div>' +
+    '<div class="gate">'+g.map(function(r){ return '<span class="'+r[0]+'"><i></i>'+r[1]+'</span>'; }).join("")+'</div>' +
+    '<div class="mode" id="mode"><button data-p="1" class="'+(S.practice?"on":"")+'">Practice</button>' +
+    '<button data-p="0" class="'+(!S.practice?"on":"")+'">Real</button></div>' +
+    '<button class="go '+(S.practice?"prac":"")+'" id="go">'+(S.practice?"Practice run":"Confirm · $"+money(o.stake))+'</button></div>';
+}
+
+function halt(){
+  if(S.view==="veto"){
+    var row=function(k,v,bad){ return '<dt>'+k+'</dt><dd class="'+(bad?"bad":"")+'">'+v+'</dd>'; };
+    var keys=["underlying","direction","sizeUsdc","horizonDays"];
+    var side=function(who,o,cls){
+      return '<div class="rd2 '+cls+'"><span class="lbl">'+who+'</span><dl>' +
+        keys.map(function(k){ return row(k,o[k],VETO.clash.indexOf(k)>-1); }).join("")+'</dl></div>'; };
+    return '<div class="halt"><h2>They read you differently.</h2>' +
+      '<p class="sub">Two agents took your sentence apart on their own. They disagree, so nothing was signed.</p>' +
+      '<div class="face">'+side("Trade Agent",VETO.a,"a")+'<div class="split">≠</div>'+side("Review Agent",VETO.b,"b")+'</div>' +
+      '<p class="said">'+VETO.said+'</p>' +
+      '<button class="go">Say it again</button></div>';
+  }
+  return '<div class="halt"><h2>The deck is empty.</h2>' +
+    '<p class="sub">No maker is quoting this right now. They reload at 09:00 UTC — or you can ask for one to be built for you.</p>' +
+    '<button class="go">Ask for one to be made</button></div>';
+}
+
+function rig(){
+  if(S.view!=="live") return '<div class="rig">'+tape()+halt()+'</div>';
+  var tagTxt = S.dealt===null ? "" : S.dealt===S.idx
+    ? '<span class="tag"><i></i>the agent picked this</span>'
+    : '<span class="tag mine"><i></i>your pick, not the agent’s</span>';
+  return '<div class="rig">'+tape()+'<div class="body">' +
+    '<div class="sect"><div class="cap"><div class="dir" id="dir">' +
+      '<button data-dir="DOWN" class="'+(S.dir==="DOWN"?"on":"")+'">▾ Falls</button>' +
+      '<button data-dir="UP" class="'+(S.dir==="UP"?"on":"")+'">▴ Rises</button></div>'+tagTxt+'</div>' +
+      deck()+'</div>' +
+    '<div class="sect">'+strip()+'</div>' +
+    '<div class="sect"><span class="lbl">Yours</span>'+board()+'</div>' +
+    '</div>'+commit()+'</div>';
+}
+
+// ================================================================ render
+function render(){
+  document.getElementById("app").innerHTML = chat()+rig();
+  document.getElementById("sw").innerHTML = '<span class="t">state</span>' +
+    [["live","Live"],["veto","Veto"],["empty","Empty"]].map(function(s){
+      return '<button data-s="'+s[0]+'" class="'+(s[0]===S.view?"on":"")+'">'+s[1]+'</button>'; }).join("");
+  S.flip=false; S.dealAnim=false;
+  bind();
+  var u=new URL(location.href); u.searchParams.set("state",S.view); history.replaceState(null,"",u);
+}
+function say(w,t){ S.log.push([w,t]); }
+
+function bind(){
+  var d=document.getElementById("deck");
+  if(d) d.onclick=function(e){ var b=e.target.closest("[data-i]"); if(!b) return;
+    S.idx=+b.getAttribute("data-i"); render(); };
+  var dr=document.getElementById("dir");
+  if(dr) dr.onclick=function(e){ var b=e.target.closest("[data-dir]"); if(!b) return;
+    var v=b.getAttribute("data-dir"); if(v===S.dir) return;
+    S.dir=v; S.idx=0; S.dealt=null; S.flip=true; render(); };
+  var ex=document.getElementById("exp");
+  if(ex) ex.onclick=function(e){ var b=e.target.closest("[data-d]"); if(!b) return;
+    S.days=+b.getAttribute("data-d"); S.idx=0; S.dealt=null; S.flip=true; render(); };
+  var md=document.getElementById("mode");
+  if(md) md.onclick=function(e){ var b=e.target.closest("[data-p]"); if(!b) return;
+    S.practice=b.getAttribute("data-p")==="1"; render(); };
+  var go=document.getElementById("go");
+  if(go) go.onclick=function(){
+    if(S.view!=="live") return;
+    var o=opt(S.dir,S.days,S.idx,S.stake);
+    S.held.unshift({K:o.K,days:o.days,stake:o.stake,perCt:o.perCt,put:o.put,practice:S.practice});
+    say("bot",(S.practice?"Practice run open. ":"Bought. ")+"$"+money(o.K,0)+(o.put?" put":" call")+
+      ", "+o.contracts.toFixed(2)+" contracts, pays in "+o.pays+".");
+    render(); };
+  var sd=document.getElementById("seeds");
+  if(sd) sd.onclick=function(e){ var b=e.target.closest("[data-a]"); if(!b) return;
+    var a=b.getAttribute("data-a"); say("you",b.textContent);
+    if(a==="deal"){ S.dir="DOWN"; S.days=3; S.idx=3; S.dealt=3; S.dealAnim=true;
+      var o=opt("DOWN",3,3,S.stake);
+      say("bot","Dealt the $"+money(o.K,0)+" — "+Math.round(o.chance*100)+"% chance, three days. "+
+        "Flick to another if you disagree with me.");
+    } else if(a==="long"){ S.idx=0; S.dealt=0; S.dealAnim=true;
+      var l=opt(S.dir,S.days,0,S.stake);
+      say("bot","Longest shot on the board: "+Math.round(l.chance*100)+"% for "+l.contracts.toFixed(2)+
+        " contracts. Big payout, rarely pays.");
+    } else {
+      say("bot","You pay a little now. If ETH ends past the number on the card, you get paid the difference.");
+    }
+    render();
+    var lg=document.getElementById("log"); if(lg) lg.scrollTop=lg.scrollHeight; };
+  document.getElementById("sw").onclick=function(e){ var b=e.target.closest("[data-s]"); if(!b) return;
+    S.view=b.getAttribute("data-s"); render(); };
+
+  // payoff crosshair
+  var plot=document.getElementById("plot");
+  if(plot){
+    var o=opt(S.dir,S.days,S.idx,S.stake), lo=SPOT*0.90, hi=SPOT*1.08;
+    plot.onpointermove=function(e){
+      var r=plot.getBoundingClientRect(), f=(e.clientX-r.left-14)/(r.width-28);
+      f=Math.max(0,Math.min(1,f));
+      var P=lo+f*(hi-lo), v=o.payoff(P);
+      var c=document.getElementById("cross"), cl=document.getElementById("cl");
+      c.style.left=(14+f*(r.width-28))+"px";
+      c.textContent="$"+money(P,0)+"  "+sgn(v);
+      cl.setAttribute("x1",(f*100).toFixed(2)); cl.setAttribute("x2",(f*100).toFixed(2));
+      cl.setAttribute("opacity","1");
+    };
+    plot.onpointerleave=function(){ var cl=document.getElementById("cl"); if(cl) cl.setAttribute("opacity","0"); };
+  }
+}
+
+// ================================================================ alive
+var last=SPOT;
+setInterval(function(){
+  S.spot += (SPOT-S.spot)*0.05 + (Math.random()-0.5)*1.7;
+  var el=document.getElementById("spot");
+  if(el){ el.textContent="$"+money(S.spot);
+    var t=document.getElementById("tick"), dv=S.spot-last;
+    if(t){ t.textContent=(dv>=0?"▴ ":"▾ ")+money(Math.abs(dv));
+      t.style.color = dv>=0 ? "var(--good)" : "var(--ink-3)"; } }
+  last=S.spot;
+},1500);
+setInterval(function(){
+  [1,2,3].forEach(function(d){ var n=document.querySelector('[data-clk="'+d+'"]');
+    if(n) n.textContent=clock(expiryAt(d).getTime()-Date.now()); });
+  S.held.forEach(function(h,i){
+    var n=document.querySelector('[data-hold="'+i+'"]');
+    var end=expiryAt(h.days).getTime(), left=Math.max(0,end-Date.now());
+    if(n) n.textContent=clock(left);
+    var r=document.querySelector('[data-rail="'+i+'"]');
+    if(r) r.style.width=(100*left/(864e5*h.days)).toFixed(2)+"%";
+  });
+},1000);
+
+render();
+</script>

@@ -54,6 +54,7 @@ on shared WiFi -- anyone on the network could then spend from the wallet.
 
 The reasoning behind this project is written down, not assumed:
 
+- **[CONTEXT-MAP.md](./CONTEXT-MAP.md)** — the two contexts: the Copilot, and Liquidation Cover.
 - **[CONTEXT.md](./CONTEXT.md)** — the glossary. What a Trader, a Fill, a Max Loss, a Forecast is.
 - **[docs/adr/](./docs/adr/)** — the decisions and why they went that way:
   - [0001](./docs/adr/0001-the-model-never-touches-money.md) — the model never picks an order and never produces a number
@@ -61,6 +62,9 @@ The reasoning behind this project is written down, not assumed:
   - [0003](./docs/adr/0003-chain-is-the-source-of-truth-for-money.md) — the chain owns money, the DB owns the conversation
   - [0004](./docs/adr/0004-nextjs-frontend-node-backend.md) — the stack, and why not Python
   - [0005](./docs/adr/0005-forecasts-are-quarantined-from-the-trade-flow.md) — opinions never sit next to guarantees
+  - [0006](./docs/adr/0006-the-agent-selects-the-order-code-derives-every-number.md) — the agent picks the Order, code derives every number (supersedes 0001)
+  - [0007](./docs/adr/0007-agents-are-a-python-service-behind-the-node-backend.md) — the agents are Python, behind the Node backend (supersedes half of 0004)
+  - [0008](./docs/adr/0008-cover-is-bought-by-rfq-for-single-collateral-loans-only.md) — Cover is RFQ-only, single-collateral Loans only
 
 ## Layout
 
