@@ -9,6 +9,7 @@
     "explore": "npm run explore -w @copilot/api",
     "fill": "npm run fill -w @copilot/api",
     "wallet": "npm run wallet -w @copilot/api",
-    "dev": "npm run dev -w @copilot/api"
+    "dev": "npm run dev -w @copilot/api",
+    "prototype": "node -e \"require('child_process').exec((process.platform==='win32'?'start \\\"\\\" ':'open ')+'apps/web/prototype-copilot.html')\""
   }
 }
