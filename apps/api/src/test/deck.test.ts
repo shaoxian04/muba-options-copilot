@@ -220,6 +220,44 @@ describe("cardRef", () => {
     expect(second.body.cards.map((c: any) => c.cardRef)).toEqual(first.body.cards.map((c: any) => c.cardRef));
   });
 
+  /**
+   * The regression test for a bug that reached the live book.
+   *
+   * A cardRef was once keyed on `maker:nonce:expiry`. On Base mainnet one maker posts
+   * its whole strike ladder under a SINGLE nonce, so all five Cards in a real Deck
+   * HMACed to one reference and the last write won -- a Trader picking the 44% Card
+   * would have been proposed the 7% one, at its price. Every test passed, because the
+   * fixture gave each Order its own nonce. It no longer does.
+   */
+  it("names each Card in a shared-nonce strike ladder distinctly", async () => {
+    const session = freshSession();
+    const { body } = await getDeck("direction=DOWN&horizonDays=1&sizeUsdc=2", session);
+
+    const ladder = DEFAULT_BOOK.filter((o) => o.order.optionType === 1 && o.order.nonce === 1n);
+    expect(ladder.length).toBeGreaterThan(1);
+    expect(new Set(ladder.map((o) => String(o.order.nonce))).size).toBe(1);
+
+    const refs = body.cards.map((c: any) => c.cardRef);
+    expect(new Set(refs).size).toBe(refs.length);
+  });
+
+  it("resolves each Card in that ladder to its own strike", async () => {
+    const session = freshSession();
+    const { body } = await getDeck("direction=DOWN&horizonDays=1&sizeUsdc=2", session);
+
+    for (const card of body.cards) {
+      const res = await app.inject({
+        method: "POST",
+        url: "/propose",
+        headers: { "x-session-id": session },
+        payload: { underlying: "ETH", direction: "DOWN", sizeUsdc: 2, horizonDays: 1, cardRef: card.cardRef },
+      });
+      // The Card the Trader picked is the Order they are proposed. Not its neighbour.
+      expect(res.json().proposal.strike, `cardRef for $${card.strike.value}`).toBe(card.strike.value);
+      expect(res.json().proposal.premiumUsdc).toBe(card.premiumUsdc.value);
+    }
+  });
+
   it("names a different Card in a different session, for the same Order", async () => {
     const a = await getDeck("direction=DOWN&horizonDays=1&sizeUsdc=2", "deck-alice");
     const b = await getDeck("direction=DOWN&horizonDays=1&sizeUsdc=2", "deck-bob");

@@ -116,9 +116,14 @@ export function recallProposal(s: Session, id: string) {
  *
  * The ref is a capability -- it is the only thing /propose needs to name an Order --
  * so the key is CSPRNG bytes and the ref is a full 128 bits of HMAC output.
+ *
+ * @param identity What distinguishes this Order from every other on the book. Passed
+ *                 in rather than derived here: this module is a store, and what makes
+ *                 two Orders the same Order is knowledge that belongs with Orders
+ *                 (`orderIdentity` in `thetanuts/orders.ts`). Keeping it out also
+ *                 keeps the SDK client off `/practice`'s import graph.
  */
-export function rememberCard(s: Session, order: OrderWithSignature): string {
-  const identity = `${order.makerAddress}:${order.order.nonce}:${order.order.expiry}`;
+export function rememberCard(s: Session, order: OrderWithSignature, identity: string): string {
   const ref = createHmac("sha256", s.cardKey).update(identity).digest("hex").slice(0, 32);
   s.cards.set(ref, { order, at: Date.now() });
   for (const [k, v] of s.cards) if (Date.now() - v.at > CARD_TTL_MS) s.cards.delete(k);

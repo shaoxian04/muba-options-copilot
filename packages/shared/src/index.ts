@@ -177,7 +177,12 @@ export const Holding = z.object({
   kind: z.enum(["REAL", "PRACTICE"]),
   strike: Figure,
   contracts: Figure,
-  /** What was paid. Zero for a Practice Run -- it is what the Trader would have paid. */
+  /**
+   * What was paid -- and for a Practice Run, what WOULD have been paid. It is the real
+   * premium either way, because a practice holding that showed $0.00 would teach a
+   * Trader the wrong thing about what the trade costs. `kind` is what says no money
+   * moved, and it is the only thing that says it.
+   */
   premiumUsdc: Figure,
   maxLossUsdc: Figure,
   breakevenPrice: Figure,

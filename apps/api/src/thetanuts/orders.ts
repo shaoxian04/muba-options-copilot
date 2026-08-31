@@ -58,3 +58,26 @@ export const daysToExpiry = (o: OrderWithSignature): number =>
  * not rounding: rounding files it under 1 in the morning and 0 in the afternoon.
  */
 export const wholeDaysToExpiry = (o: OrderWithSignature): number => Math.ceil(daysToExpiry(o));
+
+/**
+ * What identifies one Order across two fetches of the book.
+ *
+ * NOT `maker:nonce`. A maker's nonce is a batch id, not a per-Order one: on Base
+ * mainnet a single maker posts its whole strike ladder -- $2,360 through $2,440 --
+ * under ONE nonce. Keying on maker and nonce alone collapsed a five-Card Deck onto a
+ * single reference, so a Trader who picked the 44% Card would have been handed the 7%
+ * one, at its price. That is the exact failure a cardRef exists to prevent.
+ *
+ * The strike and option type are what actually name the contract. The price is
+ * deliberately NOT in here: a maker re-quoting the same contract a few cents cheaper is
+ * the same offer, and the new price is re-derived when the reference is resolved. If
+ * price were part of the identity, every Card would go stale on every tick.
+ */
+export const orderIdentity = (o: OrderWithSignature): string =>
+  [
+    o.makerAddress,
+    o.order.nonce,
+    o.order.expiry,
+    o.order.optionType,
+    (o.order.strikes ?? []).join(","),
+  ].join(":");

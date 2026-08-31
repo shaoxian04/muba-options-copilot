@@ -16,7 +16,7 @@ import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
 import type { TradeIntent, TradeProposal, SettlementScenario } from "@copilot/shared";
 import { getClient } from "./client.js";
 import { fromUsdc, PRICE_DECIMALS, CONTRACT_DECIMALS } from "./units.js";
-import { buyableOrders, CALL, PUT, daysToExpiry } from "./orders.js";
+import { buyableOrders, CALL, PUT, daysToExpiry, orderIdentity, isEth } from "./orders.js";
 import { priceOrder, StakeTooSmall, type OrderEconomics } from "./pricing.js";
 import { spotPrice } from "./market.js";
 
@@ -24,18 +24,55 @@ import { spotPrice } from "./market.js";
  * Nothing on the book expresses what the Trader asked for.
  *
  * This becomes a NO_ORDER result, which a Trader reads as a market condition rather
- * than a broken app -- so every message ends by naming when maker liquidity reloads.
- * "Nothing found" leaves them refreshing; a time leaves them with something to do.
+ * than a broken app. When the cause is scarcity -- nobody quoting, nothing at this
+ * expiry -- the message names when maker liquidity reloads, because "nothing found"
+ * leaves them refreshing and a time leaves them something to do.
+ *
+ * When the cause is a contract that simply does not match what they asked for, it does
+ * not: waiting for makers would not help, and tacking a reload time onto "that is not a
+ * DOWN bet" makes a clear sentence sound like a weather report.
  */
 export class NoSuitableOrder extends Error {
-  constructor(readonly intent: TradeIntent, message: string) {
-    super(`${message} ${RELOADS}`);
+  constructor(readonly intent: TradeIntent, message: string, scarcity = true) {
+    super(scarcity ? `${message} ${RELOADS}` : message);
     this.name = "NoSuitableOrder";
   }
 }
 
-/** When makers repost. Worth saying every time there is nothing to sell. */
+/** When makers repost. Worth saying whenever there is simply nothing to sell. */
 const RELOADS = "Maker liquidity renews around 09:00 UTC.";
+
+/**
+ * The Order must actually express what the Trader asked for.
+ *
+ * ADR-0006 lists this among the hard checks that run before any signature: option type
+ * matches direction, underlying matches the intent, expiry within 2x the requested
+ * horizon. On the agent path `selectOrder` picks an Order that satisfies these by
+ * construction -- but "by construction" is a property of today's selection code, and
+ * the Trader-override path has no selection code at all.
+ *
+ * So it runs on BOTH paths, deliberately. Issue #1, story 19: every hard check runs
+ * whether the Card was dealt or chosen, so overruling the agent does not also switch
+ * off the safety. Without this, a cardRef naming a call could be proposed under a
+ * `direction: "DOWN"` intent, and a Trader would be shown a down-bet and filled on a
+ * call -- Max Loss still true, but the trade the opposite of the one they asked for.
+ */
+function assertExpressesIntent(order: OrderWithSignature, intent: TradeIntent): void {
+  const wantType = intent.direction === "DOWN" ? PUT : CALL;
+  if (order.order.optionType !== wantType)
+    throw new NoSuitableOrder(intent, `That contract does not express a ${intent.direction} view on ETH.`, false);
+
+  if (!isEth(order)) throw new NoSuitableOrder(intent, "That contract is not on ETH.", false);
+
+  const days = daysToExpiry(order);
+  if (days <= 0) throw new NoSuitableOrder(intent, "That contract has already expired.", false);
+  if (days > intent.horizonDays * 2)
+    throw new NoSuitableOrder(
+      intent,
+      `That contract runs well past the ${intent.horizonDays}-day horizon you asked for.`,
+      false
+    );
+}
 
 /**
  * Choose the order that best matches the Trader's view.
@@ -106,6 +143,8 @@ export async function proposeOrder(
   order: OrderWithSignature,
   chosenBy: TradeProposal["chosenBy"] = "AGENT"
 ): Promise<{ proposal: TradeProposal; order: OrderWithSignature; economics: OrderEconomics }> {
+  assertExpressesIntent(order, intent);
+
   let economics: OrderEconomics;
   try {
     economics = priceOrder(order, intent.sizeUsdc);
@@ -158,8 +197,9 @@ export async function proposeChosenOrder(
   intent: TradeIntent,
   chosen: OrderWithSignature
 ): Promise<{ proposal: TradeProposal; order: OrderWithSignature; economics: OrderEconomics }> {
-  const identity = (o: OrderWithSignature) => `${o.makerAddress}:${o.order.nonce}:${o.order.expiry}`;
-  const fresh = (await buyableOrders()).find((o) => identity(o) === identity(chosen));
+  // The same `orderIdentity` the reference was minted from -- these two must never
+  // drift apart, which is why neither builds its own.
+  const fresh = (await buyableOrders()).find((o) => orderIdentity(o) === orderIdentity(chosen));
   if (!fresh) throw new QuoteMoved();
 
   return proposeOrder(intent, fresh, "TRADER");

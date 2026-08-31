@@ -13,19 +13,19 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import { z } from "zod";
-import { ProposeRequest, type ProposeResult, type Holding } from "@copilot/shared";
-import { getClient, canSign, walletAddress } from "./thetanuts/client.js";
-import { buyableOrders, impliedVol, daysToExpiry, PUT, CALL } from "./thetanuts/orders.js";
-import { fromPrice, USDC_DECIMALS, CONTRACT_DECIMALS } from "./thetanuts/units.js";
+import { ProposeRequest, type ProposeResult } from "@copilot/shared";
+import { canSign } from "./thetanuts/client.js";
+import { buyableOrders, impliedVol, daysToExpiry, PUT } from "./thetanuts/orders.js";
 import { spotPrice } from "./thetanuts/market.js";
 import { proposeTrade, proposeChosenOrder, NoSuitableOrder, QuoteMoved } from "./thetanuts/propose.js";
 import { buildDeck } from "./thetanuts/deck.js";
 import { reviewIntent } from "./agents/review.js";
 import { practiceRoutes, practiceHoldings } from "./practice.js";
-import { usd, contracts as fmtContracts, moment } from "./format.js";
+import { realHoldings } from "./thetanuts/holdings.js";
+import { usd } from "./format.js";
 import { executeFill, RiskBudgetExceeded, UnsafeOrder } from "./thetanuts/execute.js";
 import {
-  getSession, sessionFor, remainingBudget, setRiskBudget,
+  sessionFor, remainingBudget, setRiskBudget,
   rememberProposal, recallProposal, recallCard, type Session,
 } from "./sessions.js";
 
@@ -57,9 +57,6 @@ const DeckQuery = z.object({
   horizonDays: z.coerce.number().int().min(1).max(3),
   sizeUsdc: z.coerce.number().positive().max(1000),
 });
-
-const sessionOf = (req: { headers: Record<string, unknown> }) =>
-  getSession(typeof req.headers["x-session-id"] === "string" ? (req.headers["x-session-id"] as string) : "default");
 
 /** Guards the routes that move money. No token configured means loopback-only trust. */
 function requireToken(req: any, reply: any): boolean {
@@ -97,11 +94,13 @@ export async function buildApp(): Promise<FastifyInstance> {
    * see ADR-0005 for why that distinction is enforced rather than stylistic.
    */
   app.get("/book", async () => {
-    const [orders, md] = await Promise.all([buyableOrders(), getClient().api.getMarketData() as Promise<any>]);
+    // Same `spotPrice` the Deck and the board read, so the tape and a Card can never
+    // disagree about what ETH costs for any reason but the seconds between two polls.
+    const [orders, spot] = await Promise.all([buyableOrders(), spotPrice().catch(() => null)]);
     const ivs = orders.map(impliedVol).filter((v): v is number => typeof v === "number");
     const iv = ivs.length ? ivs.reduce((a, b) => a + b, 0) / ivs.length : undefined;
     return {
-      spotUsd: md?.prices?.ETH ?? null,
+      spotUsd: spot,
       buyable: orders.length,
       puts: orders.filter((o) => o.order.optionType === PUT).length,
       calls: orders.filter((o) => o.order.optionType !== PUT).length,
@@ -111,7 +110,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   app.get("/session", async (req) => {
-    const s = sessionOf(req as any);
+    const s = sessionFor(req.headers);
     return { riskBudgetUsdc: s.riskBudgetUsdc, spentUsdc: s.spentUsdc, remainingUsdc: remainingBudget(s) };
   });
 
@@ -119,7 +118,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     const { riskBudgetUsdc } = (req.body ?? {}) as { riskBudgetUsdc?: number };
     if (typeof riskBudgetUsdc !== "number" || riskBudgetUsdc <= 0)
       return reply.code(400).send({ error: "riskBudgetUsdc must be a positive number" });
-    const s = sessionOf(req as any);
+    const s = sessionFor(req.headers);
     try {
       setRiskBudget(s, riskBudgetUsdc);
     } catch (e: any) {
@@ -140,7 +139,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     const parsed = DeckQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid Deck request", issues: parsed.error.issues });
 
-    return buildDeck(sessionOf(req as any), parsed.data);
+    return buildDeck(sessionFor(req.headers), parsed.data);
   });
 
   /**
@@ -161,7 +160,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
 
     const { cardRef, ...intent } = parsed.data;
-    const s = sessionOf(req as any);
+    const s = sessionFor(req.headers);
     const remaining = remainingBudget(s);
     if (intent.sizeUsdc > remaining) {
       reply.code(400).send({
@@ -216,7 +215,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     if (!proposalId) return reply.code(400).send({ error: "proposalId required" });
     if (!canSign()) return reply.code(503).send({ error: "No signer configured. Set THETANUTS_PRIVATE_KEY." });
 
-    const s = sessionOf(req as any);
+    const s = sessionFor(req.headers);
     const found = recallProposal(s, proposalId);
     if (!found)
       return reply.code(410).send({ error: "That quote has expired. Prices move -- ask for a fresh one." });
@@ -255,64 +254,4 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(practiceRoutes);
 
   return app;
-}
-
-/**
- * What the chain says this wallet holds.
- *
- * Buyer-side only. The Copilot never sells (ADR-0002), so a seller-side Position did
- * not come from here -- and rendering one on this board would put a Max Loss beside it
- * that is not true, which is worse than not showing it. It is omitted, not mislabelled.
- *
- * NOTE: the field mapping below follows the SDK's `Position` type declaration and has
- * NOT been checked against a live open Position, because doing so needs a funded wallet
- * with a filled order. Everything is read defensively and anything missing becomes null
- * rather than a guess -- but treat the units as unverified until someone holds one.
- */
-async function realHoldings(spot: number | null): Promise<[Holding[], string | null]> {
-  const address = walletAddress();
-  if (!address) return [[], null];
-
-  try {
-    const api = getClient().api as any;
-    const positions: any[] = (await api.getUserPositionsFromIndexer?.(address)) ?? [];
-
-    const holdings = positions
-      .filter((p) => p?.side !== "seller")
-      .map((p): Holding => {
-        const decimals = Number(p.collateralDecimals ?? USDC_DECIMALS);
-        const strike = fromPrice(BigInt(p.option?.strikes?.[0] ?? 0));
-        const contracts = Number(p.amount ?? 0) / 10 ** CONTRACT_DECIMALS;
-        const entry = Number(p.entryPrice ?? 0) / 10 ** decimals;
-        const isCall = p.option?.optionType === CALL;
-        const expiryIso = new Date(Number(p.option?.expiry ?? 0) * 1000).toISOString();
-
-        return {
-          kind: "REAL",
-          strike: usd(strike),
-          contracts: fmtContracts(contracts),
-          premiumUsdc: usd(entry),
-          // We only ever buy, so Max Loss is exactly what was paid.
-          maxLossUsdc: usd(entry),
-          breakevenPrice: usd(Number((isCall ? strike + entry / (contracts || 1) : strike - entry / (contracts || 1)).toFixed(2))),
-          expiry: moment(expiryIso),
-          openedAt: moment(new Date(Number(p.entryTimestamp ?? 0) * 1000).toISOString()),
-          // The indexer's own mark if it gave one; otherwise intrinsic at live spot.
-          currentValueUsdc:
-            p.currentValue !== undefined
-              ? usd(Number(p.currentValue) / 10 ** decimals)
-              : spot === null
-                ? null
-                : usd(Number(((isCall ? Math.max(0, spot - strike) : Math.max(0, strike - spot)) * contracts).toFixed(2))),
-          payoutAsset: isCall ? "WETH" : "USDC",
-          direction: isCall ? "UP" : "DOWN",
-        };
-      });
-
-    return [holdings, address];
-  } catch {
-    // A wallet or an indexer that will not answer is not a reason to hide the Practice
-    // Runs sitting beside it. The board degrades to what it can still tell the truth about.
-    return [[], null];
-  }
 }

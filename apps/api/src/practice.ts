@@ -17,7 +17,7 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { Holding, TradeProposal } from "@copilot/shared";
-import { sessionFor, recallProposal, type Session } from "./sessions.js";
+import { sessionFor, recallProposal, remainingBudget, type Session } from "./sessions.js";
 import { usd, moment } from "./format.js";
 
 /**
@@ -113,9 +113,11 @@ export async function practiceRoutes(app: FastifyInstance): Promise<void> {
     // No Risk Budget is consumed: nothing was risked. The ceiling exists to bound real
     // losses, and spending it on practice would stop a Trader learning before trading.
     return {
+      // `currentValueUsdc` is null here: valuing a holding needs live spot, and this
+      // module cannot reach the chain by design. The board values it -- see /positions.
       holding: practiceHoldings(session, null).at(-1)!,
       // Echoed so the surface can show the ceiling is untouched.
-      remainingUsdc: Math.max(0, session.riskBudgetUsdc - session.spentUsdc),
+      remainingUsdc: remainingBudget(session),
     };
   });
 }

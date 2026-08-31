@@ -17,18 +17,6 @@ export function usd(value: number, dp = 2): Figure {
 }
 
 /**
- * `+$1.42` / `-$2.00`. Signed, for a payoff.
- *
- * ASCII hyphen, not a Unicode minus: this string is compared character for character
- * against what the browser renders (issue #14), and a typographic swap on either side
- * turns that assertion into a false failure nobody can read.
- */
-export function signedUsd(value: number, dp = 2): Figure {
-  const sign = value >= 0 ? "+" : "-";
-  return { value, display: `${sign}$${usdFmt(dp).format(Math.abs(value))}` };
-}
-
-/**
  * `0.869434`. Contracts are quoted to 6 decimals because that is the precision
  * previewFillOrder actually returns -- rounding them for looks would show a Trader a
  * quantity the chain never agreed to.

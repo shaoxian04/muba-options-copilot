@@ -14,7 +14,7 @@
  */
 import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
 import type { Card, Deck } from "@copilot/shared";
-import { buyableOrders, CALL, PUT, impliedVol, daysToExpiry, wholeDaysToExpiry } from "./orders.js";
+import { buyableOrders, CALL, PUT, impliedVol, daysToExpiry, wholeDaysToExpiry, orderIdentity } from "./orders.js";
 import { priceOrder, StakeTooSmall } from "./pricing.js";
 import { impliedChance, NoQuotedVolatility } from "./implied-chance.js";
 import { spotPrice } from "./market.js";
@@ -103,7 +103,7 @@ function toCard(
     });
 
     return {
-      cardRef: rememberCard(session, order),
+      cardRef: rememberCard(session, order, orderIdentity(order)),
       strike: economics.strike,
       perContractUsd: economics.perContractUsd,
       contracts: economics.contracts,

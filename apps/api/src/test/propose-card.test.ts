@@ -18,7 +18,7 @@ vi.mock("../thetanuts/client.js", async () => await import("./stub-client.js"));
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
 import { resetStub, state } from "./stub-client.js";
-import { NOW, DEFAULT_BOOK } from "./fixtures.js";
+import { NOW, DEFAULT_BOOK, makeOrder } from "./fixtures.js";
 
 vi.useFakeTimers({ toFake: ["Date"] });
 vi.setSystemTime(NOW);
@@ -172,6 +172,83 @@ describe("POST /propose with a cardRef", () => {
       const session = freshSession();
       const res = await propose(session, { ...INTENT, cardRef: 42 });
       expect(res.statusCode).toBe(400);
+    });
+  });
+
+  /**
+   * ADR-0006 lists eight hard checks that run before any signature, and issue #1's
+   * story 19 is explicit that they run "whether the Card was dealt or chosen by me, so
+   * that overriding the agent does not also switch off the safety".
+   *
+   * The agent path satisfies these by construction, because `selectOrder` only ever
+   * picks a matching Order. The override path has no selection code at all, so without
+   * an explicit gate a Trader could be shown a down-bet and filled on a call.
+   */
+  describe("runs every hard check the agent path runs", () => {
+    it("refuses a call named under a falls intent", async () => {
+      const session = freshSession();
+      const rises = (
+        await app.inject({
+          method: "GET",
+          url: "/deck?direction=UP&horizonDays=1&sizeUsdc=2",
+          headers: { "x-session-id": session },
+        })
+      ).json();
+      expect(rises.cards.length).toBeGreaterThan(0);
+
+      const res = await propose(session, { ...INTENT, direction: "DOWN", cardRef: rises.cards[0].cardRef });
+      expect(res.json().kind).toBe("NO_ORDER");
+      expect(res.json().message).toMatch(/does not express a DOWN view/);
+    });
+
+    it("refuses a put named under a rises intent", async () => {
+      const session = freshSession();
+      const { cards } = await deck(session);
+
+      const res = await propose(session, { ...INTENT, direction: "UP", cardRef: cards[0].cardRef });
+      expect(res.json().kind).toBe("NO_ORDER");
+      expect(res.json().message).toMatch(/does not express an? UP view/);
+    });
+
+    it("refuses a contract running well past the horizon asked for", async () => {
+      const session = freshSession();
+      // A two-day Card, then named under a one-day intent. 2x1 day is the ceiling.
+      const twoDay = (
+        await app.inject({
+          method: "GET",
+          url: "/deck?direction=DOWN&horizonDays=2&sizeUsdc=2",
+          headers: { "x-session-id": session },
+        })
+      ).json();
+      expect(twoDay.cards.length).toBeGreaterThan(0);
+
+      // Within 2x, so it stands.
+      const ok = await propose(session, { ...INTENT, horizonDays: 1, cardRef: twoDay.cards[0].cardRef });
+      expect(ok.json().kind).toBe("PROPOSAL");
+
+      // A three-day book against a one-day intent is past the ceiling.
+      state.book = [
+        makeOrder({ nonce: 50, optionType: 1, strike: 2380, perContract: 8.1, days: 3, iv: 0.45 }),
+      ];
+      const far = (
+        await app.inject({
+          method: "GET",
+          url: "/deck?direction=DOWN&horizonDays=3&sizeUsdc=2",
+          headers: { "x-session-id": session },
+        })
+      ).json();
+      const res = await propose(session, { ...INTENT, horizonDays: 1, cardRef: far.cards[0].cardRef });
+      expect(res.json().kind).toBe("NO_ORDER");
+      expect(res.json().message).toMatch(/horizon/);
+    });
+
+    it("does not tack a liquidity reload time onto a mismatch", async () => {
+      const session = freshSession();
+      const { cards } = await deck(session);
+      const res = await propose(session, { ...INTENT, direction: "UP", cardRef: cards[0].cardRef });
+
+      // Waiting for makers would not help, so the message must not suggest it.
+      expect(res.json().message).not.toMatch(/liquidity/i);
     });
   });
 

@@ -24,7 +24,15 @@ export const expiryAt = (days: number): number => {
 };
 
 export interface OrderSpec {
+  /**
+   * A maker's nonce is a BATCH id, not a per-Order one. On Base mainnet one maker posts
+   * its whole strike ladder under a single nonce, so the fixture book below shares one
+   * across every strike a maker quotes -- reproducing the collision that a per-Order
+   * nonce would hide.
+   */
   nonce: number;
+  /** Distinguishes two Orders that share a maker and nonce, as their signatures do. */
+  id?: number;
   /** 0 = call, 1 = put */
   optionType: number;
   strike: number;
@@ -44,7 +52,7 @@ export const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
 export function makeOrder(spec: OrderSpec): OrderWithSignature {
   const {
-    nonce, optionType, strike, perContract, days,
+    nonce, optionType, strike, perContract, days, id = strike,
     iv = 0.45, isBuyer = true,
     collateral = USDC_ADDRESS, underlying = WETH_ADDRESS, availableUsdc = 500,
   } = spec;
@@ -64,7 +72,7 @@ export function makeOrder(spec: OrderSpec): OrderWithSignature {
       collateralToken: collateral,
       underlyingToken: underlying,
     },
-    signature: `0xSIGNATURE${String(nonce).padStart(20, "0")}`,
+    signature: `0xSIGNATURE${String(id).padStart(20, "0")}`,
     availableAmount: BigInt(Math.round(availableUsdc * 1e6)),
     makerAddress: `0xMAKER${String(nonce).padStart(34, "0")}`,
     rawApiData: {
@@ -88,16 +96,18 @@ export function makeOrder(spec: OrderSpec): OrderWithSignature {
  * one non-USDC collateral, one WBTC.
  */
 export const DEFAULT_BOOK: OrderWithSignature[] = [
-  // 1-day puts, strikes ascending. The $2360 put is the longest shot.
+  // One maker's one-day put ladder, ALL UNDER NONCE 1 -- exactly as the live book posts
+  // it. Strikes ascending, so the $2,360 put is the longest shot.
   makeOrder({ nonce: 1, optionType: 1, strike: 2360, perContract: 2.08, days: 1, iv: 0.487 }),
-  makeOrder({ nonce: 2, optionType: 1, strike: 2400, perContract: 4.15, days: 1, iv: 0.462 }),
-  makeOrder({ nonce: 3, optionType: 1, strike: 2440, perContract: 9.80, days: 1, iv: 0.441 }),
-  // 2-day put
-  makeOrder({ nonce: 4, optionType: 1, strike: 2380, perContract: 5.32, days: 2, iv: 0.470 }),
-  // 1-day calls, strikes descending is longest-shot-first, so 2560 is the long shot.
+  makeOrder({ nonce: 1, optionType: 1, strike: 2400, perContract: 4.15, days: 1, iv: 0.462 }),
+  makeOrder({ nonce: 1, optionType: 1, strike: 2440, perContract: 9.80, days: 1, iv: 0.441 }),
+  // The same maker's 2-day ladder, same nonce again.
+  makeOrder({ nonce: 1, optionType: 1, strike: 2380, perContract: 5.32, days: 2, iv: 0.470 }),
+  // 1-day calls, also sharing a nonce. Descending strike is longest-shot-first, so
+  // 2560 leads.
   makeOrder({ nonce: 5, optionType: 0, strike: 2480, perContract: 8.44, days: 1, iv: 0.455 }),
-  makeOrder({ nonce: 6, optionType: 0, strike: 2520, perContract: 4.02, days: 1, iv: 0.468 }),
-  makeOrder({ nonce: 7, optionType: 0, strike: 2560, perContract: 1.86, days: 1, iv: 0.481 }),
+  makeOrder({ nonce: 5, optionType: 0, strike: 2520, perContract: 4.02, days: 1, iv: 0.468 }),
+  makeOrder({ nonce: 5, optionType: 0, strike: 2560, perContract: 1.86, days: 1, iv: 0.481 }),
   // Excluded, each for a different reason.
   makeOrder({ nonce: 8, optionType: 1, strike: 2420, perContract: 6.11, days: 1, isBuyer: false }),
   makeOrder({ nonce: 9, optionType: 1, strike: 2410, perContract: 5.77, days: 1, iv: 0 }),
