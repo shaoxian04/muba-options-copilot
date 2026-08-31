@@ -1,6 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Headline, MarketData, MarketScenario, NewsAnalysis, PricePrediction, RiskBenefitView } from "./forecast.js";
+import {
+  Headline,
+  MarketData,
+  MarketScenario,
+  NewsAnalysis,
+  PricePrediction,
+  RiskBenefitView,
+  ChatQuery,
+  CoinAskResult,
+} from "./forecast.js";
 
 const validMarketData = {
   symbol: "ETH",
@@ -89,4 +98,45 @@ test("RiskBenefitView requires a groundedOn MarketData object", () => {
     generatedAt: new Date().toISOString(),
   });
   assert.equal(result.success, false);
+});
+
+test("ChatQuery accepts a multi-coin, multi-analysis extraction result", () => {
+  const result = ChatQuery.safeParse({
+    coins: ["ETH", "BTC"],
+    horizon: "2 weeks",
+    analyses: ["news", "price"],
+  });
+  assert.equal(result.success, true);
+});
+
+test("ChatQuery accepts an empty coins array (extraction found none)", () => {
+  const result = ChatQuery.safeParse({ coins: [], horizon: "", analyses: ["price"] });
+  assert.equal(result.success, true);
+});
+
+test("ChatQuery rejects an unknown analysis type", () => {
+  const result = ChatQuery.safeParse({ coins: ["ETH"], horizon: "7d", analyses: ["sentiment"] });
+  assert.equal(result.success, false);
+});
+
+test("CoinAskResult accepts a successful per-coin result with a subset of analyses", () => {
+  const result = CoinAskResult.safeParse({
+    symbol: "ETH",
+    news: {
+      symbol: "ETH",
+      horizon: "7d",
+      overallSentiment: "bullish",
+      summary: "Leaning positive.",
+      headlines: [],
+      source: "simulated",
+      disclaimer: "opinion",
+      generatedAt: new Date().toISOString(),
+    },
+  });
+  assert.equal(result.success, true);
+});
+
+test("CoinAskResult accepts a failed per-coin result with only an error", () => {
+  const result = CoinAskResult.safeParse({ symbol: "XYZABC", error: "Unrecognized symbol: XYZABC" });
+  assert.equal(result.success, true);
 });
