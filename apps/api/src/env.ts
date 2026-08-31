@@ -33,3 +33,13 @@ export function requireRpc(): string {
 
 export const privateKey = () => process.env.THETANUTS_PRIVATE_KEY;
 export const maxFillUsdc = () => Number(process.env.MAX_FILL_USDC ?? 2);
+
+export function anthropicApiKey(): string {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) {
+    console.error(`\n  ANTHROPIC_API_KEY is not set in ${rootEnv}`);
+    console.error("  console.anthropic.com -> API keys -> paste it in\n");
+    process.exit(1);
+  }
+  return key;
+}
