@@ -14,7 +14,7 @@ import { z } from "zod";
 export const TradeIntent = z.object({
   underlying: z.enum(["ETH"]),          // ETH only for v1 (Q10)
   direction: z.enum(["UP", "DOWN"]),    // the Trader's view, not an instrument type
-  sizeUsdc: z.number().positive().max(Number(process.env.MAX_FILL_USDC ?? 2)),
+  sizeUsdc: z.number().positive().max(1000),   // Risk Budget is enforced server-side, not here
   horizonDays: z.number().int().min(1).max(7),
 });
 export type TradeIntent = z.infer<typeof TradeIntent>;

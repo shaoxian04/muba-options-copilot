@@ -42,13 +42,22 @@ The reasoning behind this project is written down, not assumed:
 ## Layout
 
 ```
-apps/web      Next.js frontend (UI only)
-apps/api      Node backend: SDK, signing key, Supabase, Claude
-packages/shared   zod schemas -- the TradeIntent wall from ADR-0001
+apps/web              Next.js frontend (UI only)
+apps/api
+  src/thetanuts/
+    client.ts         one configured ThetanutsClient
+    orders.ts         which orders we may buy -- ADR-0002 enforced here, once
+    propose.ts        TradeIntent -> TradeProposal (all numbers from the SDK)
+    execute.ts        the only module that spends money
+  src/scripts/
+    explore.ts        read-only diagnostic
+    fill.ts           thin CLI over propose + execute
+packages/shared       zod schemas -- the TradeIntent wall from ADR-0001
 ```
 
 ## Status
 
+- [x] SDK integration: order selection, proposal, execution modules
 - [ ] First real mainnet fill
 - [ ] Trade Intent extraction
 - [ ] Confirmation card with exact Max Loss
