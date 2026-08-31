@@ -66,6 +66,7 @@ export const RiskBenefitView = z.object({
   horizon: z.string(),
   upside: z.string(),
   downside: z.string(),
+  groundedOn: MarketData,
   disclaimer: z.string(),
   generatedAt: z.string(),
 });

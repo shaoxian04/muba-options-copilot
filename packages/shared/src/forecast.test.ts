@@ -72,8 +72,21 @@ test("RiskBenefitView accepts a valid object", () => {
     horizon: "7d",
     upside: "Could see a move toward resistance if sentiment holds.",
     downside: "Could pull back toward recent lows on any negative catalyst.",
+    groundedOn: validMarketData,
     disclaimer: "opinion",
     generatedAt: new Date().toISOString(),
   });
   assert.equal(result.success, true);
+});
+
+test("RiskBenefitView requires a groundedOn MarketData object", () => {
+  const result = RiskBenefitView.safeParse({
+    symbol: "ETH",
+    horizon: "7d",
+    upside: "Could see a move toward resistance if sentiment holds.",
+    downside: "Could pull back toward recent lows on any negative catalyst.",
+    disclaimer: "opinion",
+    generatedAt: new Date().toISOString(),
+  });
+  assert.equal(result.success, false);
 });
