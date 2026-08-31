@@ -140,3 +140,21 @@ test("CoinAskResult accepts a failed per-coin result with only an error", () => 
   const result = CoinAskResult.safeParse({ symbol: "XYZABC", error: "Unrecognized symbol: XYZABC" });
   assert.equal(result.success, true);
 });
+
+test("ChatQuery accepts the new 'market' analysis category", () => {
+  const result = ChatQuery.safeParse({ coins: ["PEPE"], horizon: "", analyses: ["market"] });
+  assert.equal(result.success, true);
+  assert.deepEqual(result.success && result.data.analyses, ["market"]);
+});
+
+test("CoinAskResult round-trips a synthesized answer and raw market data", () => {
+  const input = {
+    symbol: "PEPE",
+    answer: "PEPE is currently trading at $0.00001, up 2% over the last 24 hours.",
+    market: validMarketData,
+  };
+  const result = CoinAskResult.safeParse(input);
+  assert.equal(result.success, true);
+  assert.equal(result.success && result.data.answer, input.answer);
+  assert.deepEqual(result.success && result.data.market, validMarketData);
+});

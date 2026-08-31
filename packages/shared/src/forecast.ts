@@ -81,13 +81,15 @@ export type RiskBenefitView = z.infer<typeof RiskBenefitView>;
 export const ChatQuery = z.object({
   coins: z.array(z.string()),
   horizon: z.string(),
-  analyses: z.array(z.enum(["news", "price", "risk-benefit"])),
+  analyses: z.array(z.enum(["news", "price", "risk-benefit", "market"])),
 });
 export type ChatQuery = z.infer<typeof ChatQuery>;
 
 /** One coin's result within a multi-coin /forecast/ask response -- partial success per coin. */
 export const CoinAskResult = z.object({
   symbol: z.string(),
+  answer: z.string().optional(),
+  market: MarketData.optional(),
   news: NewsAnalysis.optional(),
   price: PricePrediction.optional(),
   riskBenefit: RiskBenefitView.optional(),
