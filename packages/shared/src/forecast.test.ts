@@ -100,22 +100,27 @@ test("RiskBenefitView requires a groundedOn MarketData object", () => {
   assert.equal(result.success, false);
 });
 
-test("ChatQuery accepts a multi-coin, multi-analysis extraction result", () => {
+test("ChatQuery accepts a multi-coin extraction with per-coin horizon and analyses", () => {
   const result = ChatQuery.safeParse({
-    coins: ["ETH", "BTC"],
-    horizon: "2 weeks",
-    analyses: ["news", "price"],
+    requests: [
+      { coin: "ETH", horizon: "2 weeks", analyses: ["news", "price"] },
+      { coin: "BTC", horizon: "", analyses: ["market"] },
+    ],
+    isComparison: false,
   });
   assert.equal(result.success, true);
 });
 
-test("ChatQuery accepts an empty coins array (extraction found none)", () => {
-  const result = ChatQuery.safeParse({ coins: [], horizon: "", analyses: ["price"] });
+test("ChatQuery accepts an empty requests array (extraction found no coin)", () => {
+  const result = ChatQuery.safeParse({ requests: [], isComparison: false });
   assert.equal(result.success, true);
 });
 
 test("ChatQuery rejects an unknown analysis type", () => {
-  const result = ChatQuery.safeParse({ coins: ["ETH"], horizon: "7d", analyses: ["sentiment"] });
+  const result = ChatQuery.safeParse({
+    requests: [{ coin: "ETH", horizon: "7d", analyses: ["sentiment"] }],
+    isComparison: false,
+  });
   assert.equal(result.success, false);
 });
 
@@ -141,10 +146,13 @@ test("CoinAskResult accepts a failed per-coin result with only an error", () => 
   assert.equal(result.success, true);
 });
 
-test("ChatQuery accepts the new 'market' analysis category", () => {
-  const result = ChatQuery.safeParse({ coins: ["PEPE"], horizon: "", analyses: ["market"] });
+test("ChatQuery accepts the 'market' analysis category and isComparison flag", () => {
+  const result = ChatQuery.safeParse({
+    requests: [{ coin: "PEPE", horizon: "", analyses: ["market"] }],
+    isComparison: true,
+  });
   assert.equal(result.success, true);
-  assert.deepEqual(result.success && result.data.analyses, ["market"]);
+  assert.deepEqual(result.success && result.data.isComparison, true);
 });
 
 test("CoinAskResult round-trips a synthesized answer and raw market data", () => {

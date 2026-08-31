@@ -72,16 +72,24 @@ export const RiskBenefitView = z.object({
 });
 export type RiskBenefitView = z.infer<typeof RiskBenefitView>;
 
-/**
- * What a natural-language question extracts into. `coins`/`horizon` may legitimately be
- * empty -- that means extraction found none, not that extraction failed -- so the
- * caller decides how to respond (see ask.ts's IncompleteQuestion) rather than a generic
- * schema-validation error.
- */
-export const ChatQuery = z.object({
-  coins: z.array(z.string()),
+export const ChatQueryRequest = z.object({
+  coin: z.string(),
   horizon: z.string(),
   analyses: z.array(z.enum(["news", "price", "risk-benefit", "market"])),
+});
+export type ChatQueryRequest = z.infer<typeof ChatQueryRequest>;
+
+/**
+ * What a natural-language question extracts into: one request per coin named in the
+ * question (its own horizon and which analyses it needs), plus whether the question
+ * asks to compare the named coins against each other. `requests` may legitimately be
+ * empty -- that means extraction found no coin, not that extraction failed -- so the
+ * caller decides how to respond (see ask.ts's IncompleteQuestion) rather than a
+ * generic schema-validation error.
+ */
+export const ChatQuery = z.object({
+  requests: z.array(ChatQueryRequest),
+  isComparison: z.boolean(),
 });
 export type ChatQuery = z.infer<typeof ChatQuery>;
 
