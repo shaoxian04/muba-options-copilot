@@ -41,7 +41,7 @@ export async function callClaudeForJson<T>(
   try {
     const response = await create({
       model: FORECAST_MODEL,
-      max_tokens: 1024,
+      max_tokens: 4096,
       system,
       messages: [{ role: "user", content: user }],
     });
