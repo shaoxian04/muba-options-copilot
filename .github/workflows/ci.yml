@@ -1,0 +1,46 @@
+# The whole suite, on every push -- no network, no chain, no wallet (issue #14).
+#
+# The environment is scrubbed rather than trusted: there is no RPC URL and no key in CI,
+# so a test that ever forgot to stub the Thetanuts client fails here loudly instead of
+# quietly dialling mainnet with whatever happens to be configured on a laptop.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck both workspaces
+        run: npm run typecheck
+
+      - name: Unit and contract tests
+        run: npm run test:unit
+
+      # Chromium only. The suite asserts on rendered behaviour and network traffic, not
+      # on how any particular engine paints, so a second browser would buy minutes and
+      # no coverage.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser tests
+        run: npm run test:e2e
+
+      - name: Keep the failure trail
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7

@@ -13,12 +13,11 @@
  * Read-only: no signer, no approvals, no money. Safe to call on every keystroke.
  */
 import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
-import type { TradeIntent, TradeProposal, SettlementScenario } from "@copilot/shared";
-import { getClient } from "./client.js";
-import { fromUsdc, PRICE_DECIMALS, CONTRACT_DECIMALS } from "./units.js";
+import type { TradeIntent, TradeProposal, SettlementScenario, PayoffPoint } from "@copilot/shared";
 import { buyableOrders, CALL, PUT, daysToExpiry, orderIdentity, isEth } from "./orders.js";
-import { priceOrder, StakeTooSmall, type OrderEconomics } from "./pricing.js";
+import { payoffAt, priceOrder, StakeTooSmall, type OrderEconomics } from "./pricing.js";
 import { spotPrice } from "./market.js";
+import { usd } from "../format.js";
 
 /**
  * Nothing on the book expresses what the Trader asked for.
@@ -106,27 +105,48 @@ function selectOrder(orders: OrderWithSignature[], intent: TradeIntent): OrderWi
  * that would be a Forecast wearing a guarantee's clothes (ADR-0005).
  */
 function settlementScenarios(economics: OrderEconomics, spot: number): SettlementScenario[] {
-  const client = getClient();
   const steps = [-0.2, -0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15, 0.2];
   return steps.map((pct) => {
     const settlementPrice = spot * (1 + pct);
-    // NOTE: for an inverse call the on-chain payout is denominated in WETH. We still show
-    // the shape here; `payoutAsset` on the proposal tells the UI which unit to render.
-    const gross = client.utils.calculatePayout({
-      type: economics.isCall ? "call" : "put",
-      strikes: economics.raw.strikes,
-      settlementPrice: BigInt(Math.round(settlementPrice * 10 ** PRICE_DECIMALS)),
-      numContracts: economics.raw.numContracts,
-      // calculatePayout defaults sizeDecimals to 18, but previewFillOrder returns
-      // numContracts in 6. Derived, not guessed: numContracts * pricePerContract must
-      // equal the premium, and 0.869434 * $2.30034660 = $2.0000 exactly.
-      // Leaving the default silently zeroes every payout and every scenario reads
-      // "you lose the premium" -- which looks plausible and is completely wrong.
-      sizeDecimals: CONTRACT_DECIMALS,
-    });
+    // The displayed price is rounded; the payout is computed from the unrounded one.
+    return { settlementPrice: Number(settlementPrice.toFixed(2)), returnUsdc: payoffAt(economics, settlementPrice) };
+  });
+}
+
+/**
+ * The window the payoff curve is drawn across, and how finely it is sampled.
+ *
+ * Narrower than the Settlement Scenario ladder on purpose. The ladder runs +/-20%
+ * because it is a table and an extreme row costs nothing to print; the curve is a
+ * PICTURE, and one point 20% out of the money is worth two hundred times the premium,
+ * which flattens everything a Trader actually needs to see into the bottom pixel. The
+ * window below keeps the kink at the strike in the middle of the plot -- taken from the
+ * prototype, where this was settled by looking at it.
+ *
+ * The crosshair snaps to the nearest sample, so the point count is really the answer to
+ * "how wrong may the price under the Trader's cursor be": 81 points across this window
+ * put them a quarter of a percent apart, about $6 at $2,445, finer than a cursor can be
+ * aimed. Interpolating in React would be cheaper and would also be the frontend
+ * originating a number (ADR-0006), so it is bought with samples instead.
+ */
+const CURVE_FROM = -0.12;
+const CURVE_TO = 0.08;
+const CURVE_POINTS = 81;
+
+/**
+ * The same payoff, sampled finely and pre-formatted, for the curve and its crosshair.
+ *
+ * One derivation, two samplings: this and `settlementScenarios` both read `payoffAt`,
+ * so the ladder the CLI prints and the curve the Trader sweeps cannot disagree.
+ */
+function payoffCurve(economics: OrderEconomics, spot: number): PayoffPoint[] {
+  return Array.from({ length: CURVE_POINTS }, (_, i) => {
+    const pct = CURVE_FROM + ((CURVE_TO - CURVE_FROM) * i) / (CURVE_POINTS - 1);
+    const settlementPrice = spot * (1 + pct);
+    // Same convention as the ladder above: the label rounds, the payout does not.
     return {
-      settlementPrice: Number(settlementPrice.toFixed(2)),
-      returnUsdc: Number((fromUsdc(gross) - economics.premiumUsdc.value).toFixed(2)),
+      settlementPrice: usd(Number(settlementPrice.toFixed(2)), 0),
+      returnUsdc: usd(payoffAt(economics, settlementPrice)),
     };
   });
 }
@@ -157,7 +177,6 @@ export async function proposeOrder(
 
   const proposal: TradeProposal = {
     intent,
-    orderId: `${order.makerAddress}:${order.order.nonce}`,
     instrument: economics.instrument,
     strike: economics.strike.value,
     expiry: economics.expiryIso,
@@ -165,6 +184,7 @@ export async function proposeOrder(
     maxLossUsdc: economics.maxLossUsdc.value,
     breakevenPrice: economics.breakevenPrice.value,
     scenarios: settlementScenarios(economics, spot),
+    payoffCurve: payoffCurve(economics, spot),
     payoutAsset: economics.payoutAsset,
     // The same Figures a Card carries, from the same call, so the Deck and the
     // confirmation cannot present one value two ways.

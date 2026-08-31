@@ -19,7 +19,7 @@ import { priceOrder, StakeTooSmall } from "./pricing.js";
 import { impliedChance, NoQuotedVolatility } from "./implied-chance.js";
 import { spotPrice } from "./market.js";
 import { rememberCard, type Session } from "../sessions.js";
-import { usd, percent } from "../format.js";
+import { usd, percent, chanceBand, chanceWords } from "../format.js";
 
 export interface DeckRequest {
   direction: "UP" | "DOWN";
@@ -34,6 +34,16 @@ export interface DeckRequest {
  * one. Naming when maker liquidity reloads gives them something to act on rather than
  * something to refresh at.
  */
+/**
+ * How far a Deck's Implied Chance must spread before the gradient carries information.
+ *
+ * The live one-day book runs roughly 7% to 44% -- a 37 point spread, and that width is
+ * what makes six fill heights comparable at a glance. Below 15 points the cards render
+ * near-identically and the gradient becomes decoration, so the surface is told to stop
+ * relying on it and label each Card explicitly instead (issue #10).
+ */
+export const GRADIENT_MIN_SPREAD = 0.15;
+
 export const NO_MAKERS =
   "No maker is quoting this right now. Maker liquidity renews around 09:00 UTC -- or ask for a different expiry.";
 
@@ -58,6 +68,8 @@ export async function buildDeck(session: Session, request: DeckRequest): Promise
     .map((order) => toCard(session, order, sizeUsdc, spot, isPut))
     .filter((card): card is Card => card !== undefined);
 
+  const chances = cards.map((c) => c.impliedChance.value);
+
   return {
     direction,
     horizonDays,
@@ -65,6 +77,9 @@ export async function buildDeck(session: Session, request: DeckRequest): Promise
     spotUsd: usd(spot),
     expiry: cards[0]?.expiry ?? null,
     cards,
+    // One Card cannot be a gradient, and neither can six that all sit at the same
+    // height -- both fall back to the explicit labels every Card already carries.
+    gradientLegible: chances.length > 1 && Math.max(...chances) - Math.min(...chances) >= GRADIENT_MIN_SPREAD,
     ...(cards.length ? {} : { message: NO_MAKERS }),
   };
 }
@@ -76,6 +91,13 @@ export async function buildDeck(session: Session, request: DeckRequest): Promise
  * quoted no volatility has no Implied Chance, and a Card without its headline number is
  * worse than no Card -- so it is excluded rather than shown blank. Same for an Order the
  * stake is too small to buy any of: a Card offering zero contracts is not an offer.
+ *
+ * And the same, less obviously, for an Order whose maker has posted LESS than the stake.
+ * `previewFillOrder` silently caps the spend at `availableAmount`, so such a Card costs
+ * less than every other Card in the Deck -- and its Max Loss is therefore lower. That
+ * would make the figure in the commit bar move as a Trader flicks, which is exactly the
+ * thing story 13 says must never happen: they learn their downside is bounded by
+ * watching it sit still. One Card offering a partial fill is not worth that.
  *
  * Silence rather than a throw, because one unquotable Order must not cost a Trader the
  * whole Deck.
@@ -92,6 +114,7 @@ function toCard(
 
   try {
     const economics = priceOrder(order, sizeUsdc);
+    if (economics.availableUsdc.value < sizeUsdc) return undefined;
     const chance = impliedChance({
       spot,
       strike: economics.strike.value,
@@ -111,6 +134,8 @@ function toCard(
       maxLossUsdc: economics.maxLossUsdc,
       breakevenPrice: economics.breakevenPrice,
       impliedChance: percent(chance),
+      chanceLabel: chanceWords(chance),
+      chanceBand: chanceBand(chance),
       availableUsdc: economics.availableUsdc,
       expiry: economics.expiry,
       payoutAsset: economics.payoutAsset,

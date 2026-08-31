@@ -50,6 +50,25 @@ export const SettlementScenario = z.object({
 export type SettlementScenario = z.infer<typeof SettlementScenario>;
 
 /**
+ * One point on the payoff curve, pre-formatted.
+ *
+ * The curve exists so a Trader can sweep a crosshair and ask "what if it finishes
+ * here" without doing arithmetic -- which means the answer is a number they READ, and
+ * a number they read may not be interpolated in React. So the server samples the same
+ * payoff the Settlement Scenarios sample, finely enough that the crosshair snapping to
+ * the nearest point is imperceptible, and hands over the strings.
+ *
+ * If you are tempted to interpolate between two of these to smooth the readout, stop:
+ * that is the frontend originating a figure, which is exactly what ADR-0006 forbids.
+ */
+export const PayoffPoint = z.object({
+  settlementPrice: Figure,
+  /** What the Trader ends up with, net of the premium. Negative above the breakeven. */
+  returnUsdc: Figure,
+});
+export type PayoffPoint = z.infer<typeof PayoffPoint>;
+
+/**
  * The strings a Trader reads on the confirmation.
  *
  * These are the SAME field names a Card carries, filled from the same `priceOrder`
@@ -73,7 +92,19 @@ export type ProposalFigures = z.infer<typeof ProposalFigures>;
 
 export const TradeProposal = z.object({
   intent: TradeIntent,
-  orderId: z.string(),
+  /**
+   * NOTE: there is deliberately no order id here.
+   *
+   * This object is sent to the browser, and until issue #14 walked the surface end to
+   * end it carried `orderId: "<makerAddress>:<nonce>"` -- which is precisely the maker
+   * address and nonce ADR-0006 says must never leave the process, sitting in plain
+   * sight on every proposal. The Deck's Cards were guarded against exactly this from
+   * the start; the proposal never was.
+   *
+   * The Order is named by the `cardRef` on the PROPOSAL result instead: opaque, per
+   * session, and unresolvable anywhere else. The audit trail does not lose anything,
+   * because the OrderWithSignature itself is held server-side against the proposal id.
+   */
   instrument: z.string(),        // e.g. PUT / INVERSE_CALL -- never shown to the Trader (Q10)
   strike: z.number(),
   expiry: z.string(),            // ISO
@@ -81,6 +112,8 @@ export const TradeProposal = z.object({
   maxLossUsdc: z.number(),       // == premiumUsdc, always, because we only buy (ADR-0002)
   breakevenPrice: z.number(),
   scenarios: z.array(SettlementScenario),
+  /** The same payoff, sampled finely, for the curve and its crosshair. */
+  payoffCurve: z.array(PayoffPoint),
   payoutAsset: z.enum(["USDC", "WETH"]), // INVERSE_CALL settles in WETH
   figures: ProposalFigures,
   /**
@@ -133,6 +166,23 @@ export const Card = z.object({
   breakevenPrice: Figure,
   /** The market's own probability this finishes in the money, 0-1. An observation. */
   impliedChance: Figure,
+  /**
+   * Implied Chance in words -- "a long shot", "very likely".
+   *
+   * The headline number is drawn as a coloured fill, and a fill carries nothing to a
+   * screen reader or to a Trader with deuteranopia. This is the text that carries the
+   * same meaning, so the Card survives colour being removed entirely (issue #10).
+   */
+  chanceLabel: z.string(),
+  /**
+   * Which step of the colour ramp this Card sits on, 0-5.
+   *
+   * Quantised here rather than in React so the fill and `chanceLabel` cannot disagree:
+   * they are two renderings of one band, decided once. It is the only presentational
+   * value the API carries, and it is here to make an accessibility guarantee hold by
+   * construction rather than by two functions staying in sync.
+   */
+  chanceBand: z.number().int().min(0).max(5),
   /** What the maker still has posted against this Order. */
   availableUsdc: Figure,
   expiry: Figure,
@@ -158,6 +208,17 @@ export const Deck = z.object({
   /** The fixed moment every Card in this Deck ends. Null only when the Deck is empty. */
   expiry: Figure.nullable(),
   cards: z.array(Card),
+  /**
+   * Whether this Deck's Implied Chance actually spans enough range to be read as a
+   * gradient.
+   *
+   * The observed live spread is roughly 7% to 44% at one day, and that width is what
+   * makes the fill heights comparable at a glance. A Deck that compresses into a narrow
+   * band would render as six near-identical cards and quietly stop carrying
+   * information, so the surface is told to fall back to explicit labels instead of
+   * pretending the gradient still means something (issue #10).
+   */
+  gradientLegible: z.boolean(),
   message: z.string().optional(),
 });
 export type Deck = z.infer<typeof Deck>;
@@ -218,6 +279,17 @@ export const ProposeResult = z.discriminatedUnion("kind", [
     kind: z.literal("PROPOSAL"),
     proposal: TradeProposal,
     proposalId: z.string(),
+    /**
+     * Which Card in the current Deck this proposal is.
+     *
+     * The Trade Agent deals without being told which Card to deal, so the surface has
+     * to be able to find the dealt Order in the row it is already showing and lift it.
+     * Matching on a rendered strike would work until the day someone changes how a
+     * strike is formatted, so the server names it with the same reference the Deck
+     * uses. It is the same capability, minted the same way, and exposes nothing a Card
+     * does not already expose.
+     */
+    cardRef: z.string(),
     remainingUsdc: z.number(),
   }),
   z.object({

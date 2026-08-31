@@ -11,9 +11,13 @@
     "wallet": "npm run wallet -w @copilot/api",
     "dev": "npm run dev -w @copilot/api",
     "prototype": "node -e \"require('child_process').exec((process.platform==='win32'?'start \\\"\\\" ':'open ')+'apps/web/prototype-copilot.html')\"",
-    "test": "vitest run",
+    "test": "vitest run && npm run test:e2e",
     "test:watch": "vitest",
-    "typecheck": "tsc -p apps/api/tsconfig.json --noEmit"
+    "typecheck": "tsc -p apps/api/tsconfig.json --noEmit && tsc -p apps/web/tsconfig.json --noEmit",
+    "fixtures": "node scripts/fixtures.mjs",
+    "test:e2e": "npm run e2e -w @copilot/web",
+    "test:unit": "vitest run",
+    "web": "npm run dev -w @copilot/web"
   },
   "devDependencies": {
     "vitest": "^2.1.9"

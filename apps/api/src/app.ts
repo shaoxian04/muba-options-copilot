@@ -15,7 +15,7 @@ import cors from "@fastify/cors";
 import { z } from "zod";
 import { ProposeRequest, type ProposeResult } from "@copilot/shared";
 import { canSign } from "./thetanuts/client.js";
-import { buyableOrders, impliedVol, daysToExpiry, PUT } from "./thetanuts/orders.js";
+import { buyableOrders, impliedVol, daysToExpiry, orderIdentity, PUT } from "./thetanuts/orders.js";
 import { spotPrice } from "./thetanuts/market.js";
 import { proposeTrade, proposeChosenOrder, NoSuitableOrder, QuoteMoved } from "./thetanuts/propose.js";
 import { buildDeck } from "./thetanuts/deck.js";
@@ -26,7 +26,7 @@ import { usd } from "./format.js";
 import { executeFill, RiskBudgetExceeded, UnsafeOrder } from "./thetanuts/execute.js";
 import {
   sessionFor, remainingBudget, setRiskBudget,
-  rememberProposal, recallProposal, recallCard, type Session,
+  rememberProposal, recallProposal, rememberCard, recallCard, type Session,
 } from "./sessions.js";
 
 /**
@@ -109,9 +109,28 @@ export async function buildApp(): Promise<FastifyInstance> {
     };
   });
 
+  /**
+   * The Risk Budget, and what is left of it.
+   *
+   * The raw numbers are what the bar is drawn from -- a width is geometry, not a figure
+   * a Trader reads. The strings beside them are what the Trader reads, and they are
+   * formatted here for the same reason every other figure is: a `toFixed` in the commit
+   * bar would be a number the server never vouched for, sitting directly beside a Max
+   * Loss (ADR-0006).
+   */
   app.get("/session", async (req) => {
     const s = sessionFor(req.headers);
-    return { riskBudgetUsdc: s.riskBudgetUsdc, spentUsdc: s.spentUsdc, remainingUsdc: remainingBudget(s) };
+    const remaining = remainingBudget(s);
+    return {
+      riskBudgetUsdc: s.riskBudgetUsdc,
+      spentUsdc: s.spentUsdc,
+      remainingUsdc: remaining,
+      figures: {
+        riskBudgetUsdc: usd(s.riskBudgetUsdc),
+        spentUsdc: usd(s.spentUsdc),
+        remainingUsdc: usd(remaining),
+      },
+    };
   });
 
   app.post("/session/budget", async (req, reply) => {
@@ -190,6 +209,11 @@ export async function buildApp(): Promise<FastifyInstance> {
       return {
         kind: "PROPOSAL",
         proposalId: rememberProposal(s, result),
+        // The Order this proposal names, addressed the way the Deck addresses it, so
+        // the surface can lift the dealt Card out of the row it is already showing.
+        // Idempotent: the ref is derived from the Order's identity, so re-minting one
+        // the Deck already dealt hands back the same string.
+        cardRef: rememberCard(s, result.order, orderIdentity(result.order)),
         proposal: result.proposal,
         remainingUsdc: remaining,
       };

@@ -39,3 +39,37 @@ export function moment(iso: string): Figure {
   const mm = String(d.getUTCMinutes()).padStart(2, "0");
   return { value: d.getTime(), display: `${day} ${month}, ${hh}:${mm} UTC` };
 }
+
+/**
+ * The six bands the Implied Chance ramp is drawn in.
+ *
+ * A Card's headline number is drawn as a coloured fill. Quantising the chance ONCE,
+ * here, is what lets the fill and the words describing it be two renderings of a single
+ * decision rather than two functions that have to be kept in agreement. React receives
+ * the band and picks a ramp step; it never derives one.
+ */
+export const CHANCE_BANDS = 6;
+
+/** Which ramp step a chance sits on, 0-5. */
+export function chanceBand(chance: number): number {
+  const clamped = Math.min(0.999999, Math.max(0, chance));
+  return Math.floor(clamped * CHANCE_BANDS);
+}
+
+/**
+ * `a long shot`. Implied Chance in words.
+ *
+ * The text equivalent of the fill, for a screen reader and for a Trader who cannot
+ * separate the ramp's steps by colour. Six labels for six bands, distinct and ordered,
+ * so removing colour entirely loses no information (issue #10).
+ */
+export function chanceWords(chance: number): string {
+  return [
+    "a long shot",
+    "unlikely",
+    "under even odds",
+    "over even odds",
+    "likely",
+    "very likely",
+  ][chanceBand(chance)]!;
+}

@@ -15,7 +15,7 @@
 import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
 import type { Figure } from "@copilot/shared";
 import { getClient } from "./client.js";
-import { fromPrice, fromUsdc, fromContracts, toUsdc } from "./units.js";
+import { fromPrice, fromUsdc, fromContracts, toUsdc, PRICE_DECIMALS, CONTRACT_DECIMALS } from "./units.js";
 import { usd, contracts as fmtContracts, moment } from "../format.js";
 
 /** The stake is too small to buy any of this Order at the maker's price. */
@@ -86,4 +86,33 @@ export function priceOrder(order: OrderWithSignature, sizeUsdc: number): OrderEc
     instrument: preview.isCall ? "INVERSE_CALL" : "PUT",
     raw: { strikes: preview.strikes, numContracts: preview.numContracts },
   };
+}
+
+/**
+ * What the Trader ends up with, net of the premium, if ETH settles at this price.
+ *
+ * The single derivation of the payoff, and it lives here for the same reason
+ * `priceOrder` does: it is option economics, and option economics have one home. The
+ * Settlement Scenario ladder the CLI prints and the curve the Trader sweeps are two
+ * samplings of THIS, so they cannot drift apart from each other or from the premium.
+ *
+ * Takes an `OrderEconomics` rather than an Order, so it can only ever be asked about a
+ * position that has already been priced through `priceOrder` above.
+ */
+export function payoffAt(economics: OrderEconomics, settlementPrice: number): number {
+  // NOTE: for an inverse call the on-chain payout is denominated in WETH. We return the
+  // shape either way; `payoutAsset` tells the caller which unit to render.
+  const gross = getClient().utils.calculatePayout({
+    type: economics.isCall ? "call" : "put",
+    strikes: economics.raw.strikes,
+    settlementPrice: BigInt(Math.round(settlementPrice * 10 ** PRICE_DECIMALS)),
+    numContracts: economics.raw.numContracts,
+    // calculatePayout defaults sizeDecimals to 18, but previewFillOrder returns
+    // numContracts in 6. Derived, not guessed: numContracts * pricePerContract must
+    // equal the premium, and 0.869434 * $2.30034660 = $2.0000 exactly.
+    // Leaving the default silently zeroes every payout and every scenario reads
+    // "you lose the premium" -- which looks plausible and is completely wrong.
+    sizeDecimals: CONTRACT_DECIMALS,
+  });
+  return Number((fromUsdc(gross) - economics.premiumUsdc.value).toFixed(2));
 }

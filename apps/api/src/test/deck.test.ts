@@ -114,7 +114,8 @@ describe("GET /deck", () => {
     // starts leaking has to be added here deliberately, in a diff a reviewer reads.
     const allowed = [
       "cardRef", "strike", "perContractUsd", "contracts", "premiumUsdc", "maxLossUsdc",
-      "breakevenPrice", "impliedChance", "availableUsdc", "expiry", "payoutAsset",
+      "breakevenPrice", "impliedChance", "chanceLabel", "chanceBand", "availableUsdc",
+      "expiry", "payoutAsset",
     ].sort();
     for (const card of body.cards) {
       expect(Object.keys(card).sort()).toEqual(allowed);
@@ -142,7 +143,12 @@ describe("GET /deck", () => {
     expect(body.spotUsd.display).toBe("$2,445.49");
     for (const card of body.cards) {
       for (const [key, figure] of Object.entries(card)) {
+        // The three fields that are not figures a Trader reads: an opaque capability,
+        // a unit, and the two renderings of the Implied Chance band -- words for a
+        // screen reader and an index for the ramp. Neither of the last two is a number
+        // on the screen; the chance itself is, and it is a Figure like everything else.
         if (key === "cardRef" || key === "payoutAsset") continue;
+        if (key === "chanceLabel" || key === "chanceBand") continue;
         expect(figure, `${key} is a bare number`).toHaveProperty("display");
         expect(typeof (figure as any).display, `${key}`).toBe("string");
         expect(typeof (figure as any).value, `${key}`).toBe("number");

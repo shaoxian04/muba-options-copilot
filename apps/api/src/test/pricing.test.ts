@@ -137,7 +137,11 @@ describe("POST /propose", () => {
       payoutAsset: "USDC",
     });
     expect(body.proposal.premiumUsdc).toBeCloseTo(2, 4);
-    expect(body.proposal.orderId).toBe(`${CHEAPEST_ONE_DAY_PUT.makerAddress}:1`);
+    // This used to assert the proposal carried `<makerAddress>:<nonce>`. It carries
+    // neither now: that string was the maker address and nonce ADR-0006 forbids the
+    // browser from ever seeing, and the Order is named by an opaque cardRef instead.
+    expect(body.proposal).not.toHaveProperty("orderId");
+    expect(JSON.stringify(body)).not.toContain(CHEAPEST_ONE_DAY_PUT.makerAddress);
     expect(body.proposal.scenarios).toHaveLength(9);
     expect(body.proposal.scenarios[0]).toEqual({
       // The displayed price is rounded; the payout is computed from the unrounded one.
