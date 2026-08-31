@@ -381,7 +381,7 @@ test("answerQuestion gives every successful coin comparison context about the ot
     },
   };
 
-  const results = await answerQuestion("compare PEPE, SHIB, and NOTACOIN -- which is strongest?", { create, marketData });
+  const results = await answerQuestion("compare these three coins, which is strongest?", { create, marketData });
 
   assert.ok(results.NOTACOIN.error, "NOTACOIN should have failed and never reached synthesis");
   assert.equal(capturedSynthesis.NOTACOIN, undefined, "a failed coin should never trigger its own synthesis call");
