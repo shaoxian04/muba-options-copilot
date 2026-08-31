@@ -1,0 +1,18 @@
+{
+  "kind": "VETO",
+  "tradeIntent": {
+    "underlying": "ETH",
+    "direction": "DOWN",
+    "sizeUsdc": 2,
+    "horizonDays": 1
+  },
+  "reviewIntent": {
+    "underlying": "ETH",
+    "direction": "UP",
+    "sizeUsdc": 2,
+    "horizonDays": 1
+  },
+  "clashingFields": [
+    "direction"
+  ]
+}

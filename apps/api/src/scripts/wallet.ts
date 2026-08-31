@@ -9,7 +9,8 @@
  * a wallet you would miss, and never commit .env (it is gitignored).
  */
 import { ethers } from "ethers";
-import { getClient, USDC, USDC_DECIMALS, canSign } from "../thetanuts/client.js";
+import { getClient, canSign } from "../thetanuts/client.js";
+import { USDC, USDC_DECIMALS } from "../thetanuts/units.js";
 import { privateKey, requireRpc } from "../env.js";
 
 const ERC20 = ["function balanceOf(address) view returns (uint256)"];

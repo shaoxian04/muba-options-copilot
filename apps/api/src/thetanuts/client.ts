@@ -3,26 +3,17 @@
  *
  * A signer is attached only when THETANUTS_PRIVATE_KEY is present, so every
  * read-only path (propose, explore, the entire UI) works with no wallet at all.
+ *
+ * This module is the seam the test suite stubs. It is deliberately thin: everything
+ * that does not need an RPC or a key lives in `units.ts`, so stubbing the connection
+ * never means stubbing arithmetic too.
  */
 import { ethers } from "ethers";
 import { ThetanutsClient, getChainConfigById } from "@thetanuts-finance/thetanuts-client";
 import { requireRpc, privateKey } from "../env.js";
+import { CHAIN_ID } from "./units.js";
 
-export const CHAIN_ID = 8453 as const;
 export const chain = getChainConfigById(CHAIN_ID);
-
-/** Base mainnet token addresses, lowercased for comparison. */
-export const WETH = "0x4200000000000000000000000000000000000006".toLowerCase();
-export const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913".toLowerCase();
-
-export const USDC_DECIMALS = 6;
-export const PRICE_DECIMALS = 8;
-/** previewFillOrder returns numContracts in 6 decimals, NOT the SDK's 18-decimal default. */
-export const CONTRACT_DECIMALS = 6;
-
-export const toUsdc = (n: number): bigint => BigInt(Math.round(n * 10 ** USDC_DECIMALS));
-export const fromUsdc = (n: bigint): number => Number(n) / 10 ** USDC_DECIMALS;
-export const fromPrice = (n: bigint): number => Number(n) / 10 ** PRICE_DECIMALS;
 
 let cached: ThetanutsClient | undefined;
 
@@ -39,3 +30,15 @@ export function getClient(): ThetanutsClient {
 }
 
 export const canSign = (): boolean => Boolean(privateKey());
+
+/**
+ * The address whose Positions the board shows, or null with no wallet configured.
+ *
+ * Here rather than at the call site so the private key is read in exactly one module.
+ * A route that wants to know who the Trader is should not have to handle their key to
+ * find out.
+ */
+export const walletAddress = (): string | null => {
+  const pk = privateKey();
+  return pk ? new ethers.Wallet(pk).address : null;
+};
