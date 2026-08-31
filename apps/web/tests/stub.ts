@@ -32,7 +32,8 @@ import refusal from "./fixtures/refusal.json" with { type: "json" };
 export const API = "http://127.0.0.1:3001";
 
 /**
- * The token the suite builds the app with, and the one the stub demands on `/fill`.
+ * The token the suite builds the app with, and the one the stub demands on the gated
+ * routes -- `/fill` and `/propose`.
  *
  * The documented security posture has `COPILOT_API_TOKEN` set, so that is the
  * configuration the tests run in -- the alternative is a suite that only ever exercises
@@ -91,6 +92,8 @@ const json = (route: Route, body: unknown, traffic: Traffic, status = 200) => {
   traffic.bodies.push(text);
   return route.fulfill({ status, contentType: "application/json", body: text });
 };
+
+const authorised = (request: Request) => request.headers()["authorization"] === `Bearer ${TEST_API_TOKEN}`;
 
 const deckFor = (url: URL) => {
   const direction = url.searchParams.get("direction");
@@ -154,6 +157,9 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         return json(route, practised ? positionsAfterPractice : positionsEmpty, traffic);
 
       case "/propose": {
+        // Gated the way the real route is: `/propose` costs a real Thetanuts pricing
+        // call, so it demands the token even though it signs nothing.
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
         if (scenario === "veto") return json(route, veto, traffic);
         if (scenario === "empty" || scenario === "no-order") return json(route, noOrder, traffic);
         if (scenario === "over-budget") return json(route, refusal.body, traffic, refusal.status);
@@ -180,9 +186,7 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
        * with no Authorization header at all -- which is exactly the bug that was here.
        */
       case "/fill": {
-        if (request.headers()["authorization"] !== `Bearer ${TEST_API_TOKEN}`) {
-          return json(route, { error: "Unauthorized" }, traffic, 401);
-        }
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
         return json(
           route,
           {

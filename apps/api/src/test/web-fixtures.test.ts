@@ -155,6 +155,15 @@ beforeAll(async () => {
   generated["refusal"] = { status: refused.statusCode, body: refused.json() };
 });
 
+/**
+ * The fixture as content, not as bytes.
+ *
+ * Line endings are not part of the contract. Git hands these files back with CRLF on a
+ * Windows checkout, so a byte comparison calls every fixture stale after a branch
+ * switch -- a failure about the filesystem wearing the costume of a failure about the API.
+ */
+const onDisk = (path: string) => readFileSync(path, "utf8").split("\r\n").join("\n");
+
 describe("the fixtures the browser suite runs against", () => {
   it.each(NAMES)("%s matches what the API produces", (name) => {
     expect(generated[name], `${name} was never generated`).toBeDefined();
@@ -169,6 +178,6 @@ describe("the fixtures the browser suite runs against", () => {
     }
 
     expect(existsSync(path), `${name}.json is missing -- run \`npm run fixtures\``).toBe(true);
-    expect(readFileSync(path, "utf8"), `${name}.json is stale -- run \`npm run fixtures\``).toBe(body);
+    expect(onDisk(path), `${name}.json is stale -- run \`npm run fixtures\``).toBe(body);
   });
 });

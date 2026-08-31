@@ -76,13 +76,23 @@ describe("POST /practice", () => {
   });
 
   it("does not require the API token", async () => {
-    process.env.COPILOT_API_TOKEN = "a-secret-nobody-sent";
+    const token = "a-secret-nobody-sent";
+    process.env.COPILOT_API_TOKEN = token;
     try {
       const gated = await buildApp();
       const session = freshSession();
+      // /propose is gated too -- it costs a real Thetanuts pricing call -- so reaching a
+      // proposalId at all means presenting the token. What is proved here is narrower
+      // and still true: /practice, the route that opens a Position, does not need one.
       const proposalId = (
-        await gated.inject({ method: "POST", url: "/propose", headers: { "x-session-id": session }, payload: INTENT })
+        await gated.inject({
+          method: "POST",
+          url: "/propose",
+          headers: { "x-session-id": session, authorization: `Bearer ${token}` },
+          payload: INTENT,
+        })
       ).json().proposalId;
+      expect(proposalId).toBeTruthy();
 
       const run = await gated.inject({
         method: "POST",
@@ -100,6 +110,24 @@ describe("POST /practice", () => {
         payload: { proposalId },
       });
       expect(fill.statusCode).toBe(401);
+    } finally {
+      delete process.env.COPILOT_API_TOKEN;
+    }
+  });
+
+  it("refuses an unauthenticated /propose, so the pricing call is never made", async () => {
+    // Not a claim about Practice -- a claim about the gate Practice sits behind. /propose
+    // signs nothing, but every call is a real Thetanuts request billed to whoever runs this.
+    process.env.COPILOT_API_TOKEN = "a-secret-nobody-sent";
+    try {
+      const gated = await buildApp();
+      const res = await gated.inject({
+        method: "POST",
+        url: "/propose",
+        headers: { "x-session-id": freshSession() },
+        payload: INTENT,
+      });
+      expect(res.statusCode).toBe(401);
     } finally {
       delete process.env.COPILOT_API_TOKEN;
     }

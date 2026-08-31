@@ -8,16 +8,18 @@
   "scripts": {
     "explore": "npm run explore -w @copilot/api",
     "fill": "npm run fill -w @copilot/api",
+    "forecast": "npm run forecast -w @copilot/api",
     "wallet": "npm run wallet -w @copilot/api",
     "dev": "npm run dev -w @copilot/api",
+    "web": "npm run dev -w @copilot/web",
     "prototype": "node -e \"require('child_process').exec((process.platform==='win32'?'start \\\"\\\" ':'open ')+'apps/web/prototype-copilot.html')\"",
-    "test": "vitest run && npm run test:e2e",
+    "test": "npm run test:unit && npm run test:node && npm run test:e2e",
+    "test:unit": "vitest run",
+    "test:node": "npm run test -w @copilot/shared && npm run test -w @copilot/api",
+    "test:e2e": "npm run e2e -w @copilot/web",
     "test:watch": "vitest",
     "typecheck": "tsc -p apps/api/tsconfig.json --noEmit && tsc -p apps/web/tsconfig.json --noEmit",
-    "fixtures": "node scripts/fixtures.mjs",
-    "test:e2e": "npm run e2e -w @copilot/web",
-    "test:unit": "vitest run",
-    "web": "npm run dev -w @copilot/web"
+    "fixtures": "node scripts/fixtures.mjs"
   },
   "devDependencies": {
     "vitest": "^2.1.9"

@@ -2,8 +2,11 @@
  * The Copilot backend, as a Fastify instance that has not been listened on yet.
  *
  * The browser talks only to this. It owns the SDK, the signing key, and the Risk Budget.
- * Nothing here talks to a model: the language layer sits in front and hands it a
- * TradeIntent that has already been validated -- see ADR-0001.
+ * Nothing on the TRADING path talks to a model: the language layer sits in front and
+ * hands it a TradeIntent that has already been validated -- see ADR-0001. The
+ * `/forecast/*` routes do call one, and are quarantined from that path by ADR-0005:
+ * they are read-only opinion, they never feed /propose or /fill, and nothing below
+ * imports them.
  *
  * `buildApp()` exists so the test suite can drive every route through `inject` without
  * binding a port, which is the seam the whole HTTP-level suite hangs off (issue #1,
@@ -12,6 +15,7 @@
  */
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
 import { ProposeRequest, type ProposeResult } from "@copilot/shared";
 import { canSign } from "./thetanuts/client.js";
@@ -28,15 +32,25 @@ import {
   sessionFor, remainingBudget, setRiskBudget,
   rememberProposal, recallProposal, rememberCard, recallCard, type Session,
 } from "./sessions.js";
+import { buildScenario } from "./forecast/scenario.js";
+import { analyzeNews } from "./forecast/news.js";
+import { predictPrice } from "./forecast/price.js";
+import { assessRiskBenefit } from "./forecast/riskBenefit.js";
+import { parseForecastQuery, forecastErrorStatus } from "./forecast/http.js";
 
 /**
- * This process holds a funded key and exposes a route that spends money, so it is
- * locked down by default and opened deliberately.
+ * This process holds a funded key and exposes routes that spend money or cost real API
+ * credits (Thetanuts pricing calls, AI calls), so it is locked down by default and
+ * opened deliberately.
  *
  * - CORS is an explicit allowlist, never `origin: true`. Reflecting any origin lets a
  *   malicious page the Trader happens to visit POST to localhost and spend their money.
- * - /fill additionally requires a bearer token whenever one is configured. A cross-site
- *   page cannot read it, so it defeats CSRF even if an origin check is misconfigured.
+ * - /fill, /propose and /forecast/* additionally require a bearer token whenever one is
+ *   configured. A cross-site page cannot read it, so it defeats CSRF even if an origin
+ *   check is misconfigured.
+ * - /propose and /forecast/* are also rate-limited (per IP, regardless of the token),
+ *   since they cost real Thetanuts/AI API usage even though they never move funds --
+ *   the token alone does not bound cost if it leaks or is never set.
  *
  * Loopback binding is the third leg of this and lives in `server.ts`.
  */
@@ -49,6 +63,14 @@ export const allowedOrigins = (): string[] =>
 const apiToken = (): string | undefined => process.env.COPILOT_API_TOKEN || undefined;
 
 /**
+ * Applied to routes that cost real Thetanuts/AI API usage, whether or not a token is set.
+ * Exported so the startup warning in `server.ts` can quote the real number rather than
+ * repeat one that will drift.
+ */
+export const COST_ROUTE_MAX_PER_MINUTE = 30;
+const COST_ROUTE_LIMIT = { rateLimit: { max: COST_ROUTE_MAX_PER_MINUTE, timeWindow: "1 minute" } };
+
+/**
  * A query string arrives as strings, so numbers are coerced -- but only into the range
  * the book actually trades. ETH puts run to 3 days and no further.
  */
@@ -58,7 +80,7 @@ const DeckQuery = z.object({
   sizeUsdc: z.coerce.number().positive().max(1000),
 });
 
-/** Guards the routes that move money. No token configured means loopback-only trust. */
+/** Guards the routes that move money or cost real API credits. No token configured means loopback-only trust. */
 function requireToken(req: any, reply: any): boolean {
   const token = apiToken();
   if (!token) return true;
@@ -85,6 +107,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 
   await app.register(cors, { origin: allowedOrigins(), credentials: false });
+  await app.register(rateLimit, { global: false });
 
   app.get("/health", async () => ({ ok: true, canSign: canSign() }));
 
@@ -170,8 +193,12 @@ export async function buildApp(): Promise<FastifyInstance> {
    * ordinary answers from a live market rather than failures of this API. A Risk Budget
    * breach is NOT one of them -- that is the Trader's own ceiling refusing them, and it
    * stays a 4xx so it can never be mistaken for a market condition.
+   *
+   * Token-gated and rate-limited: it never moves funds, but every call is a real
+   * Thetanuts pricing request.
    */
-  app.post("/propose", async (req, reply): Promise<ProposeResult | undefined> => {
+  app.post("/propose", { config: COST_ROUTE_LIMIT }, async (req, reply): Promise<ProposeResult | undefined> => {
+    if (!requireToken(req, reply)) return;
     const parsed = ProposeRequest.safeParse(req.body);
     if (!parsed.success) {
       reply.code(400).send({ error: "Invalid trade intent", issues: parsed.error.issues });
@@ -274,6 +301,29 @@ export async function buildApp(): Promise<FastifyInstance> {
 
     return { address, spotUsd: spot === null ? null : usd(spot), holdings: [...real, ...practiceHoldings(session, spot)] };
   });
+
+  /**
+   * Read-only opinion surface -- ADR-0005. Never imported by /propose or /fill, and
+   * never imports from them. Every response is attributed opinion, not a trade input.
+   * Token-gated and rate-limited: never moves funds, but every call is a real AI API
+   * call (billed to the operator, not the caller).
+   */
+  const forecast = <T>(analyse: (scenario: Awaited<ReturnType<typeof buildScenario>>) => Promise<T>) =>
+    async (req: any, reply: any) => {
+      if (!requireToken(req, reply)) return;
+      const parsed = parseForecastQuery((req.query ?? {}) as Record<string, unknown>);
+      if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
+      try {
+        return await analyse(await buildScenario(parsed.symbol, parsed.horizon));
+      } catch (e) {
+        const { status, error } = forecastErrorStatus(e);
+        return reply.code(status).send({ error });
+      }
+    };
+
+  app.get("/forecast/news", { config: COST_ROUTE_LIMIT }, forecast(analyzeNews));
+  app.get("/forecast/price", { config: COST_ROUTE_LIMIT }, forecast(predictPrice));
+  app.get("/forecast/risk-benefit", { config: COST_ROUTE_LIMIT }, forecast(assessRiskBenefit));
 
   await app.register(practiceRoutes);
 

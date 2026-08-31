@@ -54,6 +54,9 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 | `POST /practice` | **no** | opens a simulated Position from a `proposalId`. No token, no Risk Budget, no signer in reach. |
 | `POST /fill` | **yes** | takes a proposalId from `/propose` and buys it |
 | `GET /positions` | no | the board: real holdings read from the chain plus this session's Practice Runs, each labelled |
+| `GET /forecast/news` | no | simulated-headline sentiment for `?symbol=&horizon=`. Opinion, quarantined from the trade flow (ADR-0005) |
+| `GET /forecast/price` | no | a price prediction grounded in real market data. Opinion, never a trade input |
+| `GET /forecast/risk-benefit` | no | the risk/benefit reading, with a runtime guardrail against Max Loss phrasing |
 
 `/propose` is what fills the confirmation card; `/fill` is what the button does. The chosen
 order is held server-side and only a `proposalId` goes out, so no caller can ask us to fill
@@ -81,9 +84,12 @@ switches a money route into a non-money route fails open under a typo or a merge
 imports nothing that can sign, and a test walks the import graph to keep it that way.
 
 This process holds a funded key, so it is locked down by default: it binds to **loopback**,
-CORS is an explicit allowlist (never `origin: true`), and `/fill` requires
-`Authorization: Bearer $COPILOT_API_TOKEN` whenever that is set. Do not bind it to `0.0.0.0`
-on shared WiFi -- anyone on the network could then spend from the wallet.
+CORS is an explicit allowlist (never `origin: true`), and `/fill`, `/propose`, and
+`/forecast/*` all require `Authorization: Bearer $COPILOT_API_TOKEN` whenever that is set --
+not just `/fill`. `/propose` and `/forecast/*` are also rate-limited (30/min per IP)
+regardless of the token, since they cost real Thetanuts/AI API usage even though they never
+move funds. Do not bind it to `0.0.0.0` on shared WiFi -- anyone on the network could then
+spend from the wallet, or run up your API bill.
 
 If you set `COPILOT_API_TOKEN`, set `NEXT_PUBLIC_COPILOT_API_TOKEN` to the same value --
 Next.js only inlines `NEXT_PUBLIC_*` into the browser bundle, and without it Confirm
@@ -161,7 +167,7 @@ packages/shared       zod schemas -- the TradeIntent wall from ADR-0001
 - [ ] First real mainnet fill
 - [ ] Trade Intent extraction
 - [ ] RFQ fallback when the book is empty
-- [ ] News analysis
+- [x] News analysis
 
 ## Next steps
 

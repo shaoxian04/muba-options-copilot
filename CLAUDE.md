@@ -25,6 +25,11 @@ separate Python service that has not been started — the Review Agent is stubbe
 always-agreeing, and the surface's only way to ask for a proposal is the seed prompts on the
 left. Cover has a glossary and an ADR but no code.
 
+**Forecast analysis** is built as three read-only routes (`GET /forecast/news|price|risk-benefit`)
+plus `npm run forecast`. It is opinion, quarantined from the trade flow by ADR-0005: nothing on
+the money path imports it, and no surface shows it beside a Max Loss. Its tests are written
+against `node:test` and run under `npm run test:node`, not Vitest.
+
 There are still no React component tests, deliberately. The frontend is held to its bar in a
 browser instead — Playwright and axe-core — and by two source-level checks that run under
 Vitest: `apps/web/tests/support/no-arithmetic.test.ts` fails if a component formats a number, and
@@ -44,9 +49,11 @@ the stack), `apps/web` (the Next.js surface).
 | Fill CLI (live) | `npm run fill -- --live` | **Spends real USDC on mainnet** |
 | Wallet | `npm run wallet -- new` / `npm run wallet` | Create / check the disposable wallet |
 | Frontend | `npm run web` | Next.js on `localhost:3000`. Needs the API running |
+| Forecast CLI | `npm run forecast` | Read-only opinion. Costs a real AI API call |
 | Prototype | `npm run prototype` | Opens the throwaway design prototype |
-| Tests | `npm test` | Vitest, then Playwright. No network, no chain, no wallet |
+| Tests | `npm test` | Vitest, then `node:test`, then Playwright. No network, no chain, no wallet |
 | Unit tests only | `npm run test:unit` | Vitest alone — seconds, no browser |
+| Forecast tests | `npm run test:node` | The `node:test` suites, under `tsx --test` |
 | Browser tests | `npm run test:e2e` | Playwright + axe. Builds the app first |
 | API fixtures | `npm run fixtures` | Regenerate what the browser suite stubs against |
 | Typecheck | `npm run typecheck` | Both workspaces |

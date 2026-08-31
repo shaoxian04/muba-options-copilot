@@ -17,7 +17,10 @@ export type { Card, Deck, Figure, Holding, ProposeResult };
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:3001";
 
 /**
- * The bearer token `/fill` requires whenever one is configured.
+ * The bearer token `/fill` and `/propose` require whenever one is configured.
+ *
+ * `/propose` is gated too, not just `/fill`: it signs nothing, but every call is a real
+ * Thetanuts pricing request billed to whoever runs the backend.
  *
  * `.env.example` states the contract plainly -- "The frontend sends it as
  * `Authorization: Bearer ...`" -- and without this Confirm answers 401 for anyone who
@@ -30,6 +33,10 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:30
  * person sitting at the browser, and it was never meant to be -- the wallet is theirs.
  */
 const API_TOKEN = process.env.NEXT_PUBLIC_COPILOT_API_TOKEN ?? "";
+
+/** Sent on the gated routes, and only when a token is actually configured. */
+const authHeaders = (): Record<string, string> =>
+  API_TOKEN ? { authorization: `Bearer ${API_TOKEN}` } : {};
 
 /** The Risk Budget, with the strings the commit bar reads. */
 export interface SessionState {
@@ -126,6 +133,7 @@ export const propose = (body: {
   call<ProposeResult>("/propose", {
     method: "POST",
     body: JSON.stringify({ underlying: "ETH", ...body }),
+    headers: authHeaders(),
   });
 
 /** Spends real USDC. Only ever called from the Trader's own press on Confirm. */
@@ -133,7 +141,7 @@ export const fill = (proposalId: string): Promise<FillReceipt> =>
   call<FillReceipt>("/fill", {
     method: "POST",
     body: JSON.stringify({ proposalId }),
-    ...(API_TOKEN ? { headers: { authorization: `Bearer ${API_TOKEN}` } } : {}),
+    headers: authHeaders(),
   });
 
 /**

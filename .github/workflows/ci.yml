@@ -28,6 +28,11 @@ jobs:
       - name: Unit and contract tests
         run: npm run test:unit
 
+      # The Forecast suites are written against `node:test` rather than Vitest, so they
+      # need their own step -- otherwise they are green by never having run.
+      - name: Forecast tests
+        run: npm run test:node
+
       # Chromium only. The suite asserts on rendered behaviour and network traffic, not
       # on how any particular engine paints, so a second browser would buy minutes and
       # no coverage.
