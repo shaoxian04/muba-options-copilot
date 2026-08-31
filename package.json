@@ -9,6 +9,7 @@
     "explore": "npm run explore -w @copilot/api",
     "fill": "npm run fill -w @copilot/api",
     "forecast": "npm run forecast -w @copilot/api",
+    "ask": "npm run ask -w @copilot/api",
     "wallet": "npm run wallet -w @copilot/api",
     "dev": "npm run dev -w @copilot/api",
     "test": "npm run test -w @copilot/shared && npm run test -w @copilot/api",

@@ -22,7 +22,8 @@ import { buildScenario } from "./forecast/scenario.js";
 import { analyzeNews } from "./forecast/news.js";
 import { predictPrice } from "./forecast/price.js";
 import { assessRiskBenefit } from "./forecast/riskBenefit.js";
-import { parseForecastQuery, forecastErrorStatus } from "./forecast/http.js";
+import { parseForecastQuery, parseAskBody, forecastErrorStatus } from "./forecast/http.js";
+import { answerQuestion } from "./forecast/ask.js";
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 
@@ -211,6 +212,25 @@ app.get("/forecast/risk-benefit", { config: COST_ROUTE_LIMIT }, async (req, repl
   try {
     const scenario = await buildScenario(parsed.symbol, parsed.horizon);
     return await assessRiskBenefit(scenario);
+  } catch (e) {
+    const { status, error } = forecastErrorStatus(e);
+    return reply.code(status).send({ error });
+  }
+});
+
+/**
+ * Free-text entry point: extracts which coin(s), horizon, and analyses a question is
+ * asking for, then runs the same read-only pipeline as the routes above, once per coin.
+ * One coin failing does not fail the others -- see CoinAskResult. Token-gated and
+ * rate-limited like every other /forecast/* route; a single question can trigger
+ * several real AI calls (one extraction, then per coin per requested analysis).
+ */
+app.post("/forecast/ask", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
+  if (!requireToken(req, reply)) return;
+  const parsed = parseAskBody((req.body ?? {}) as Record<string, unknown>);
+  if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
+  try {
+    return await answerQuestion(parsed.question);
   } catch (e) {
     const { status, error } = forecastErrorStatus(e);
     return reply.code(status).send({ error });
