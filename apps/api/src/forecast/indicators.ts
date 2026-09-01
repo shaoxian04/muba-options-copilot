@@ -9,7 +9,11 @@ import { agentsEndpoint } from "../env.js";
 import { fetchWithRetry } from "./marketData.js";
 
 /** The Python service is down or unreachable. Callers treat this as "no indicators", never as an error worth failing a whole answer over. */
-export class IndicatorsUnavailable extends Error {}
+export class IndicatorsUnavailable extends Error {
+  constructor(message: string, readonly status?: number) {
+    super(message);
+  }
+}
 
 export interface IndicatorsDeps {
   fetch: (url: string) => Promise<{ ok: boolean; status: number; json: () => Promise<any> }>;
@@ -34,9 +38,9 @@ export async function fetchIndicators(symbol: string, deps: IndicatorsDeps = def
     throw new IndicatorsUnavailable(`Agents service unreachable: ${e?.message ?? e}`);
   }
 
-  // 404 is the service working correctly -- it has no candles for this coin. Same
-  // shape of answer as any other failure here, since either way there are none.
-  if (!res.ok) throw new IndicatorsUnavailable(`Agents service returned ${res.status} for ${trimmed}`);
+  // 404 is the service working correctly -- it has no candles for this coin. The
+  // status rides along so the route can say that, rather than blame an outage.
+  if (!res.ok) throw new IndicatorsUnavailable(`Agents service returned ${res.status} for ${trimmed}`, res.status);
 
   const parsed = Indicators.safeParse(await res.json());
   if (!parsed.success) throw new IndicatorsUnavailable(`Agents service sent an unrecognized Indicators shape for ${trimmed}`);

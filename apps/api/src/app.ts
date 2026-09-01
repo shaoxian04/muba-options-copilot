@@ -382,7 +382,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     try {
       return await fetchIndicators(symbol);
     } catch (e) {
-      if (e instanceof IndicatorsUnavailable) return reply.code(503).send({ error: e.message });
+      if (e instanceof IndicatorsUnavailable) return reply.code(e.status === 404 ? 404 : 503).send({ error: e.message });
       return reply.code(502).send(safeErrorResponse(req.log, e, "Could not fetch indicators."));
     }
   });

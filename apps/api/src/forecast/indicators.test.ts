@@ -66,6 +66,27 @@ test("fetchIndicators turns a 404 into IndicatorsUnavailable -- an unsupported c
   );
 });
 
+test("fetchIndicators carries the upstream 404 as status, so a client error doesn't look like an outage", async () => {
+  await assert.rejects(
+    () => fetchIndicators("DOGE", deps({ fetch: async () => ({ ok: false, status: 404, json: async () => ({}) }) })),
+    (e: unknown) => e instanceof IndicatorsUnavailable && e.status === 404
+  );
+});
+
+test("fetchIndicators carries a non-404 upstream failure as that status", async () => {
+  await assert.rejects(
+    () => fetchIndicators("ETH", deps({ fetch: async () => ({ ok: false, status: 502, json: async () => ({}) }) })),
+    (e: unknown) => e instanceof IndicatorsUnavailable && e.status === 502
+  );
+});
+
+test("fetchIndicators leaves status undefined for a network/unreachable failure", async () => {
+  await assert.rejects(
+    () => fetchIndicators("ETH", deps({ fetch: async () => { throw new Error("ECONNREFUSED"); } })),
+    (e: unknown) => e instanceof IndicatorsUnavailable && e.status === undefined
+  );
+});
+
 test("fetchIndicators refuses a payload that does not match the zod schema", async () => {
   const drifted = { ...validPayload, candleSource: "kraken" };
   await assert.rejects(

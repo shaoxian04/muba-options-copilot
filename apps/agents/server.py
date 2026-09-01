@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import os
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
@@ -46,7 +47,7 @@ class Indicators(BaseModel):
     rsi14: float | None
     sma20: float | None
     ema20: float | None
-    candleSource: str
+    candleSource: Literal["binance", "coinbase"]
     asOf: str
 
 
