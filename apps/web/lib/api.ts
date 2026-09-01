@@ -10,9 +10,9 @@
  * so the Deck a Trader is looking at and the Card they pick have to arrive under the
  * same id.
  */
-import type { Card, Deck, Figure, Holding, ProposeResult } from "@copilot/shared";
+import type { Card, Deck, ExpiryOption, Figure, Holding, ProposeResult, UnderlyingSymbol } from "@copilot/shared";
 
-export type { Card, Deck, Figure, Holding, ProposeResult };
+export type { Card, Deck, ExpiryOption, Figure, Holding, ProposeResult, UnderlyingSymbol };
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:3001";
 
@@ -109,8 +109,13 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export const getDeck = (q: { direction: "UP" | "DOWN"; horizonDays: number; sizeUsdc: number }): Promise<Deck> =>
-  call<Deck>(`/deck?direction=${q.direction}&horizonDays=${q.horizonDays}&sizeUsdc=${q.sizeUsdc}`);
+export const getDeck = (q: {
+  asset: UnderlyingSymbol;
+  direction: "UP" | "DOWN";
+  horizonDays: number;
+  sizeUsdc: number;
+}): Promise<Deck> =>
+  call<Deck>(`/deck?asset=${q.asset}&direction=${q.direction}&horizonDays=${q.horizonDays}&sizeUsdc=${q.sizeUsdc}`);
 
 export const getSession = (): Promise<SessionState> => call<SessionState>("/session");
 
@@ -125,6 +130,7 @@ export const getBoard = (): Promise<Board> => call<Board>("/positions");
  * sitting in the browser.
  */
 export const propose = (body: {
+  underlying: UnderlyingSymbol;
   direction: "UP" | "DOWN";
   horizonDays: number;
   sizeUsdc: number;
@@ -132,7 +138,10 @@ export const propose = (body: {
 }): Promise<ProposeResult> =>
   call<ProposeResult>("/propose", {
     method: "POST",
-    body: JSON.stringify({ underlying: "ETH", ...body }),
+    // No `underlying: "ETH"` default here any more. It used to be spread in ahead of the
+    // caller's fields, which meant the surface could not have asked for anything else
+    // even once the book opened -- an ETH-only assumption hidden in a spread.
+    body: JSON.stringify(body),
     headers: authHeaders(),
   });
 

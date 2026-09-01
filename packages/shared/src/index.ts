@@ -42,11 +42,31 @@ export type PayoutAsset = z.infer<typeof PayoutAsset>;
  * If you are adding a field here that names an Order or carries a number the model
  * chose, stop -- you are undoing ADR-0001.
  */
+/**
+ * The Underlyings the book quotes. Mirrors the price-feed registry in
+ * `apps/api/src/thetanuts/underlyings.ts`, which is the authority -- this enum is the
+ * shape the browser and the wire agree on, and a test holds the two in step.
+ */
+export const UNDERLYING_SYMBOLS = ["BTC", "ETH", "SOL", "BNB", "XRP", "AVAX"] as const;
+export const UnderlyingSymbol = z.enum(UNDERLYING_SYMBOLS);
+export type UnderlyingSymbol = z.infer<typeof UnderlyingSymbol>;
+
+/**
+ * The longest expiry a Trader may ask for.
+ *
+ * The cap used to be 7 days, which was not a market fact -- it was silently hiding most
+ * of the book. ETH and BTC calls run out to roughly 60 days on the live grid, and an
+ * intent that cannot express that is an intent that cannot ask for what is on offer.
+ * The bound is still real: it stops an absurd horizon reaching the selection code, and
+ * `GET /deck` answers which expiries actually exist rather than letting anyone guess.
+ */
+export const MAX_HORIZON_DAYS = 90;
+
 export const TradeIntent = z.object({
-  underlying: z.enum(["ETH"]),          // ETH only for v1 (Q10)
+  underlying: UnderlyingSymbol,
   direction: z.enum(["UP", "DOWN"]),    // the Trader's view, not an instrument type
   sizeUsdc: z.number().positive().max(1000),   // Risk Budget is enforced server-side, not here
-  horizonDays: z.number().int().min(1).max(7),
+  horizonDays: z.number().int().min(1).max(MAX_HORIZON_DAYS),
 });
 export type TradeIntent = z.infer<typeof TradeIntent>;
 
@@ -165,9 +185,40 @@ export type FillResult = z.infer<typeof FillResult>;
  * hands out only this reference, so a maker address, nonce or signature never leaves
  * the process. This indirection is doing real work; do not simplify it away.
  */
+/**
+ * How far the Underlying has to move for a strike to matter, and which way.
+ *
+ * SIGNED, and the sign is the whole point. An absolute value gets this wrong in a way
+ * that reads as a bug: the prototype rendered "BTC must fall 0.4% to $79,000" when spot
+ * was already BELOW $79,000. Correcting it produced the most useful sentence on the
+ * surface -- such a Card does not need the price to move, it needs it to stay.
+ *
+ *   needed = isCall ? (strike - spot) / spot
+ *                   : (spot - strike) / spot
+ *
+ * A value at or below zero means the Underlying has already passed the strike.
+ */
+export const StrikeDistance = z.object({
+  /** Fraction of spot, signed. Negative or zero means already past the strike. */
+  needed: Figure,
+  /** True when the market is already on the paying side of this strike. */
+  alreadyPast: z.boolean(),
+  /**
+   * The sentence a Trader reads: "must fall 2.1%", "already below -- must stay".
+   *
+   * Written here rather than composed in React, because composing it there means a
+   * component deciding when a percentage becomes "already past" -- which is arithmetic
+   * on a figure, in the least visible place for it (ADR-0006).
+   */
+  sentence: z.string(),
+});
+export type StrikeDistance = z.infer<typeof StrikeDistance>;
+
 export const Card = z.object({
   cardRef: z.string(),
   strike: Figure,
+  /** How far the Underlying must move, and which way. Signed -- see `StrikeDistance`. */
+  distance: StrikeDistance,
   perContractUsd: Figure,
   /** How many contracts the Trader's stake buys. */
   contracts: Figure,
@@ -197,10 +248,48 @@ export const Card = z.object({
   chanceBand: z.number().int().min(0).max(5),
   /** What the maker still has posted against this Order. */
   availableUsdc: Figure,
+  /**
+   * Maker Depth at this strike, and how many Orders stand behind it.
+   *
+   * Maker Depth is how much cover makers are collectively willing to sell there, in
+   * USDC. It is NOT volume, NOT liquidity and NOT open interest. The Order count matters
+   * because $200,000 from one maker and $200,000 from eight are different markets, and
+   * the number alone cannot tell them apart.
+   */
+  depthUsdc: Figure,
+  depthOrders: Figure,
+  /** How many live Positions are open at this strike. Null when there are none. */
+  heldCount: Figure.nullable(),
   expiry: Figure,
   payoutAsset: PayoutAsset,
 });
 export type Card = z.infer<typeof Card>;
+
+/**
+ * One expiry the surface offers, and whether there is anything behind it.
+ *
+ * A chip with no Cards renders DEAD rather than disappearing. The four cash-settled
+ * Underlyings quote a short grid and no Underlying quotes a put beyond three days at
+ * all -- that shape is information about the market, and a chip that vanishes reads as
+ * a bug in the app instead.
+ */
+export const ExpiryOption = z.object({
+  horizonDays: z.number().int(),
+  /** `1d`, `11d`. */
+  label: z.string(),
+  /** How many Cards this expiry would deal, in the direction being asked about. */
+  cards: z.number().int(),
+  /** False when nothing is quoting. The chip renders dead and cannot be pressed. */
+  live: z.boolean(),
+  /**
+   * Why it is dead, for the Trader who hovers it. Absent when it is live.
+   *
+   * The server writes it because the surface must not compose a sentence about market
+   * structure it would have to derive.
+   */
+  reason: z.string().optional(),
+});
+export type ExpiryOption = z.infer<typeof ExpiryOption>;
 
 /**
  * Every Order a Trader may buy right now for one direction and one horizon.
@@ -213,10 +302,23 @@ export type Card = z.infer<typeof Card>;
  * maker liquidity reloads, so a Trader has something to act on.
  */
 export const Deck = z.object({
+  /** Which Underlying this Deck is on. */
+  asset: UnderlyingSymbol,
+  /** What a Trader reads for it -- "Ethereum", not "ETH". */
+  assetName: z.string(),
   direction: z.enum(["UP", "DOWN"]),
   horizonDays: z.number().int(),
   sizeUsdc: z.number(),
   spotUsd: Figure,
+  /**
+   * Every expiry this Underlying quotes in this direction, live and dead alike.
+   *
+   * Answered by the server because only the server can see the book. A surface that had
+   * to infer availability could only infer it from Decks it had already asked for, which
+   * means guessing -- and the guess is wrong in exactly the direction that hides a
+   * market from a Trader.
+   */
+  expiries: z.array(ExpiryOption),
   /** The fixed moment every Card in this Deck ends. Null only when the Deck is empty. */
   expiry: Figure.nullable(),
   cards: z.array(Card),

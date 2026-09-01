@@ -1,4 +1,6 @@
 {
+  "asset": "ETH",
+  "assetName": "Ethereum",
   "direction": "DOWN",
   "horizonDays": 2,
   "sizeUsdc": 2,
@@ -6,6 +8,20 @@
     "value": 2445.49,
     "display": "$2,445.49"
   },
+  "expiries": [
+    {
+      "horizonDays": 1,
+      "label": "1d",
+      "cards": 3,
+      "live": true
+    },
+    {
+      "horizonDays": 2,
+      "label": "2d",
+      "cards": 1,
+      "live": true
+    }
+  ],
   "expiry": {
     "value": 1768636800000,
     "display": "17 Jan, 08:00 UTC"
@@ -16,6 +32,14 @@
       "strike": {
         "value": 2380,
         "display": "$2,380.00"
+      },
+      "distance": {
+        "needed": {
+          "value": 0.0267799091388637,
+          "display": "2.7%"
+        },
+        "alreadyPast": false,
+        "sentence": "must fall 2.7%"
       },
       "perContractUsd": {
         "value": 5.32,
@@ -47,6 +71,15 @@
         "value": 500,
         "display": "$500.00"
       },
+      "depthUsdc": {
+        "value": 500,
+        "display": "$500"
+      },
+      "depthOrders": {
+        "value": 1,
+        "display": "1"
+      },
+      "heldCount": null,
       "expiry": {
         "value": 1768636800000,
         "display": "17 Jan, 08:00 UTC"

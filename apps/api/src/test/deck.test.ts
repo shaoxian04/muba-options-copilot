@@ -29,8 +29,17 @@ beforeEach(async () => {
   app = await buildApp();
 });
 
-const getDeck = async (query: string, session = freshSession()) => {
-  const res = await app.inject({ method: "GET", url: `/deck?${query}`, headers: { "x-session-id": session } });
+/**
+ * Most of this file predates the book having six Underlyings, so it asks for ETH -- but
+ * it asks EXPLICITLY. The parameter is never defaulted anywhere, here included: a helper
+ * that quietly supplies one is the same hole as a schema that does.
+ */
+const getDeck = async (query: string, session = freshSession(), asset = "ETH") => {
+  const res = await app.inject({
+    method: "GET",
+    url: `/deck?asset=${asset}&${query}`,
+    headers: { "x-session-id": session },
+  });
   return { res, body: res.json() };
 };
 
@@ -113,9 +122,9 @@ describe("GET /deck", () => {
     // one, so the Card is pinned to its allowed fields instead: anything the server
     // starts leaking has to be added here deliberately, in a diff a reviewer reads.
     const allowed = [
-      "cardRef", "strike", "perContractUsd", "contracts", "premiumUsdc", "maxLossUsdc",
-      "breakevenPrice", "impliedChance", "chanceLabel", "chanceBand", "availableUsdc",
-      "expiry", "payoutAsset",
+      "cardRef", "strike", "distance", "perContractUsd", "contracts", "premiumUsdc",
+      "maxLossUsdc", "breakevenPrice", "impliedChance", "chanceLabel", "chanceBand",
+      "availableUsdc", "depthUsdc", "depthOrders", "heldCount", "expiry", "payoutAsset",
     ].sort();
     for (const card of body.cards) {
       expect(Object.keys(card).sort()).toEqual(allowed);
@@ -149,10 +158,23 @@ describe("GET /deck", () => {
         // on the screen; the chance itself is, and it is a Figure like everything else.
         if (key === "cardRef" || key === "payoutAsset") continue;
         if (key === "chanceLabel" || key === "chanceBand") continue;
+        // `distance` is a compound -- a Figure, a flag and the sentence built from both.
+        // Its Figure is checked below, on its own terms.
+        if (key === "distance") continue;
+        // Nothing rather than a zero where nobody holds the strike, so null is allowed
+        // here and only here.
+        if (key === "heldCount" && figure === null) continue;
         expect(figure, `${key} is a bare number`).toHaveProperty("display");
         expect(typeof (figure as any).display, `${key}`).toBe("string");
         expect(typeof (figure as any).value, `${key}`).toBe("number");
       }
+
+      expect(typeof card.distance.needed.display).toBe("string");
+      expect(typeof card.distance.needed.value).toBe("number");
+      // The sentence is written by the server too. A component that composed it would be
+      // deciding when a percentage becomes "already past" -- arithmetic on a figure.
+      expect(typeof card.distance.sentence).toBe("string");
+      expect(typeof card.distance.alreadyPast).toBe("boolean");
     }
 
     const longestShot = body.cards[0];
@@ -207,13 +229,21 @@ describe("GET /deck", () => {
   it("rejects a request it cannot answer", async () => {
     for (const query of [
       "direction=SIDEWAYS&horizonDays=1&sizeUsdc=2",
-      "direction=DOWN&horizonDays=9&sizeUsdc=2",
+      // 9 days used to be out of range. It is not: the live book runs ETH calls out past
+      // fifty, and the old 3-day cap was hiding most of the market rather than describing
+      // it. The bound that remains is absurd rather than wrong.
+      "direction=DOWN&horizonDays=900&sizeUsdc=2",
+      "direction=DOWN&horizonDays=0&sizeUsdc=2",
       "direction=DOWN&horizonDays=1&sizeUsdc=-5",
       "horizonDays=1&sizeUsdc=2",
     ]) {
       const { res } = await getDeck(query);
       expect(res.statusCode, query).toBe(400);
     }
+
+    // And an asset is required: no default, ever.
+    const noAsset = await app.inject({ method: "GET", url: "/deck?direction=DOWN&horizonDays=1&sizeUsdc=2" });
+    expect(noAsset.statusCode).toBe(400);
   });
 });
 

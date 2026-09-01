@@ -17,10 +17,11 @@ import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
-import { ProposeRequest, type ProposeResult } from "@copilot/shared";
+import { ProposeRequest, UnderlyingSymbol, MAX_HORIZON_DAYS, type ProposeResult } from "@copilot/shared";
 import { canSign } from "./thetanuts/client.js";
 import { buyableOrders, impliedVol, daysToExpiry, orderIdentity, PUT } from "./thetanuts/orders.js";
 import { spotPrice } from "./thetanuts/market.js";
+import { UnknownUnderlying } from "./thetanuts/underlyings.js";
 import { proposeTrade, proposeChosenOrder, NoSuitableOrder, QuoteMoved } from "./thetanuts/propose.js";
 import { buildDeck } from "./thetanuts/deck.js";
 import { reviewIntent } from "./agents/review.js";
@@ -71,14 +72,21 @@ export const COST_ROUTE_MAX_PER_MINUTE = 30;
 const COST_ROUTE_LIMIT = { rateLimit: { max: COST_ROUTE_MAX_PER_MINUTE, timeWindow: "1 minute" } };
 
 /**
- * A query string arrives as strings, so numbers are coerced -- but only into the range
- * the book actually trades. ETH puts run to 3 days and no further.
+ * A query string arrives as strings, so numbers are coerced.
+ *
+ * `asset` is REQUIRED and has no default. A default of ETH is how an ETH-only assumption
+ * survives the migration meant to remove it -- the request succeeds, the Trader is shown
+ * ETH, and nothing reports a problem.
+ *
+ * The horizon was capped at 3 days, which was not a market fact: the live book runs ETH
+ * and BTC calls out to about 60. The cap was hiding most of the book. It is bounded, but
+ * by something absurd rather than by something wrong, and the response says which
+ * expiries actually exist.
  */
 const DeckQuery = z.object({
-  // Widened to a required parameter in issue #24; ETH-only until then.
-  asset: z.enum(["ETH"]).default("ETH"),
+  asset: UnderlyingSymbol,
   direction: z.enum(["UP", "DOWN"]),
-  horizonDays: z.coerce.number().int().min(1).max(3),
+  horizonDays: z.coerce.number().int().min(1).max(MAX_HORIZON_DAYS),
   sizeUsdc: z.coerce.number().positive().max(1000),
 });
 
@@ -172,18 +180,26 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   /**
-   * The Deck: every Order the Trader may safely buy right now, for one direction and
-   * one expiry. Read-only and cheap -- `previewFillOrder` is synchronous and local, so
-   * pricing ten Cards costs one book fetch and no round trips.
+   * The Deck: every Order the Trader may safely buy right now, on one Underlying, for
+   * one direction and one expiry. Read-only.
    *
-   * ETH puts only ever run to 3 days, so the horizon is not an arbitrary range: it is
-   * the whole grid.
+   * A request without an `asset` is refused rather than answered about ETH -- see
+   * `DeckQuery`. The response also names which expiries this Underlying quotes in this
+   * direction, so the surface can render an empty chip as dead rather than hide it.
    */
   app.get("/deck", async (req, reply) => {
     const parsed = DeckQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid Deck request", issues: parsed.error.issues });
 
-    return buildDeck(sessionFor(req.headers), parsed.data);
+    try {
+      return await buildDeck(sessionFor(req.headers), parsed.data);
+    } catch (e) {
+      // Belt and braces: the query schema already rejects an unregistered symbol, but
+      // `buildDeck` refuses one too, and a refusal that names the asset asked for is a
+      // better 400 than a stack trace.
+      if (e instanceof UnknownUnderlying) return reply.code(400).send({ error: e.message });
+      throw e;
+    }
   });
 
   /**

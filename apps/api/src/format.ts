@@ -30,6 +30,29 @@ export function percent(value: number): Figure {
   return { value, display: `${Math.round(value * 100)}%` };
 }
 
+/**
+ * `2.1%`. A move as a fraction of spot, signed, to one decimal.
+ *
+ * A decimal place rather than a whole percent because at the money the whole percent is
+ * zero: the live book quotes ETH strikes twenty dollars apart around a $2,450 spot, so
+ * the nearest few Cards are all under 1% away and every one of them would read "must
+ * fall 0%". The sign is kept -- see `thetanuts/distance.ts` for why losing it produces
+ * a confident, grammatical, backwards sentence.
+ */
+export function movePercent(value: number): Figure {
+  return { value, display: `${(value * 100).toFixed(1)}%` };
+}
+
+/** `4` / `12`. A plain count -- Orders behind a depth, Positions held at a strike. */
+export function count(value: number): Figure {
+  return { value, display: String(Math.round(value)) };
+}
+
+/** `1d`, `11d`. Whole days to an expiry, as a chip reads it. */
+export function days(value: number): Figure {
+  return { value, display: `${Math.round(value)}d` };
+}
+
 /** `15 Jan, 08:00 UTC`. Options end at a fixed moment; the string says so. */
 export function moment(iso: string): Figure {
   const d = new Date(iso);

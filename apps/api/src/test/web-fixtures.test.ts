@@ -100,7 +100,7 @@ const get = async (url: string, session = SESSION) =>
 const post = async (url: string, payload: Record<string, unknown>, session = SESSION) =>
   await app.inject({ method: "POST", url, headers: { "x-session-id": session }, payload });
 
-const DOWN_1 = "/deck?direction=DOWN&horizonDays=1&sizeUsdc=2";
+const DOWN_1 = "/deck?asset=ETH&direction=DOWN&horizonDays=1&sizeUsdc=2";
 const intent = { underlying: "ETH", direction: "DOWN", sizeUsdc: 2, horizonDays: 1 };
 
 beforeAll(async () => {
@@ -109,9 +109,9 @@ beforeAll(async () => {
 
   // --- the ordinary surface -------------------------------------------------
   generated["deck-down-1"] = await get(DOWN_1);
-  generated["deck-down-2"] = await get("/deck?direction=DOWN&horizonDays=2&sizeUsdc=2");
-  generated["deck-down-3"] = await get("/deck?direction=DOWN&horizonDays=3&sizeUsdc=2");
-  generated["deck-up-1"] = await get("/deck?direction=UP&horizonDays=1&sizeUsdc=2");
+  generated["deck-down-2"] = await get("/deck?asset=ETH&direction=DOWN&horizonDays=2&sizeUsdc=2");
+  generated["deck-down-3"] = await get("/deck?asset=ETH&direction=DOWN&horizonDays=3&sizeUsdc=2");
+  generated["deck-up-1"] = await get("/deck?asset=ETH&direction=UP&horizonDays=1&sizeUsdc=2");
   generated["session"] = await get("/session");
   generated["positions-empty"] = await get("/positions");
 

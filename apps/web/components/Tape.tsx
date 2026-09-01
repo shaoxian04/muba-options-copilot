@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The tape: what ETH costs, and when this expiry ends.
+ * The tape: what the selected Underlying costs, and when this expiry ends.
  *
  * Two jobs, both about making the surface visibly connected to a live market rather
  * than a mockup. The price re-reads on every Deck poll, and the countdown runs against
@@ -14,9 +14,6 @@
 import { useEffect, useRef } from "react";
 import type { Deck } from "@copilot/shared";
 import { countdown, countdownWords } from "../lib/clock";
-import type { Horizon } from "../lib/surface";
-
-const HORIZONS: Horizon[] = [1, 2, 3];
 
 export function Tape({
   deck,
@@ -25,8 +22,8 @@ export function Tape({
   now,
 }: {
   deck: Deck | null;
-  horizonDays: Horizon;
-  onHorizon: (h: Horizon) => void;
+  horizonDays: number;
+  onHorizon: (h: number) => void;
   now: number;
 }) {
   const previous = useRef<number | null>(null);
@@ -45,12 +42,12 @@ export function Tape({
         <b className="hero" data-testid="spot">
           {spot ? spot.display : "—"}
         </b>
-        <span className="lbl">ETH</span>
+        <span className="lbl">{deck?.asset ?? ""}</span>
         <span className={`tick${rising ? " up" : ""}`} aria-hidden="true">
           {moved ? (rising ? "▴" : "▾") : ""}
         </span>
         <span className="sr" role="status">
-          {spot ? `ETH is ${spot.display}` : "Waiting for the market"}
+          {spot && deck ? `${deck.assetName} is ${spot.display}` : "Waiting for the market"}
         </span>
       </div>
 
@@ -67,16 +64,24 @@ export function Tape({
           </div>
         ) : null}
 
+        {/*
+          Driven by what the book actually quotes, never a hard-coded [1, 2, 3]. That
+          list was true of ETH puts and of nothing else: the live grid runs out past
+          fifty days on calls, and the four cash-settled Underlyings stop sooner. The
+          server answers which expiries exist for THIS Underlying in THIS direction.
+        */}
         <div className="exp" role="group" aria-label="How long the contract runs">
-          {HORIZONS.map((d) => (
+          {(deck?.expiries ?? []).map((e) => (
             <button
-              key={d}
+              key={e.horizonDays}
               type="button"
-              aria-pressed={d === horizonDays}
-              onClick={() => onHorizon(d)}
-              data-testid={`horizon-${d}`}
+              aria-pressed={e.horizonDays === horizonDays}
+              disabled={!e.live}
+              title={e.reason}
+              onClick={() => onHorizon(e.horizonDays)}
+              data-testid={`horizon-${e.horizonDays}`}
             >
-              {d} day{d === 1 ? "" : "s"}
+              {e.label}
             </button>
           ))}
         </div>

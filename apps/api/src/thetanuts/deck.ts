@@ -1,41 +1,46 @@
 /**
- * A Deck: every Order a Trader may buy right now for one direction and one horizon.
+ * A Deck: every Order a Trader may buy right now for one Underlying, one direction and
+ * one horizon.
  *
  * The point of dealing a whole Deck rather than a single recommendation is that a
  * Trader can judge the Copilot's pick against its alternatives instead of taking it on
  * trust. So this module's job is to be complete and honestly ordered, not to be clever.
  *
- * It reaches the book only through `buyableOrders`, which is where ADR-0002 is enforced.
- * Nothing here may fetch Orders another way -- the book has one door.
+ * It reaches the book only through `buyableOrders`, which is where ADR-0002 and the
+ * price-feed allowlist are enforced. Nothing here may fetch Orders another way -- the
+ * book has one door.
  *
  * Every Card is priced through `priceOrder`, the same call `proposeTrade` makes. That is
  * the one-pricing-path rule (issue #1), and it is what stands between a Trader and being
  * shown one price and filled at another.
  */
 import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
-import type { Card, Deck } from "@copilot/shared";
+import type { Card, Deck, ExpiryOption } from "@copilot/shared";
 import { buyableOrders, CALL, PUT, impliedVol, daysToExpiry, wholeDaysToExpiry, orderIdentity } from "./orders.js";
 import { priceOrder, StakeTooSmall } from "./pricing.js";
 import { impliedChance, NoQuotedVolatility } from "./implied-chance.js";
 import { spotPrice } from "./market.js";
+import { requireUnderlying } from "./underlyings.js";
+import { strikeDistance } from "./distance.js";
+import { depthAt, strikeOf } from "./depth.js";
+import { openInterestOrEmpty, type OpenInterest } from "./open-interest.js";
 import { rememberCard, type Session } from "../sessions.js";
-import { usd, percent, chanceBand, chanceWords } from "../format.js";
+import { usd, percent, count, days as fmtDays, chanceBand, chanceWords } from "../format.js";
 
 export interface DeckRequest {
-  /** Which Underlying. Required -- a default is how an ETH-only book stays ETH-only. */
+  /**
+   * Which Underlying. Required, with no default.
+   *
+   * An optional parameter defaulting to ETH is how an ETH-only assumption survives the
+   * migration meant to remove it: every caller keeps working, the Trader is quietly
+   * shown ETH, and nothing anywhere reports a problem.
+   */
   asset: string;
   direction: "UP" | "DOWN";
   horizonDays: number;
   sizeUsdc: number;
 }
 
-/**
- * What a Trader is told when there is nothing to deal.
- *
- * An empty Deck is a market condition, not a broken app, and the message has to read as
- * one. Naming when maker liquidity reloads gives them something to act on rather than
- * something to refresh at.
- */
 /**
  * How far a Deck's Implied Chance must spread before the gradient carries information.
  *
@@ -46,18 +51,37 @@ export interface DeckRequest {
  */
 export const GRADIENT_MIN_SPREAD = 0.15;
 
+/**
+ * What a Trader is told when there is nothing to deal.
+ *
+ * An empty Deck is a market condition, not a broken app, and the message has to read as
+ * one. Naming when maker liquidity reloads gives them something to act on rather than
+ * something to refresh at.
+ */
 export const NO_MAKERS =
   "No maker is quoting this right now. Maker liquidity renews around 09:00 UTC -- or ask for a different expiry.";
 
+/** Said on a dead expiry chip, so a Trader who hovers it learns rather than guesses. */
+export const NO_MAKERS_AT = (label: string, direction: "UP" | "DOWN", asset: string): string =>
+  `No maker is quoting ${asset} ${direction === "DOWN" ? "falls" : "rises"} at ${label}.`;
+
 export async function buildDeck(session: Session, request: DeckRequest): Promise<Deck> {
-  const { asset, direction, horizonDays, sizeUsdc } = request;
-  const [orders, spot] = await Promise.all([buyableOrders(asset), spotPrice(asset)]);
+  const { direction, horizonDays, sizeUsdc } = request;
+  // Refuses a symbol outside the registry, naming what was asked for. Before anything is
+  // fetched, so an unknown asset costs one comparison rather than a book read.
+  const underlying = requireUnderlying(request.asset);
+
+  const [orders, spot, held] = await Promise.all([
+    buyableOrders(underlying.symbol),
+    spotPrice(underlying.symbol),
+    openInterestOrEmpty(underlying),
+  ]);
 
   const wantType = direction === "DOWN" ? PUT : CALL;
   const isPut = wantType === PUT;
+  const inDirection = orders.filter((o) => o.order.optionType === wantType);
 
-  const candidates = orders
-    .filter((o) => o.order.optionType === wantType)
+  const candidates = [...inDirection]
     .filter((o) => wholeDaysToExpiry(o) === horizonDays)
     // Longest shot leftmost, in BOTH directions: ascending strike for puts, descending
     // for calls. The gradient only reads as one thing if it always runs the same way.
@@ -67,16 +91,19 @@ export async function buildDeck(session: Session, request: DeckRequest): Promise
     });
 
   const cards = candidates
-    .map((order) => toCard(session, order, sizeUsdc, spot, isPut))
+    .map((order) => toCard(session, order, { sizeUsdc, spot, isPut, orders, held }))
     .filter((card): card is Card => card !== undefined);
 
   const chances = cards.map((c) => c.impliedChance.value);
 
   return {
+    asset: underlying.symbol as Deck["asset"],
+    assetName: underlying.name,
     direction,
     horizonDays,
     sizeUsdc,
-    spotUsd: usd(spot),
+    spotUsd: usd(spot, underlying.priceDp),
+    expiries: expiriesFor(session, inDirection, { sizeUsdc, spot, isPut, orders, held, direction, asset: underlying.symbol }),
     expiry: cards[0]?.expiry ?? null,
     cards,
     // One Card cannot be a gradient, and neither can six that all sit at the same
@@ -84,6 +111,54 @@ export async function buildDeck(session: Session, request: DeckRequest): Promise
     gradientLegible: chances.length > 1 && Math.max(...chances) - Math.min(...chances) >= GRADIENT_MIN_SPREAD,
     ...(cards.length ? {} : { message: NO_MAKERS }),
   };
+}
+
+/**
+ * Which expiries this Underlying quotes in this direction, and which are empty.
+ *
+ * Answered for EVERY expiry the book carries in this direction, dead ones included, so
+ * the surface can render a chip with nothing behind it as dead rather than hiding it.
+ * The four cash-settled Underlyings quote a short grid, and no Underlying quotes a put
+ * beyond three days at all -- that shape is a fact about the market. A chip that
+ * disappears reads as a bug in the app instead (issue #27).
+ *
+ * The count is of CARDS, not Orders: an expiry whose every Order lacks a quoted IV, or
+ * is too thin to take the whole stake, would deal an empty Deck. Reporting it as live
+ * would strand the Trader on a chip that answers with nothing.
+ */
+function expiriesFor(
+  session: Session,
+  inDirection: OrderWithSignature[],
+  ctx: CardContext & { direction: "UP" | "DOWN"; asset: string }
+): ExpiryOption[] {
+  const buckets = [...new Set(inDirection.map(wholeDaysToExpiry))].filter((d) => d >= 1).sort((a, b) => a - b);
+
+  return buckets.map((horizonDays) => {
+    const label = fmtDays(horizonDays).display;
+    const cards = inDirection
+      .filter((o) => wholeDaysToExpiry(o) === horizonDays)
+      // Counted by actually building them. A cheaper predicate here and the real filter
+      // in `buildDeck` is two answers to one question, and they drift.
+      .map((o) => toCard(session, o, ctx))
+      .filter((c) => c !== undefined).length;
+
+    return {
+      horizonDays,
+      label,
+      cards,
+      live: cards > 0,
+      ...(cards > 0 ? {} : { reason: NO_MAKERS_AT(label, ctx.direction, ctx.asset) }),
+    };
+  });
+}
+
+interface CardContext {
+  sizeUsdc: number;
+  spot: number;
+  isPut: boolean;
+  /** The whole buyable book for this Underlying -- Maker Depth spans every expiry. */
+  orders: OrderWithSignature[];
+  held: OpenInterest;
 }
 
 /**
@@ -104,13 +179,8 @@ export async function buildDeck(session: Session, request: DeckRequest): Promise
  * Silence rather than a throw, because one unquotable Order must not cost a Trader the
  * whole Deck.
  */
-function toCard(
-  session: Session,
-  order: OrderWithSignature,
-  sizeUsdc: number,
-  spot: number,
-  isPut: boolean
-): Card | undefined {
+function toCard(session: Session, order: OrderWithSignature, ctx: CardContext): Card | undefined {
+  const { sizeUsdc, spot, isPut, orders, held } = ctx;
   const iv = impliedVol(order);
   if (typeof iv !== "number") return undefined;
 
@@ -127,9 +197,19 @@ function toCard(
       isPut,
     });
 
+    // Depth is read across the WHOLE book for this Underlying, not just this Deck's
+    // expiry -- it answers "where will makers trade this strike", which is not a
+    // question about the expiry the Trader happens to be looking at.
+    const depth = depthAt(orders, strikeOf(order), !isPut);
+    const heldHere = held.get(strikeOf(order));
+
     return {
       cardRef: rememberCard(session, order, orderIdentity(order)),
       strike: economics.strike,
+      // Signed. The sign is what separates "must fall 2.1%" from "already below -- must
+      // stay", and taking an absolute value here produced the prototype's confident,
+      // grammatical, backwards sentence. See `distance.ts`.
+      distance: strikeDistance(spot, economics.strike.value, !isPut),
       perContractUsd: economics.perContractUsd,
       contracts: economics.contracts,
       premiumUsdc: economics.premiumUsdc,
@@ -139,6 +219,11 @@ function toCard(
       chanceLabel: chanceWords(chance),
       chanceBand: chanceBand(chance),
       availableUsdc: economics.availableUsdc,
+      depthUsdc: usd(depth.usdc, 0),
+      depthOrders: count(depth.orders),
+      // Nothing rather than a zero. A strike nobody holds should say nothing about who
+      // holds it, not report an emptiness the Trader has to interpret.
+      heldCount: heldHere === undefined ? null : count(heldHere),
       expiry: economics.expiry,
       payoutAsset: economics.payoutAsset,
     };

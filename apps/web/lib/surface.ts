@@ -17,7 +17,7 @@
  *     A Trader is told before they confirm, never after.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Figure } from "@copilot/shared";
+import type { ExpiryOption, Figure, UnderlyingSymbol } from "@copilot/shared";
 import {
   ApiRefusal,
   fill,
@@ -41,7 +41,32 @@ export const STAKE_USDC = 2;
 const DECK_POLL_MS = 6000;
 
 export type Direction = "UP" | "DOWN";
-export type Horizon = 1 | 2 | 3;
+
+/**
+ * The Underlying the surface opens on.
+ *
+ * ETH because it is the deepest book. NOT a fallback: every request names an asset, and
+ * this is simply which one is selected before the Trader has picked.
+ */
+export const DEFAULT_ASSET: UnderlyingSymbol = "ETH";
+
+/**
+ * Which expiry to open on: the one with the MOST Cards, not the shortest.
+ *
+ * One day is routinely the emptiest cell in the whole book -- on a recent snapshot ETH
+ * puts at one day were a single Card against nine at four days -- so opening on the
+ * shortest expiry makes a Trader's first impression of the market a nearly empty row.
+ * Ties go to the nearer expiry, which is the only tiebreak that does not reorder the
+ * surface as depth wobbles between two equal chips.
+ *
+ * Returns null when nothing is live, which is a real state: no Underlying quotes a put
+ * beyond three days, and a direction can have no live expiry at all.
+ */
+export function fullestExpiry(expiries: ExpiryOption[]): number | null {
+  const live = expiries.filter((e) => e.live);
+  if (!live.length) return null;
+  return live.reduce((best, e) => (e.cards > best.cards ? e : best), live[0]!).horizonDays;
+}
 
 export interface ChatLine {
   // The Copilot, never a "bot" -- CONTEXT.md keeps "trading bot" off the agents, and
@@ -53,8 +78,9 @@ export interface ChatLine {
 export type GateState = "idle" | "pass" | "wait" | "fail";
 
 export interface Surface {
+  asset: UnderlyingSymbol;
   direction: Direction;
-  horizonDays: Horizon;
+  horizonDays: number;
   deck: Deck | null;
   deckError: string | null;
   loading: boolean;
@@ -74,8 +100,9 @@ export interface Surface {
   busy: boolean;
   log: ChatLine[];
 
+  setAsset: (a: UnderlyingSymbol) => void;
   setDirection: (d: Direction) => void;
-  setHorizon: (h: Horizon) => void;
+  setHorizon: (h: number) => void;
   deal: (line?: string, switchTo?: Direction) => Promise<void>;
   pick: (cardRef: string) => Promise<void>;
   confirm: () => Promise<void>;
@@ -133,8 +160,9 @@ export function agentGate(result: ProposeResult | null): Array<{ label: string; 
 }
 
 export function useSurface(): Surface {
+  const [asset, setAssetState] = useState<UnderlyingSymbol>(DEFAULT_ASSET);
   const [direction, setDirectionState] = useState<Direction>("DOWN");
-  const [horizonDays, setHorizonState] = useState<Horizon>(1);
+  const [horizonDays, setHorizonState] = useState<number>(1);
   const [deck, setDeck] = useState<Deck | null>(null);
   const [deckError, setDeckError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -170,10 +198,10 @@ export function useSurface(): Surface {
   const shownQuote = useRef<{ ref: string | null; premium: string | null }>({ ref: null, premium: null });
 
   const loadDeck = useCallback(
-    async (d: Direction, h: Horizon, { spinner = false } = {}): Promise<Deck | null> => {
+    async (a: UnderlyingSymbol, d: Direction, h: number, { spinner = false } = {}): Promise<Deck | null> => {
       if (spinner) setLoading(true);
       try {
-        const next = await getDeck({ direction: d, horizonDays: h, sizeUsdc: STAKE_USDC });
+        const next = await getDeck({ asset: a, direction: d, horizonDays: h, sizeUsdc: STAKE_USDC });
         setDeck(next);
         setDeckError(null);
 
@@ -195,8 +223,8 @@ export function useSurface(): Surface {
 
   // First paint, and whenever the Trader changes what they are looking at.
   useEffect(() => {
-    void loadDeck(direction, horizonDays, { spinner: true });
-  }, [direction, horizonDays, loadDeck]);
+    void loadDeck(asset, direction, horizonDays, { spinner: true });
+  }, [asset, direction, horizonDays, loadDeck]);
 
   useEffect(() => {
     void refreshMoney();
@@ -204,9 +232,9 @@ export function useSurface(): Surface {
 
   // The tape is only honest if it keeps asking. Cheap: /deck is read-only and local.
   useEffect(() => {
-    const timer = setInterval(() => void loadDeck(direction, horizonDays), DECK_POLL_MS);
+    const timer = setInterval(() => void loadDeck(asset, direction, horizonDays), DECK_POLL_MS);
     return () => clearInterval(timer);
-  }, [direction, horizonDays, loadDeck]);
+  }, [asset, direction, horizonDays, loadDeck]);
 
   const clearSelection = useCallback(() => {
     setSelectedRef(null);
@@ -218,6 +246,23 @@ export function useSurface(): Surface {
     shownQuote.current = { ref: null, premium: null };
   }, []);
 
+  /**
+   * Pick an Underlying. The picker is the source of truth; the chat does not drive it.
+   *
+   * Saying "buy me some SOL" in the Copilot panel must NOT move this -- reading an asset
+   * name out of a sentence is the Trade Agent's job, and it does not exist yet (ADR-0007).
+   * A regex that guessed would be a model originating a selection, which is the shape of
+   * mistake ADR-0006 is about.
+   */
+  const setAsset = useCallback(
+    (a: UnderlyingSymbol) => {
+      if (a === asset) return;
+      clearSelection();
+      setAssetState(a);
+    },
+    [asset, clearSelection]
+  );
+
   const setDirection = useCallback(
     (d: Direction) => {
       if (d === direction) return;
@@ -228,7 +273,7 @@ export function useSurface(): Surface {
   );
 
   const setHorizon = useCallback(
-    (h: Horizon) => {
+    (h: number) => {
       if (h === horizonDays) return;
       clearSelection();
       setHorizonState(h);
@@ -248,7 +293,13 @@ export function useSurface(): Surface {
       setRefusal(null);
       setReceipt(null);
       try {
-        const answer = await propose({ direction: asking, horizonDays, sizeUsdc: STAKE_USDC, cardRef });
+        const answer = await propose({
+          underlying: asset,
+          direction: asking,
+          horizonDays,
+          sizeUsdc: STAKE_USDC,
+          cardRef,
+        });
         setResult(answer);
         setQuoteMoved(false);
 
@@ -272,7 +323,7 @@ export function useSurface(): Surface {
         setBusy(false);
       }
     },
-    [direction, horizonDays]
+    [asset, direction, horizonDays]
   );
 
   const deal = useCallback(
@@ -284,7 +335,7 @@ export function useSurface(): Surface {
       if (switchTo && switchTo !== direction) {
         clearSelection();
         setDirectionState(switchTo);
-        row = await loadDeck(switchTo, horizonDays, { spinner: true });
+        row = await loadDeck(asset, switchTo, horizonDays, { spinner: true });
       }
 
       const answer = await ask(undefined, asking);
@@ -300,7 +351,7 @@ export function useSurface(): Surface {
         say(answer.message);
       }
     },
-    [ask, clearSelection, deck, direction, heard, horizonDays, loadDeck, say]
+    [ask, asset, clearSelection, deck, direction, heard, horizonDays, loadDeck, say]
   );
 
   const pick = useCallback(
@@ -362,12 +413,13 @@ export function useSurface(): Surface {
 
   const reset = useCallback(() => {
     clearSelection();
-    void loadDeck(direction, horizonDays, { spinner: true });
-  }, [clearSelection, loadDeck, direction, horizonDays]);
+    void loadDeck(asset, direction, horizonDays, { spinner: true });
+  }, [asset, clearSelection, loadDeck, direction, horizonDays]);
 
   const selectedCard = deck?.cards.find((c) => c.cardRef === selectedRef) ?? null;
 
   return {
+    asset,
     direction,
     horizonDays,
     deck,
@@ -384,6 +436,7 @@ export function useSurface(): Surface {
     receipt,
     busy,
     log,
+    setAsset,
     setDirection,
     setHorizon,
     deal,
