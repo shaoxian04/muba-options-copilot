@@ -454,7 +454,7 @@ test("extractChatQuery merges duplicate requests for the same coin, unioning ana
   assert.deepEqual(new Set(result.requests[0].analyses), new Set(["news", "market"]));
 });
 
-test("comparison context passed to other coins is restricted to market data, never opinion content", async () => {
+test("comparison context passed to other coins includes each coin's own gathered opinion data, and sets the disclaimer for a market-only coin that borrows it", async () => {
   const capturedSynthesis: Record<string, string> = {};
 
   const create: AgentCreateFn = async (params) => {
@@ -512,9 +512,15 @@ test("comparison context passed to other coins is restricted to market data, nev
   const results = await answerQuestion("compare ETH and PEPE", { create, marketData });
 
   assert.equal(results.ETH.disclaimer, FORECAST_DISCLAIMER, "ETH's own price prediction should carry the disclaimer");
-  assert.equal(results.PEPE.disclaimer, undefined, "PEPE's own data is market-only, so no disclaimer even though ETH's opinion exists elsewhere");
+  assert.equal(
+    results.PEPE.disclaimer,
+    FORECAST_DISCLAIMER,
+    "PEPE's own data is market-only, but ETH's speculative opinion reached PEPE's comparison context, so PEPE's result must carry the disclaimer too"
+  );
+  assert.equal(results.PEPE.news, undefined, "PEPE's own result fields stay market-only -- only the disclaimer reflects borrowed opinion");
+  assert.equal(results.PEPE.price, undefined, "PEPE's own result fields stay market-only -- only the disclaimer reflects borrowed opinion");
 
   assert.ok(capturedSynthesis.PEPE.includes("ETH:"), "PEPE's prompt should include ETH as comparison context");
-  assert.ok(!capturedSynthesis.PEPE.includes("Momentum looks positive"), "PEPE's comparison context should never include ETH's speculative price rationale");
-  assert.ok(!capturedSynthesis.PEPE.includes("Price prediction"), "PEPE's comparison context should never include an opinion label for ETH");
+  assert.ok(capturedSynthesis.PEPE.includes("Momentum looks positive"), "PEPE's comparison context should include ETH's speculative price rationale");
+  assert.ok(capturedSynthesis.PEPE.includes("Price prediction"), "PEPE's comparison context should include an opinion label for ETH");
 });

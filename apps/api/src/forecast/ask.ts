@@ -137,7 +137,7 @@ export async function answerQuestion(
         const otherCoins: CoinSummary[] | undefined = query.isComparison
           ? successful
               .filter((c) => c.symbol !== s.data.symbol)
-              .map((c) => ({ symbol: c.symbol, market: c.market }))
+              .map((c) => ({ symbol: c.symbol, market: c.market, news: c.news, price: c.price, riskBenefit: c.riskBenefit }))
           : undefined;
 
         const answer = await synthesizeAnswer(
@@ -151,7 +151,17 @@ export async function answerQuestion(
         if (s.data.news) result.news = s.data.news;
         if (s.data.price) result.price = s.data.price;
         if (s.data.riskBenefit) result.riskBenefit = s.data.riskBenefit;
-        if (s.data.news || s.data.price || s.data.riskBenefit) result.disclaimer = FORECAST_DISCLAIMER;
+
+        // A coin's own gathered data may be market-only, but its answer can still
+        // legitimately reference another coin's opinion via `otherCoins` -- the
+        // disclaimer must reflect opinion reaching the answer either way, or a
+        // market-only coin's response could carry speculative content with nothing
+        // marking it as opinion (docs/superpowers/plans/2026-09-01, "final whole-branch
+        // review" commit 007d115 closed this gap by dropping otherCoins' opinion data
+        // instead; this restores that data and closes the gap here instead).
+        const otherCoinsHaveOpinion = otherCoins?.some((c) => c.news || c.price || c.riskBenefit) ?? false;
+        if (s.data.news || s.data.price || s.data.riskBenefit || otherCoinsHaveOpinion)
+          result.disclaimer = FORECAST_DISCLAIMER;
 
         return result;
       } catch (e: any) {
