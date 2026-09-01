@@ -1,0 +1,20 @@
+{
+  "id": "ema-golden-cross-eth-v1",
+  "owner_id": "demo-owner",
+  "name": "EMA(12)/EMA(26) golden cross",
+  "enabled": true,
+  "notes": "Classic trend-following setup: EMA(12) crossing above EMA(26) is read as short-term momentum overtaking the medium-term trend. This is the analysis surface -- this prose never reaches `then`.",
+  "when": [
+    {
+      "left": { "source": "INDICATOR", "kind": "EMA", "period": 12 },
+      "operator": "crosses_above",
+      "right": { "source": "INDICATOR", "kind": "EMA", "period": 26 }
+    }
+  ],
+  "then": {
+    "underlying": "ETH",
+    "direction": "UP",
+    "sizeUsdc": 2,
+    "horizonDays": 5
+  }
+}
