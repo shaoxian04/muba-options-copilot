@@ -129,6 +129,19 @@ export const getDeck = (q: {
  */
 export const getMarkets = (): Promise<MarketOverview> => call<MarketOverview>("/markets");
 
+/**
+ * Where makers will actually trade on one Underlying -- the Maker Depth chart's data.
+ *
+ * Deliberately narrower than `getDeck`: no `direction`, because the chart is filtered
+ * by neither direction nor expiry (issue #28). `horizonDays` is optional and governs
+ * one statistic -- the Implied Move -- so it is left off the query when the caller has
+ * none to name rather than defaulted to one that answers a question nobody asked.
+ */
+export const getDepth = (q: { asset: UnderlyingSymbol; horizonDays?: number }): Promise<DepthView> =>
+  call<DepthView>(
+    `/depth?asset=${q.asset}${q.horizonDays === undefined ? "" : `&horizonDays=${q.horizonDays}`}`
+  );
+
 export const getSession = (): Promise<SessionState> => call<SessionState>("/session");
 
 export const getBoard = (): Promise<Board> => call<Board>("/positions");

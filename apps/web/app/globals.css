@@ -488,6 +488,224 @@ button[disabled] {
   background: none;
 }
 
+/*
+  Issue #28 -- the statistics strip and the Maker Depth chart, between the tape and the
+  Deck. Lifted close to verbatim from `prototype-deck-v2.html` variant E (`.statbar`,
+  `.chartwrap`, `.dtip`), the settled design.
+
+  Everything under `.depth` is scoped so it cannot collide with anything the rest of the
+  surface already uses -- `.axis`, `.bar` and `.tick` are common enough names that an
+  unscoped rule here would be a landmine for whoever styles the next chart.
+*/
+.depth {
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+  /*
+    So the `<ul class="sr">` of strikes -- `position: absolute` -- is contained here
+    rather than escaping to the nearest positioned ancestor and dragging the page's
+    scrollWidth sideways, exactly the failure mode `.trow` documents for the rail.
+  */
+  position: relative;
+}
+.depth .statbar {
+  display: flex;
+  gap: 0;
+  /*
+    Wraps rather than scrolling. A scrollable region with no focusable content of its
+    own fails axe-core's scrollable-region-focusable check on a phone -- `.rail-top`
+    avoids it because its cells are buttons a keyboard can already reach; these seven
+    cells are plain text, so wrapping (as `.chips` already does) sidesteps the failure
+    instead of adding a tabIndex to a container with nothing to interact with.
+  */
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line-2);
+  background: var(--surface);
+}
+.depth .st {
+  padding: 10px 18px;
+  border-right: 1px solid var(--line-2);
+  min-width: 108px;
+  flex: none;
+}
+.depth .st small {
+  display: block;
+  font-size: 9.5px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  /*
+    `--ink-2`, not `--ink-3`: at 9.5px, `--ink-3` clears WCAG AA everywhere else on
+    this surface only because it is never alone at this size on a plain background --
+    axe-core measured it at 3.49:1 here, against the required 4.5:1.
+  */
+  color: var(--ink-2);
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+.depth .st b {
+  font-family: "Martian Mono", "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+/* Call/put on the strip, the same pair `tests/support/ramp.test.ts` holds to a dE 8 bar. */
+.depth .st b.up {
+  color: var(--call);
+}
+.depth .st b.dn {
+  color: var(--put);
+}
+
+.depth .chartwrap {
+  position: relative;
+  padding: 12px 18px 4px;
+  background: var(--surface);
+}
+.depth .dchart-hit {
+  display: block;
+  cursor: crosshair;
+  touch-action: none;
+  border-radius: 8px;
+}
+.depth .dchart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.depth .axis {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.depth .gridline {
+  stroke: var(--line-2);
+  stroke-width: 1;
+}
+.depth .tick {
+  fill: var(--ink-2);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9.5px;
+}
+.depth .axlbl {
+  fill: var(--ink-2);
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+}
+.depth .axttl {
+  fill: var(--ink-2);
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+}
+.depth .outside {
+  fill: var(--ink-2);
+  font-size: 10.5px;
+  font-family: "IBM Plex Sans", sans-serif;
+}
+/*
+  Call/put bars. Position carries the meaning -- above the axis is calls, below is puts
+  -- so the colour underneath is reinforcement rather than the only signal, which is
+  what keeps this legible under deuteranopia and protanopia (issue #28's own bar).
+*/
+.depth .bar {
+  transition: opacity 0.15s, height 0.3s ease, y 0.3s ease;
+}
+.depth .bar.dim {
+  opacity: 0.32;
+}
+.depth .dbar.hovered .bar {
+  opacity: 1;
+}
+.depth .cum {
+  fill: none;
+  stroke-width: 1.2;
+  opacity: 0.45;
+  stroke-linejoin: round;
+}
+.depth .cum.call {
+  stroke: var(--call);
+}
+.depth .cum.put {
+  stroke: var(--put);
+}
+/* Open Positions, below the x-axis and sized by count -- never volume, liquidity or open interest in words, and never a headline. */
+.depth .oi {
+  fill: var(--warn);
+  opacity: 0.85;
+}
+.depth .spotline {
+  stroke: var(--warn);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.depth .spotchip {
+  fill: var(--warn);
+}
+.depth .spotchiptx {
+  fill: #1a0f06;
+  font-family: "Martian Mono", monospace;
+  font-size: 9.5px;
+  font-weight: 700;
+}
+.depth .xhair {
+  stroke: var(--ink);
+  stroke-width: 1;
+}
+
+.depth .dtip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 6;
+  transform: translate(10px, -6px);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 8px 11px;
+  box-shadow: var(--lift);
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 2px 14px;
+  min-width: 150px;
+}
+.depth .dtip b {
+  grid-column: 1 / -1;
+  font-family: "Martian Mono", monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  padding-bottom: 3px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--line-2);
+}
+.depth .dtip span {
+  font-size: 11px;
+  color: var(--ink-3);
+  display: flex;
+  align-items: center;
+}
+.depth .dtip em {
+  font-style: normal;
+  font-family: "Martian Mono", monospace;
+  font-size: 11px;
+  color: var(--ink);
+  text-align: right;
+}
+.depth .dtip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+  margin-right: 6px;
+}
+.depth .dtip i.dot {
+  border-radius: 999px;
+  background: var(--warn);
+}
+
 .body {
   flex: 1;
   overflow-y: auto;
