@@ -112,9 +112,9 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 export const getDeck = (q: { direction: "UP" | "DOWN"; horizonDays: number; sizeUsdc: number }): Promise<Deck> =>
   call<Deck>(`/deck?direction=${q.direction}&horizonDays=${q.horizonDays}&sizeUsdc=${q.sizeUsdc}`);
 
-export const getSession = (): Promise<SessionState> => call<SessionState>("/session");
+export const getSession = (): Promise<SessionState> => call<SessionState>("/session", { headers: authHeaders() });
 
-export const getBoard = (): Promise<Board> => call<Board>("/positions");
+export const getBoard = (): Promise<Board> => call<Board>("/positions", { headers: authHeaders() });
 
 /**
  * Ask for a trade.
