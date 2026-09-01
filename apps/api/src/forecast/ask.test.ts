@@ -52,6 +52,34 @@ test("extractChatQuery requires a horizon when 'price' or 'risk-benefit' is requ
   });
 });
 
+test("extractChatQuery resolves an implicit follow-up coin using conversation history", async () => {
+  let capturedUser = "";
+  const create: AgentCreateFn = async (params) => {
+    capturedUser = params.messages[0].content;
+    return {
+      content: [
+        { type: "text", text: JSON.stringify({ requests: [{ coin: "SOL", horizon: "", analyses: ["market"] }], isComparison: false }) },
+      ],
+    };
+  };
+  const history = [{ question: "what's ETH's price?", coins: [{ symbol: "ETH", answer: "ETH is at $2465." }] }];
+  const result = await extractChatQuery("what about SOL too?", create, history);
+  assert.equal(result.requests[0]?.coin, "SOL");
+  assert.match(capturedUser, /<<HISTORY>>/);
+  assert.match(capturedUser, /what's ETH's price\?/);
+  assert.match(capturedUser, /Current question: what about SOL too\?/);
+});
+
+test("extractChatQuery sends the raw question unchanged when history is empty", async () => {
+  let capturedUser = "";
+  const create: AgentCreateFn = async (params) => {
+    capturedUser = params.messages[0].content;
+    return { content: [{ type: "text", text: JSON.stringify({ requests: [], isComparison: false }) }] };
+  };
+  await extractChatQuery("what's ETH's price?", create, []).catch(() => {});
+  assert.equal(capturedUser, "what's ETH's price?");
+});
+
 const cgRow: CoinGeckoMarket = {
   id: "ethereum",
   current_price: 2450,

@@ -10,6 +10,7 @@ import {
   CoinAskResult,
   FORECAST_DISCLAIMER,
   type ChatQueryRequest,
+  type ConversationTurn,
   type MarketData,
   type MarketScenario,
   type NewsAnalysis,
@@ -23,6 +24,7 @@ import { analyzeNews } from "./news.js";
 import { predictPrice } from "./price.js";
 import { assessRiskBenefit } from "./riskBenefit.js";
 import { synthesizeAnswer, type CoinSummary } from "./answer.js";
+import { describeHistory } from "./conversationHistory.js";
 
 export class IncompleteQuestion extends Error {}
 
@@ -44,7 +46,14 @@ function dedupeRequests(requests: ChatQueryRequest[]): ChatQueryRequest[] {
   return Array.from(byCoin.values());
 }
 
-export async function extractChatQuery(question: string, create?: AgentCreateFn): Promise<ChatQuery> {
+export async function extractChatQuery(
+  question: string,
+  create?: AgentCreateFn,
+  history: ConversationTurn[] = []
+): Promise<ChatQuery> {
+  const historyBlock = describeHistory(history);
+  const userContent = historyBlock ? `${historyBlock}\n\nCurrent question: ${question}` : question;
+
   const result = await callAgentForJson(
     ChatQuery,
     'You extract structured information from a question about crypto coins. Output ONLY JSON: ' +
@@ -58,8 +67,11 @@ export async function extractChatQuery(question: string, create?: AgentCreateFn)
       'for a forward-looking price question, "risk-benefit" only for an upside/downside question -- include only ' +
       "the categories that coin's part of the question actually calls for, or all four if genuinely unclear. Set " +
       '"isComparison" to true only when the question asks to compare, rank, or determine which of several named ' +
-      "coins is stronger/better/preferred against the others -- not merely because it names more than one coin.",
-    question,
+      "coins is stronger/better/preferred against the others -- not merely because it names more than one coin. " +
+      "If recent conversation history is provided above the current question, use it only to fill in a coin, " +
+      'horizon, or category the current question leaves implicit (e.g. "and SOL too?", "what about next week ' +
+      'instead?") -- ignore it entirely when the current question is already self-contained.',
+    userContent,
     create
   );
 
@@ -113,9 +125,10 @@ type Settled = { ok: true; data: GatheredCoin } | { ok: false; symbol: string; e
 
 export async function answerQuestion(
   question: string,
-  deps?: { create?: AgentCreateFn; marketData?: MarketDataDeps }
+  deps?: { create?: AgentCreateFn; marketData?: MarketDataDeps; history?: ConversationTurn[] }
 ): Promise<Record<string, CoinAskResult>> {
-  const query = await extractChatQuery(question, deps?.create);
+  const history = deps?.history ?? [];
+  const query = await extractChatQuery(question, deps?.create, history);
 
   const settled: Settled[] = await Promise.all(
     query.requests.map(async (request): Promise<Settled> => {
