@@ -10,9 +10,9 @@
  * so the Deck a Trader is looking at and the Card they pick have to arrive under the
  * same id.
  */
-import type { Card, CoinAskResult, Deck, Figure, Holding, ProposeResult } from "@copilot/shared";
+import type { Card, ConversationTurn, CoinAskResult, Deck, Figure, Holding, ProposeResult } from "@copilot/shared";
 
-export type { Card, CoinAskResult, Deck, Figure, Holding, ProposeResult };
+export type { Card, ConversationTurn, CoinAskResult, Deck, Figure, Holding, ProposeResult };
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:3001";
 
@@ -149,11 +149,17 @@ export const fill = (proposalId: string): Promise<FillReceipt> =>
  * forward-looking view, risk/benefit, or a comparison across several. Read-only: signs
  * nothing and cannot reach `/fill`. One entry per coin the question named; a coin that
  * failed carries only an `error`, and one coin failing never blocks the others.
+ *
+ * `history` carries the last few successful exchanges so a follow-up ("what about SOL
+ * too?") can be resolved against what was actually asked before.
  */
-export const askForecast = (question: string): Promise<Record<string, CoinAskResult>> =>
+export const askForecast = (
+  question: string,
+  history: ConversationTurn[] = []
+): Promise<Record<string, CoinAskResult>> =>
   call<Record<string, CoinAskResult>>("/forecast/ask", {
     method: "POST",
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, history }),
     headers: authHeaders(),
   });
 
