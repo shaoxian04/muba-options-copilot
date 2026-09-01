@@ -491,3 +491,67 @@ export function depthNearestIndex(bars: { x: number }[], fraction: number, dims:
   });
   return best;
 }
+
+/* ==================================================================================
+ * The confirmation's size control (issue #30).
+ *
+ * The commit bar is gone; the only Confirm in the product now lives in a modal a
+ * Trader arrives at by clicking a Card. Size is set in USDC, and the ceiling that
+ * bounds it is a NUMBER, never text -- every dollar figure the modal shows is still
+ * the server's own `Figure`, fetched fresh with a `sizeUsdc` round trip against the
+ * `cardRef` whenever the Trader changes it. What lives here is only what bounds and
+ * snaps the control itself: never a value a Trader reads.
+ * ================================================================================== */
+
+/**
+ * Where the size control's ceiling sits: whichever binds first, the Risk Budget
+ * remaining or the Maker Depth at the strike the Trader is confirming against.
+ *
+ * A Trader must not be able to choose a size that cannot be filled (deeper than the
+ * maker will go) or that they already said no to (past their own Risk Budget) -- so
+ * the smaller of the two wins. Floored at zero: a negative cap is not a size nobody
+ * can reach, it is the stepper and every preset simply disabled.
+ */
+export function sizeCapUsdc(remainingUsdc: number, depthUsdc: number): number {
+  return Math.max(0, Math.min(remainingUsdc, depthUsdc));
+}
+
+/**
+ * Snap a requested size into `[min, cap]`, for the stepper's +/- and for a preset that
+ * would otherwise overshoot the ceiling above. When the ceiling sits below the floor
+ * (a Risk Budget or a Maker Depth too thin for even the smallest step) there is no
+ * valid size to offer, and the caller reads that from the cap itself rather than this
+ * function inventing one.
+ */
+export function clampSizeUsdc(value: number, min: number, cap: number): number {
+  if (cap < min) return cap;
+  return Math.min(cap, Math.max(min, value));
+}
+
+/**
+ * Which payoff-curve sample lands nearest the price the Implied Move points to -- the
+ * confirmation's "what it pays if it lands on the expected move" row. An INDEX,
+ * exactly like `nearestPoint` and `depthNearestIndex` above: the caller reads that
+ * sample's own `returnUsdc.display` rather than this module inventing a value between
+ * two real ones. -1 when there is no Implied Move to point anywhere -- null at this
+ * horizon, or no curve to search.
+ */
+export function expectedMoveIndex(
+  points: PayoffPoint[],
+  spotValue: number,
+  moveUsd: number | null,
+  direction: "UP" | "DOWN"
+): number {
+  if (!points.length || moveUsd === null) return -1;
+  const target = spotValue + (direction === "UP" ? moveUsd : -moveUsd);
+  let best = 0;
+  let bestGap = Infinity;
+  points.forEach((p, i) => {
+    const gap = Math.abs(p.settlementPrice.value - target);
+    if (gap < bestGap) {
+      bestGap = gap;
+      best = i;
+    }
+  });
+  return best;
+}

@@ -41,6 +41,32 @@ import {
 /** Trades of 1-2 USDC are normal and expected for this product. */
 export const STAKE_USDC = 2;
 
+/**
+ * The confirmation's size presets (issue #30) -- fixed USDC amounts a Trader reaches a
+ * normal stake with in one click, plus the label already formatted as currency.
+ *
+ * Defined here rather than in the modal component because `label` carries a literal
+ * "$", and `components/` and `app/` may not: `tests/support/no-arithmetic.test.ts`
+ * greps every one of those files for a bare "$", on the rule that a component typing
+ * out how money looks is the same mistake as a component computing what the number is.
+ * These are not server Figures -- they are the four fixed choices the control offers,
+ * chosen before any pricing happens -- but the string still has to live off that list.
+ */
+export interface SizePreset {
+  usdc: number;
+  label: string;
+}
+export const SIZE_PRESETS_USDC: SizePreset[] = [
+  { usdc: 1, label: "$1" },
+  { usdc: 2, label: "$2" },
+  { usdc: 5, label: "$5" },
+  { usdc: 10, label: "$10" },
+];
+
+/** The stepper's floor and its step, in USDC. */
+export const SIZE_MIN_USDC = 0.5;
+export const SIZE_STEP_USDC = 0.5;
+
 /** The tape has to look alive without hammering a route that reads the chain. */
 const DECK_POLL_MS = 6000;
 
@@ -109,6 +135,22 @@ export interface Surface {
   /** A sentence the server wrote, shown verbatim. Never composed here. */
   refusal: string | null;
 
+  /**
+   * Whether the confirmation is open (issue #30). The only Confirm in the product
+   * lives inside it -- there is no more persistent commit bar to fall back on, so a
+   * Trader who has not clicked a Card has nothing pressable anywhere on the surface.
+   */
+  confirmOpen: boolean;
+  /**
+   * The stake the confirmation is currently priced at, in USDC. Never rendered
+   * directly -- every figure the modal shows is the server's own `Figure` from the
+   * latest `/propose` answer, re-fetched against the same `cardRef` whenever this
+   * changes. This is the request parameter, not a figure a Trader reads.
+   */
+  sizeUsdc: number;
+  /** A Practice Run opened for the confirmation currently on screen. */
+  practiceDone: boolean;
+
   session: SessionState | null;
   board: Board | null;
   receipt: FillReceipt | null;
@@ -119,9 +161,19 @@ export interface Surface {
   setDirection: (d: Direction) => void;
   setHorizon: (h: number) => void;
   deal: (line?: string, switchTo?: Direction) => Promise<void>;
+  /** Clicking a Card. Opens the confirmation (issue #30) as well as pricing the pick. */
   pick: (cardRef: string) => Promise<void>;
+  /**
+   * Re-price the SAME Order at a different stake -- what the confirmation's stepper
+   * and presets call. A server round trip against the unchanged `cardRef`, exactly
+   * like `pick`, so every figure the Trader reads is re-derived rather than adjusted
+   * in the browser.
+   */
+  setSize: (usdc: number) => Promise<void>;
   confirm: () => Promise<void>;
   runPractice: () => Promise<void>;
+  /** Escape, the backdrop, or the close button. Clears the flow; does not reload the Deck. */
+  closeConfirm: () => void;
   say: (text: string) => void;
   reset: () => void;
 }
@@ -203,6 +255,10 @@ export function useSurface(): Surface {
   const [quoteMoved, setQuoteMoved] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
 
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [sizeUsdc, setSizeUsdcState] = useState<number>(STAKE_USDC);
+  const [practiceDone, setPracticeDone] = useState(false);
+
   const [session, setSession] = useState<SessionState | null>(null);
   const [board, setBoard] = useState<Board | null>(null);
   const [receipt, setReceipt] = useState<FillReceipt | null>(null);
@@ -226,6 +282,19 @@ export function useSurface(): Surface {
    * values that differ in the seventh decimal are not a moved quote.
    */
   const shownQuote = useRef<{ ref: string | null; premium: string | null }>({ ref: null, premium: null });
+
+  /**
+   * The Card that opened the confirmation (issue #30), so `closeConfirm` can give focus
+   * back to it.
+   *
+   * Captured here, synchronously, in `pick()` -- not inside the modal on open. `pick()`
+   * disables that same Card the instant it opens the confirmation (so a second click
+   * cannot fire mid-request), and a browser blurs a focused element to `<body>` the
+   * moment it goes disabled. By the time an effect inside the modal could read
+   * `document.activeElement`, the opener is already gone from it; this runs one render
+   * earlier, before `disabled` has reached the DOM at all.
+   */
+  const openerElRef = useRef<HTMLElement | null>(null);
 
   const loadDeck = useCallback(
     async (a: UnderlyingSymbol, d: Direction, h: number, { spinner = false } = {}): Promise<Deck | null> => {
@@ -328,8 +397,27 @@ export function useSurface(): Surface {
     setQuoteMoved(false);
     setRefusal(null);
     setReceipt(null);
+    setConfirmOpen(false);
+    setSizeUsdcState(STAKE_USDC);
+    setPracticeDone(false);
     shownQuote.current = { ref: null, premium: null };
   }, []);
+
+  /**
+   * Escape, the backdrop, or the close button (issue #30). The same reset the picker
+   * uses on every navigation -- closing mid-flow abandons it exactly the way changing
+   * the asset or the direction already did, so there is one place that means "nothing
+   * is being confirmed any more" rather than two that have to be kept in step.
+   *
+   * Focus returns to the Card that opened the confirmation -- see `openerElRef` above
+   * for why that is captured here in `surface.ts` rather than read off
+   * `document.activeElement` inside the modal itself.
+   */
+  const closeConfirm = useCallback(() => {
+    const opener = openerElRef.current;
+    clearSelection();
+    opener?.focus?.();
+  }, [clearSelection]);
 
   /**
    * Pick an Underlying. The picker is the source of truth; the chat does not drive it.
@@ -379,18 +467,24 @@ export function useSurface(): Surface {
    *
    * `cardRef` present means the Trader overruled the agent. The distinction is not made
    * here -- the server answers with `chosenBy`, and the surface marks what it is told.
+   *
+   * `size` is always passed explicitly rather than read off `sizeUsdc` state -- a
+   * caller that just called `setSizeUsdcState` cannot rely on this callback's own
+   * closure having seen that update yet, and a stale size sent to the one call that
+   * prices the Order is exactly the bug ADR-0006 exists to prevent.
    */
   const ask = useCallback(
-    async (cardRef: string | undefined, asking: Direction = direction) => {
+    async (cardRef: string | undefined, asking: Direction, size: number) => {
       setBusy(true);
       setRefusal(null);
       setReceipt(null);
+      setPracticeDone(false);
       try {
         const answer = await propose({
           underlying: asset,
           direction: asking,
           horizonDays,
-          sizeUsdc: STAKE_USDC,
+          sizeUsdc: size,
           cardRef,
         });
         setResult(answer);
@@ -416,7 +510,7 @@ export function useSurface(): Surface {
         setBusy(false);
       }
     },
-    [asset, direction, horizonDays]
+    [asset, horizonDays]
   );
 
   const deal = useCallback(
@@ -432,7 +526,8 @@ export function useSurface(): Surface {
         row = await loadDeck(asset, switchTo, horizonDays, { spinner: true });
       }
 
-      const answer = await ask(undefined, asking);
+      setSizeUsdcState(STAKE_USDC);
+      const answer = await ask(undefined, asking, STAKE_USDC);
       if (answer?.kind === "PROPOSAL") {
         const f = answer.proposal.figures;
         const card = row?.cards.find((c) => c.cardRef === answer.cardRef);
@@ -448,19 +543,51 @@ export function useSurface(): Surface {
     [ask, asset, clearSelection, deck, direction, heard, horizonDays, loadDeck, say]
   );
 
+  /**
+   * Clicking a Card (issue #30). Prices it at the default stake and opens the
+   * confirmation -- the only Confirm in the product now lives there, so this is the
+   * one deliberate act that puts a Trader in front of it.
+   */
   const pick = useCallback(
     async (cardRef: string) => {
       if (busy) return;
-      const answer = await ask(cardRef);
+      // Before anything else: `busy` is about to go true, which disables this same
+      // Card's button in the same render that opens the confirmation. Capture it now,
+      // while it is still the enabled, focused element -- an effect inside the modal
+      // would run one render too late to see it.
+      openerElRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setSizeUsdcState(STAKE_USDC);
+      setConfirmOpen(true);
+      const answer = await ask(cardRef, direction, STAKE_USDC);
       if (answer?.kind === "PROPOSAL" && answer.proposal.chosenBy === "TRADER") {
         const f = answer.proposal.figures;
         say(`Your pick: ${f.strike.display}, ${f.contracts.display} contracts for ${f.premiumUsdc.display}. Same checks either way.`);
       }
     },
-    [ask, busy, say]
+    [ask, busy, direction, say]
   );
 
-  /** Spends real USDC. Reached only from the Trader's own press. */
+  /**
+   * The confirmation's stepper and presets (issue #30): the SAME Order, a different
+   * stake. A server round trip against the unchanged `cardRef`, so a Trader dragging
+   * the size up or down is never reading a figure this file adjusted itself.
+   */
+  const setSize = useCallback(
+    async (usdc: number) => {
+      if (!selectedRef || busy) return;
+      setSizeUsdcState(usdc);
+      await ask(selectedRef, direction, usdc);
+    },
+    [ask, selectedRef, direction, busy]
+  );
+
+  /**
+   * Spends real USDC. Reached only from the Trader's own press, inside the
+   * confirmation. The proposal stays on screen after this succeeds -- issue #30 wants
+   * the receipt shown alongside the trade it belongs to, not a Trader who has just
+   * spent money looking at a form that has already reset itself. `closeConfirm` is
+   * what clears it, on the Trader's own dismissal.
+   */
   const confirm = useCallback(async () => {
     const p = proposalOf(result);
     if (!p || quoteMoved) return;
@@ -469,10 +596,6 @@ export function useSurface(): Surface {
     try {
       const done = await fill(p.proposalId);
       say(`Bought. ${p.proposal.figures.contracts.display} contracts at ${p.proposal.figures.strike.display}, paid ${p.proposal.figures.premiumUsdc.display}.`);
-      clearSelection();
-      // AFTER clearSelection, which wipes it. A Trader who has just spent real money
-      // and been handed no transaction to look at has been told "trust me" at exactly
-      // the moment they should not have to.
       setReceipt(done);
       await refreshMoney();
     } catch (e) {
@@ -481,7 +604,7 @@ export function useSurface(): Surface {
     } finally {
       setBusy(false);
     }
-  }, [result, quoteMoved, say, clearSelection, refreshMoney]);
+  }, [result, quoteMoved, say, refreshMoney]);
 
   /** Opens a simulated Position. A different function, on a different route. */
   const runPractice = useCallback(async () => {
@@ -495,7 +618,7 @@ export function useSurface(): Surface {
         `Practice run open — no money moved. ${p.proposal.figures.contracts.display} contracts at ` +
           `${p.proposal.figures.strike.display}, and it would have cost ${p.proposal.figures.premiumUsdc.display}.`
       );
-      clearSelection();
+      setPracticeDone(true);
       await refreshMoney();
     } catch (e) {
       if (e instanceof ApiRefusal) setRefusal(e.message);
@@ -503,7 +626,7 @@ export function useSurface(): Surface {
     } finally {
       setBusy(false);
     }
-  }, [result, quoteMoved, say, clearSelection, refreshMoney]);
+  }, [result, quoteMoved, say, refreshMoney]);
 
   const reset = useCallback(() => {
     clearSelection();
@@ -528,6 +651,9 @@ export function useSurface(): Surface {
     result,
     quoteMoved,
     refusal,
+    confirmOpen,
+    sizeUsdc,
+    practiceDone,
     session,
     board,
     receipt,
@@ -538,8 +664,10 @@ export function useSurface(): Surface {
     setHorizon,
     deal,
     pick,
+    setSize,
     confirm,
     runPractice,
+    closeConfirm,
     say,
     reset,
   };

@@ -46,7 +46,10 @@ const GLYPH: Record<string, string> = { SOL: "◎", BNB: "◆", XRP: "✕", AVAX
  * symbol is right beside it in text and a screen reader announcing both would read
  * every row twice.
  */
-function Mark({ symbol, size = 26 }: { symbol: string; size?: number }) {
+/** Exported for `ConfirmModal.tsx` (issue #30): the confirmation's header carries the
+ *  same asset mark as the rail row it was opened from, rather than inventing a second
+ *  one. */
+export function Mark({ symbol, size = 26 }: { symbol: string; size?: number }) {
   const kind = symbol === "ETH" ? "eth" : symbol === "BTC" ? "btc" : "glyph";
   const g = markGeometry(size, kind);
   const fill = BRAND[symbol] ?? "#7B8794";

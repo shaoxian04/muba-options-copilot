@@ -362,12 +362,9 @@ test.describe("on a phone", () => {
     expect(violations.filter((v) => v.impact === "critical" || v.impact === "serious").map((v) => v.id)).toEqual([]);
   });
 
-  test("keeps Max Loss and the Risk Budget in reach without scrolling them away", async ({ page }) => {
-    await page.goto("/");
-    await expect(page.getByTestId("card").first()).toBeVisible();
-
-    await page.mouse.wheel(0, 2000);
-    await expect(page.getByTestId("max-loss")).toBeInViewport();
-    await expect(page.getByTestId("risk-remaining")).toBeInViewport();
-  });
+  // "Keeps Max Loss and the Risk Budget in reach without scrolling them away" tested the
+  // persistent commit bar, which issue #30 removed outright -- Max Loss now lives only
+  // inside the confirmation a Card click opens, on both desktop and phone. Its
+  // replacement, "stays visible when the page behind it is scrolled", lives in
+  // `journeys.spec.ts`'s "Max Loss holds still" and runs under this same phone project.
 });

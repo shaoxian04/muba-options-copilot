@@ -10,35 +10,28 @@
  * The right column has three shapes, chosen by what `/propose` last answered. A
  * PROPOSAL is the Deck; a VETO and a NO_ORDER each replace it entirely, because a halt
  * that renders as a small red note beside a live Deck is a halt a Trader scrolls past.
+ *
+ * Issue #30: there is no more persistent commit bar. Clicking a Card opens
+ * `ConfirmModal`, which holds the only Confirm in the product -- so the Deck section
+ * below is the one place left that can put a Trader in front of it.
  */
 import { Board } from "../components/Board";
 import { Chat, type Seed } from "../components/Chat";
 import { Chips } from "../components/Chips";
-import { CommitBar } from "../components/CommitBar";
+import { ConfirmModal } from "../components/ConfirmModal";
 import { DeckRow } from "../components/DeckRow";
 import { DepthChart } from "../components/DepthChart";
 import { EmptyDeck, VetoScreen } from "../components/Halt";
 import { PayoffStrip } from "../components/PayoffStrip";
 import { Rail } from "../components/Rail";
 import { Tape } from "../components/Tape";
-import { agentGate, agreedMaxLoss, useNow, useSurface } from "../lib/surface";
+import { agentGate, useNow, useSurface } from "../lib/surface";
 
 export default function Page() {
   const s = useSurface();
   const now = useNow();
 
   const proposal = s.result?.kind === "PROPOSAL" ? s.result.proposal : null;
-
-  /**
-   * Max Loss, as early as it can honestly be shown.
-   *
-   * The proposal's figure once there is one; before that, the Deck's -- but only when
-   * every Card in it agrees, which `agreedMaxLoss` is what checks. Both come from the
-   * same `priceOrder` call, so the handover cannot make the figure jump.
-   */
-  const maxLoss = proposal?.figures.maxLossUsdc ?? s.selectedCard?.maxLossUsdc ?? agreedMaxLoss(s.deck);
-
-  const canCommit = Boolean(proposal) && !s.quoteMoved && !s.busy;
 
   /**
    * The chip's own label for the selected horizon ("2d"), so the statistics strip's
@@ -159,18 +152,27 @@ export default function Page() {
               </section>
             </div>
 
-            <CommitBar
-              maxLoss={maxLoss}
+            <ConfirmModal
+              open={s.confirmOpen}
+              asset={s.asset}
+              direction={s.direction}
+              spot={s.deck?.spotUsd ?? null}
+              now={now}
+              card={s.selectedCard}
+              proposal={proposal}
+              impliedMoveUsd={s.depth?.stats.impliedMoveUsd ?? null}
               session={s.session}
-              pending={proposal ? proposal.maxLossUsdc : 0}
-              gates={agentGate(s.result)}
-              canCommit={canCommit}
+              sizeUsdc={s.sizeUsdc}
               busy={s.busy}
+              quoteMoved={s.quoteMoved}
               refusal={s.refusal}
               receipt={s.receipt}
-              quoteMoved={s.quoteMoved}
+              practiceDone={s.practiceDone}
+              gates={agentGate(s.result)}
+              onResize={(usdc) => void s.setSize(usdc)}
               onConfirm={() => void s.confirm()}
               onPractice={() => void s.runPractice()}
+              onClose={s.closeConfirm}
             />
           </>
         )}

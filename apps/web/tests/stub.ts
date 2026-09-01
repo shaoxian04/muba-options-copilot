@@ -81,7 +81,21 @@ export const fixtures = {
 /** Longest shot first, so index 0 is the leftmost Card in the row. */
 export const cards = deckDown1.cards;
 
-export type Scenario = "normal" | "veto" | "no-order" | "empty" | "compressed" | "over-budget" | "depth-marked";
+/**
+ * "deep-budget" (issue #30): a Risk Budget generous enough that every fixture Card's
+ * $500 Maker Depth is the smaller of the two, so the confirmation's size cap binds on
+ * DEPTH instead of budget -- the opposite branch from every other scenario here, where
+ * the $5 default budget is always the tighter ceiling.
+ */
+export type Scenario =
+  | "normal"
+  | "veto"
+  | "no-order"
+  | "empty"
+  | "compressed"
+  | "over-budget"
+  | "depth-marked"
+  | "deep-budget";
 
 export interface Traffic {
   /** Every request the page made to the API, in order. */
@@ -140,6 +154,63 @@ const reprice = <T extends { cards: Array<{ premiumUsdc: { value: number; displa
 });
 
 /**
+ * A Risk Budget generous enough that Maker Depth binds the confirmation's size cap
+ * instead of the budget (issue #30, the "deep-budget" scenario). Every other scenario
+ * in this stub leaves the $5 default budget as the tighter of the two -- this is the
+ * one place the OTHER branch of "whichever binds first" is reachable.
+ */
+const deepBudget = (base: typeof session): typeof session => ({
+  ...base,
+  riskBudgetUsdc: 1000,
+  remainingUsdc: 1000,
+  figures: {
+    ...base.figures,
+    riskBudgetUsdc: { value: 1000, display: "$1,000.00" },
+    remainingUsdc: { value: 1000, display: "$1,000.00" },
+  },
+});
+
+/**
+ * Money, formatted the way `apps/api/src/format.ts` formats it -- two decimal places,
+ * a thousands separator. A duplicate on purpose: this is test infrastructure standing
+ * in for what the REAL server derives on a resize (issue #30's `priceOrder`), and
+ * `no-arithmetic.test.ts` does not reach `tests/`, so it may do this without being the
+ * violation it would be inside `apps/web/components/` or `apps/web/lib/`.
+ */
+const money = (v: number): string => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/**
+ * What the real `/propose` does when a size changes: re-derive premium, Max Loss and
+ * the contract count for the SAME Order at the new stake. The fixture book quotes a
+ * fixed price per contract, so scaling the base answer by `sizeUsdc / baseSizeUsdc`
+ * reproduces exactly what `priceOrder` would answer -- this is standing in for the
+ * server, not the browser originating a figure.
+ */
+function resizeProposal(answer: any, sizeUsdc: number): any {
+  if (!answer || answer.kind !== "PROPOSAL") return answer;
+  const baseSize = answer.proposal.intent.sizeUsdc;
+  if (sizeUsdc === baseSize) return answer;
+  const scale = sizeUsdc / baseSize;
+  const premium = Number((answer.proposal.premiumUsdc * scale).toFixed(6));
+  const contractsValue = Number((answer.proposal.figures.contracts.value * scale).toFixed(6));
+  return {
+    ...answer,
+    proposal: {
+      ...answer.proposal,
+      intent: { ...answer.proposal.intent, sizeUsdc },
+      premiumUsdc: premium,
+      maxLossUsdc: premium,
+      figures: {
+        ...answer.proposal.figures,
+        premiumUsdc: { value: premium, display: money(premium) },
+        maxLossUsdc: { value: premium, display: money(premium) },
+        contracts: { value: contractsValue, display: contractsValue.toFixed(6) },
+      },
+    },
+  };
+}
+
+/**
  * Install the stub.
  *
  * Returns the traffic log. Nothing is faked beyond the six routes the surface uses --
@@ -184,7 +255,7 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         return json(route, scenario === "depth-marked" ? depthEthMarked : depthEth, traffic);
 
       case "/session":
-        return json(route, session, traffic);
+        return json(route, scenario === "deep-budget" ? deepBudget(session) : session, traffic);
 
       case "/positions":
         return json(route, practised ? positionsAfterPractice : positionsEmpty, traffic);
@@ -197,10 +268,12 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         if (scenario === "empty" || scenario === "no-order") return json(route, noOrder, traffic);
         if (scenario === "over-budget") return json(route, refusal.body, traffic, refusal.status);
 
-        const body = request.postDataJSON() as { cardRef?: string };
+        const body = request.postDataJSON() as { cardRef?: string; sizeUsdc?: number };
         const answer = body.cardRef ? fixtures.proposeByCard[body.cardRef] : proposeAgent;
         if (!answer) return route.fulfill({ status: 410, contentType: "application/json", body: '{"error":"gone"}' });
-        return json(route, answer, traffic);
+        // Issue #30: a resize is a fresh round trip against the same `cardRef` at a
+        // different `sizeUsdc`. Standing in for what `priceOrder` would re-derive.
+        return json(route, resizeProposal(answer, body.sizeUsdc ?? answer.proposal.intent.sizeUsdc), traffic);
       }
 
       case "/practice":
