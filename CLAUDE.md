@@ -21,9 +21,11 @@ built and tested (issues #3-#8): `GET /deck`, Implied Chance, the `cardRef` indi
 `PROPOSAL | VETO | NO_ORDER`, and `POST /practice`. **The trading surface is built**
 (issues #9-#14): the Deck, selection and override, the payoff strip, the commit bar, Practice
 Run, the board, and both halt states. The three agents (Trade, Review, Strategy) are a
-separate Python service that has not been started — the Review Agent is stubbed as
-always-agreeing, and the surface's only way to ask for a proposal is the seed prompts on the
-left. Cover has a glossary and an ADR but no code.
+separate Python service (`apps/agents`, `npm run agents`) that is up and serving the Strategy
+Agent's indicator half over loopback HTTP (`GET /indicators`, consumed by the Node backend) —
+the Trade and Strategy Agents still have no HTTP surface for proposals or suggestions, the
+Review Agent is stubbed as always-agreeing, and the surface's only way to ask for a proposal is
+still the seed prompts on the left. Cover has a glossary and an ADR but no code.
 
 **Forecast analysis** is built as three read-only routes (`GET /forecast/news|price|risk-benefit`)
 plus `npm run forecast`. It is opinion, quarantined from the trade flow by ADR-0005: nothing on
@@ -50,6 +52,7 @@ the stack), `apps/web` (the Next.js surface).
 | Wallet | `npm run wallet -- new` / `npm run wallet` | Create / check the disposable wallet |
 | Frontend | `npm run web` | Next.js on `localhost:3000`. Needs the API running |
 | Forecast CLI | `npm run forecast` | Read-only opinion. Costs a real AI API call |
+| Agents service | `npm run agents` | Python agents service on `127.0.0.1:8000`. Needed by `GET /forecast/indicators` |
 | Prototype | `npm run prototype` | Opens the throwaway design prototype |
 | Tests | `npm test` | Vitest, then `node:test`, then Playwright. No network, no chain, no wallet |
 | Unit tests only | `npm run test:unit` | Vitest alone — seconds, no browser |
