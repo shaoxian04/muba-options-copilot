@@ -28,8 +28,8 @@ def _normalized(df: pd.DataFrame) -> pd.DataFrame:
     """
     df = df[_COLUMNS].astype(float)
     df.index.name = "timestamp"
-    assert df.index.is_monotonic_increasing, "candles must be oldest-first"
-    assert list(df.columns) == _COLUMNS, "candle columns must be exactly OHLCV"
+    if not df.index.is_monotonic_increasing:
+        raise ValueError("candles must be oldest-first")
     return df
 
 
