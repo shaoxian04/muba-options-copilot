@@ -1,0 +1,7 @@
+{
+  "status": 400,
+  "body": {
+    "error": "That would risk $2.00, but only $1.00 of your Risk Budget is left.",
+    "remainingUsdc": 1
+  }
+}

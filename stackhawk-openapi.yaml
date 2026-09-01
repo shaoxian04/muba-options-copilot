@@ -1,0 +1,265 @@
+openapi: 3.0.3
+info:
+  title: Options Copilot API
+  version: "1.0.0"
+  description: >
+    Hand-derived from apps/api/src/app.ts and apps/api/src/practice.ts for HawkScan
+    (no OpenAPI-generation tooling is wired into the Fastify app). POST /fill is
+    deliberately omitted: it is the only route that spends real funds, and this spec
+    only covers what HawkScan is authorized to scan.
+servers:
+  - url: http://127.0.0.1:3001
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      responses:
+        "200":
+          description: OK
+  /book:
+    get:
+      operationId: getBook
+      responses:
+        "200":
+          description: OK
+  /session:
+    get:
+      operationId: getSession
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+        "401":
+          description: Unauthorized
+  /session/budget:
+    post:
+      operationId: postSessionBudget
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [riskBudgetUsdc]
+              properties:
+                riskBudgetUsdc:
+                  type: number
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+  /deck:
+    get:
+      operationId: getDeck
+      parameters:
+        - name: direction
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [UP, DOWN]
+        - name: horizonDays
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 3
+        - name: sizeUsdc
+          in: query
+          required: true
+          schema:
+            type: number
+            minimum: 0.01
+            maximum: 1000
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+  /propose:
+    post:
+      operationId: postPropose
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [underlying, direction, sizeUsdc, horizonDays]
+              properties:
+                underlying:
+                  type: string
+                  enum: [ETH]
+                direction:
+                  type: string
+                  enum: [UP, DOWN]
+                sizeUsdc:
+                  type: number
+                  minimum: 0.01
+                  maximum: 1000
+                horizonDays:
+                  type: integer
+                  minimum: 1
+                  maximum: 7
+                cardRef:
+                  type: string
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "410":
+          description: Gone
+        "502":
+          description: Bad Gateway
+  /positions:
+    get:
+      operationId: getPositions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+        "401":
+          description: Unauthorized
+  /practice:
+    post:
+      operationId: postPractice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [proposalId]
+              properties:
+                proposalId:
+                  type: string
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "410":
+          description: Gone
+  /forecast/news:
+    get:
+      operationId: getForecastNews
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: horizon
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "502":
+          description: Bad Gateway
+  /forecast/price:
+    get:
+      operationId: getForecastPrice
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: horizon
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "502":
+          description: Bad Gateway
+  /forecast/risk-benefit:
+    get:
+      operationId: getForecastRiskBenefit
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: horizon
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found
+        "502":
+          description: Bad Gateway
+  /forecast/ask:
+    post:
+      operationId: postForecastAsk
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question:
+                  type: string
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "502":
+          description: Bad Gateway
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

@@ -1,0 +1,19 @@
+{
+  "riskBudgetUsdc": 5,
+  "spentUsdc": 0,
+  "remainingUsdc": 5,
+  "figures": {
+    "riskBudgetUsdc": {
+      "value": 5,
+      "display": "$5.00"
+    },
+    "spentUsdc": {
+      "value": 0,
+      "display": "$0.00"
+    },
+    "remainingUsdc": {
+      "value": 5,
+      "display": "$5.00"
+    }
+  }
+}

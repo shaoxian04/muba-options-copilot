@@ -1,0 +1,902 @@
+{
+  "kind": "PROPOSAL",
+  "proposalId": "proposal-id",
+  "cardRef": "card-0",
+  "proposal": {
+    "intent": {
+      "underlying": "ETH",
+      "direction": "DOWN",
+      "sizeUsdc": 2,
+      "horizonDays": 1
+    },
+    "instrument": "PUT",
+    "strike": 2360,
+    "expiry": "2026-01-16T08:00:00.000Z",
+    "premiumUsdc": 1.999999,
+    "maxLossUsdc": 1.999999,
+    "breakevenPrice": 2357.92,
+    "scenarios": [
+      {
+        "settlementPrice": 1956.39,
+        "returnUsdc": 386.08
+      },
+      {
+        "settlementPrice": 2078.67,
+        "returnUsdc": 268.51
+      },
+      {
+        "settlementPrice": 2200.94,
+        "returnUsdc": 150.94
+      },
+      {
+        "settlementPrice": 2323.22,
+        "returnUsdc": 33.37
+      },
+      {
+        "settlementPrice": 2445.49,
+        "returnUsdc": -2
+      },
+      {
+        "settlementPrice": 2567.76,
+        "returnUsdc": -2
+      },
+      {
+        "settlementPrice": 2690.04,
+        "returnUsdc": -2
+      },
+      {
+        "settlementPrice": 2812.31,
+        "returnUsdc": -2
+      },
+      {
+        "settlementPrice": 2934.59,
+        "returnUsdc": -2
+      }
+    ],
+    "payoffCurve": [
+      {
+        "settlementPrice": {
+          "value": 2152.03,
+          "display": "$2,152"
+        },
+        "returnUsdc": {
+          "value": 197.97,
+          "display": "$197.97"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2158.14,
+          "display": "$2,158"
+        },
+        "returnUsdc": {
+          "value": 192.09,
+          "display": "$192.09"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2164.26,
+          "display": "$2,164"
+        },
+        "returnUsdc": {
+          "value": 186.21,
+          "display": "$186.21"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2170.37,
+          "display": "$2,170"
+        },
+        "returnUsdc": {
+          "value": 180.33,
+          "display": "$180.33"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2176.49,
+          "display": "$2,176"
+        },
+        "returnUsdc": {
+          "value": 174.46,
+          "display": "$174.46"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2182.6,
+          "display": "$2,183"
+        },
+        "returnUsdc": {
+          "value": 168.58,
+          "display": "$168.58"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2188.71,
+          "display": "$2,189"
+        },
+        "returnUsdc": {
+          "value": 162.7,
+          "display": "$162.70"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2194.83,
+          "display": "$2,195"
+        },
+        "returnUsdc": {
+          "value": 156.82,
+          "display": "$156.82"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2200.94,
+          "display": "$2,201"
+        },
+        "returnUsdc": {
+          "value": 150.94,
+          "display": "$150.94"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2207.05,
+          "display": "$2,207"
+        },
+        "returnUsdc": {
+          "value": 145.06,
+          "display": "$145.06"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2213.17,
+          "display": "$2,213"
+        },
+        "returnUsdc": {
+          "value": 139.18,
+          "display": "$139.18"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2219.28,
+          "display": "$2,219"
+        },
+        "returnUsdc": {
+          "value": 133.31,
+          "display": "$133.31"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2225.4,
+          "display": "$2,225"
+        },
+        "returnUsdc": {
+          "value": 127.43,
+          "display": "$127.43"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2231.51,
+          "display": "$2,232"
+        },
+        "returnUsdc": {
+          "value": 121.55,
+          "display": "$121.55"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2237.62,
+          "display": "$2,238"
+        },
+        "returnUsdc": {
+          "value": 115.67,
+          "display": "$115.67"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2243.74,
+          "display": "$2,244"
+        },
+        "returnUsdc": {
+          "value": 109.79,
+          "display": "$109.79"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2249.85,
+          "display": "$2,250"
+        },
+        "returnUsdc": {
+          "value": 103.91,
+          "display": "$103.91"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2255.96,
+          "display": "$2,256"
+        },
+        "returnUsdc": {
+          "value": 98.03,
+          "display": "$98.03"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2262.08,
+          "display": "$2,262"
+        },
+        "returnUsdc": {
+          "value": 92.16,
+          "display": "$92.16"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2268.19,
+          "display": "$2,268"
+        },
+        "returnUsdc": {
+          "value": 86.28,
+          "display": "$86.28"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2274.31,
+          "display": "$2,274"
+        },
+        "returnUsdc": {
+          "value": 80.4,
+          "display": "$80.40"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2280.42,
+          "display": "$2,280"
+        },
+        "returnUsdc": {
+          "value": 74.52,
+          "display": "$74.52"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2286.53,
+          "display": "$2,287"
+        },
+        "returnUsdc": {
+          "value": 68.64,
+          "display": "$68.64"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2292.65,
+          "display": "$2,293"
+        },
+        "returnUsdc": {
+          "value": 62.76,
+          "display": "$62.76"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2298.76,
+          "display": "$2,299"
+        },
+        "returnUsdc": {
+          "value": 56.88,
+          "display": "$56.88"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2304.87,
+          "display": "$2,305"
+        },
+        "returnUsdc": {
+          "value": 51.01,
+          "display": "$51.01"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2310.99,
+          "display": "$2,311"
+        },
+        "returnUsdc": {
+          "value": 45.13,
+          "display": "$45.13"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2317.1,
+          "display": "$2,317"
+        },
+        "returnUsdc": {
+          "value": 39.25,
+          "display": "$39.25"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2323.22,
+          "display": "$2,323"
+        },
+        "returnUsdc": {
+          "value": 33.37,
+          "display": "$33.37"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2329.33,
+          "display": "$2,329"
+        },
+        "returnUsdc": {
+          "value": 27.49,
+          "display": "$27.49"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2335.44,
+          "display": "$2,335"
+        },
+        "returnUsdc": {
+          "value": 21.61,
+          "display": "$21.61"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2341.56,
+          "display": "$2,342"
+        },
+        "returnUsdc": {
+          "value": 15.73,
+          "display": "$15.73"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2347.67,
+          "display": "$2,348"
+        },
+        "returnUsdc": {
+          "value": 9.86,
+          "display": "$9.86"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2353.78,
+          "display": "$2,354"
+        },
+        "returnUsdc": {
+          "value": 3.98,
+          "display": "$3.98"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2359.9,
+          "display": "$2,360"
+        },
+        "returnUsdc": {
+          "value": -1.9,
+          "display": "$-1.90"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2366.01,
+          "display": "$2,366"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2372.13,
+          "display": "$2,372"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2378.24,
+          "display": "$2,378"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2384.35,
+          "display": "$2,384"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2390.47,
+          "display": "$2,390"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2396.58,
+          "display": "$2,397"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2402.69,
+          "display": "$2,403"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2408.81,
+          "display": "$2,409"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2414.92,
+          "display": "$2,415"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2421.04,
+          "display": "$2,421"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2427.15,
+          "display": "$2,427"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2433.26,
+          "display": "$2,433"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2439.38,
+          "display": "$2,439"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2445.49,
+          "display": "$2,445"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2451.6,
+          "display": "$2,452"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2457.72,
+          "display": "$2,458"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2463.83,
+          "display": "$2,464"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2469.94,
+          "display": "$2,470"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2476.06,
+          "display": "$2,476"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2482.17,
+          "display": "$2,482"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2488.29,
+          "display": "$2,488"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2494.4,
+          "display": "$2,494"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2500.51,
+          "display": "$2,501"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2506.63,
+          "display": "$2,507"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2512.74,
+          "display": "$2,513"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2518.85,
+          "display": "$2,519"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2524.97,
+          "display": "$2,525"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2531.08,
+          "display": "$2,531"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2537.2,
+          "display": "$2,537"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2543.31,
+          "display": "$2,543"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2549.42,
+          "display": "$2,549"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2555.54,
+          "display": "$2,556"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2561.65,
+          "display": "$2,562"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2567.76,
+          "display": "$2,568"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2573.88,
+          "display": "$2,574"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2579.99,
+          "display": "$2,580"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2586.11,
+          "display": "$2,586"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2592.22,
+          "display": "$2,592"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2598.33,
+          "display": "$2,598"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2604.45,
+          "display": "$2,604"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2610.56,
+          "display": "$2,611"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2616.67,
+          "display": "$2,617"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2622.79,
+          "display": "$2,623"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2628.9,
+          "display": "$2,629"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2635.02,
+          "display": "$2,635"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      },
+      {
+        "settlementPrice": {
+          "value": 2641.13,
+          "display": "$2,641"
+        },
+        "returnUsdc": {
+          "value": -2,
+          "display": "$-2.00"
+        }
+      }
+    ],
+    "payoutAsset": "USDC",
+    "figures": {
+      "strike": {
+        "value": 2360,
+        "display": "$2,360.00"
+      },
+      "perContractUsd": {
+        "value": 2.08,
+        "display": "$2.08"
+      },
+      "contracts": {
+        "value": 0.961538,
+        "display": "0.961538"
+      },
+      "premiumUsdc": {
+        "value": 1.999999,
+        "display": "$2.00"
+      },
+      "maxLossUsdc": {
+        "value": 1.999999,
+        "display": "$2.00"
+      },
+      "breakevenPrice": {
+        "value": 2357.92,
+        "display": "$2,357.92"
+      },
+      "expiry": {
+        "value": 1768550400000,
+        "display": "16 Jan, 08:00 UTC"
+      }
+    },
+    "chosenBy": "AGENT"
+  },
+  "remainingUsdc": 5
+}

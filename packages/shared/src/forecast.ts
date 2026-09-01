@@ -71,3 +71,84 @@ export const RiskBenefitView = z.object({
   generatedAt: z.string(),
 });
 export type RiskBenefitView = z.infer<typeof RiskBenefitView>;
+
+/**
+ * `horizon` gets spliced into LLM prompts in forecast/price.ts and forecast/riskBenefit.ts
+ * (delimited there, but this bound exists so an instruction-shaped payload never has the
+ * room to be one -- a real horizon is a short phrase like "7 days" or "next week").
+ */
+export const HORIZON_MAX_LENGTH = 40;
+
+export const ChatQueryRequest = z.object({
+  coin: z.string(),
+  horizon: z.string().max(HORIZON_MAX_LENGTH),
+  analyses: z.array(z.enum(["news", "price", "risk-benefit", "market"])),
+});
+export type ChatQueryRequest = z.infer<typeof ChatQueryRequest>;
+
+/**
+ * What a natural-language question extracts into: one request per coin named in the
+ * question (its own horizon and which analyses it needs), plus whether the question
+ * asks to compare the named coins against each other. `requests` may legitimately be
+ * empty -- that means extraction found no coin, not that extraction failed -- so the
+ * caller decides how to respond (see ask.ts's IncompleteQuestion) rather than a
+ * generic schema-validation error.
+ */
+export const ChatQuery = z.object({
+  requests: z.array(ChatQueryRequest),
+  isComparison: z.boolean().default(false),
+});
+export type ChatQuery = z.infer<typeof ChatQuery>;
+
+/** One coin's result within a multi-coin /forecast/ask response -- partial success per coin. */
+export const CoinAskResult = z.object({
+  symbol: z.string(),
+  answer: z.string().optional(),
+  disclaimer: z.string().optional(),
+  market: MarketData.optional(),
+  news: NewsAnalysis.optional(),
+  price: PricePrediction.optional(),
+  riskBenefit: RiskBenefitView.optional(),
+  error: z.string().optional(),
+});
+export type CoinAskResult = z.infer<typeof CoinAskResult>;
+
+/** Cap on how many recent successful turns travel with a new /forecast/ask question. */
+export const CONVERSATION_HISTORY_MAX_TURNS = 5;
+
+/**
+ * Conversation history is client-supplied text replayed into LLM prompts by
+ * forecast/conversationHistory.ts, so it gets the same treatment `horizon` gets above:
+ * a length bound first, so an instruction-shaped payload never has the room to be one,
+ * and the delimited block as defense in depth second. A synthesized answer is already
+ * prompted to be 2-4 sentences and a real question is well under 200 characters, so
+ * these are generous headroom, not a working limit. An entry that busts a bound simply
+ * fails `ConversationTurn.safeParse` and gets dropped by parseAskBody's best-effort
+ * filtering -- history is a hint, never a required contract.
+ */
+export const CONVERSATION_ANSWER_MAX_LENGTH = 1000;
+export const CONVERSATION_QUESTION_MAX_LENGTH = 500;
+export const CONVERSATION_TURN_MAX_COINS = 10;
+
+/**
+ * One coin's contribution to a stored conversation turn -- deliberately just the
+ * already-short synthesized answer plus a couple of bare fields, never the full
+ * market/news/price/risk-benefit blocks a CoinAskResult carries. See
+ * docs/superpowers/specs/2026-09-01-forecast-ask-conversation-history-design.md.
+ */
+export const ConversationTurnCoin = z.object({
+  symbol: z.string(),
+  answer: z.string().max(CONVERSATION_ANSWER_MAX_LENGTH),
+  price: z.number().optional(),
+  direction: z.enum(["up", "down", "flat"]).optional(),
+  sentiment: z.enum(["bullish", "bearish", "neutral"]).optional(),
+});
+export type ConversationTurnCoin = z.infer<typeof ConversationTurnCoin>;
+
+/** One prior successful question+answer exchange, sent by the client as lightweight
+ *  conversation memory for /forecast/ask. */
+export const ConversationTurn = z.object({
+  question: z.string().max(CONVERSATION_QUESTION_MAX_LENGTH),
+  coins: z.array(ConversationTurnCoin).max(CONVERSATION_TURN_MAX_COINS),
+});
+export type ConversationTurn = z.infer<typeof ConversationTurn>;

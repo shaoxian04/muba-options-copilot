@@ -1,0 +1,1082 @@
+/*
+  The settled visual system, ported from `apps/web/prototype-copilot.html`.
+
+  The prototype is the design decision; this file is that decision in the real app. Two
+  things in here are load-bearing rather than taste, and both were arrived at the hard
+  way:
+
+  - The Implied Chance ramp (--r0..--r5) is a SEQUENTIAL SINGLE HUE. Red/green for gain
+    and loss was tested and rejected -- the pair separates by only dE 3.1 under
+    deuteranopia against a threshold of 8. `tests/support/ramp.test.ts` holds this ramp to
+    same bar under both deuteranopia and protanopia, and to a contrast bar against the
+    text that sits on it, so the palette cannot be edited back into being unreadable.
+
+  - Every colour is defined on bare `:root` first and only overridden inside the dark
+    blocks, so a token can never exist in one theme and not the other.
+*/
+
+:root {
+  color-scheme: light;
+  --ground: #e7ecf1;
+  --well: #dee5ec;
+  --surface: #ffffff;
+  --surface-2: #f2f5f8;
+  --line: #d3dbe4;
+  --line-2: #e6ebf0;
+  --ink: #111820;
+  --ink-2: #4c5a69;
+  --ink-3: #7c8b9a;
+  --hue: #2a78d6;
+  --hue-soft: #dceafa;
+  --hue-deep: #1c5cab;
+  --r0: #e9edfd;
+  --r1: #bdc9f0;
+  --r2: #93a6da;
+  --r3: #6984c2;
+  --r4: #3a65aa;
+  --r5: #004791;
+  --tintA: 0.16;
+  /*
+    Darkened until they clear 4.5:1 against the page ground, not just against white.
+    The originals were carried over from the prototype and axe flagged every one of
+    them the first time it ran -- a Veto banner nobody with low vision can read is a
+    Veto banner that has failed at the only job it has.
+  */
+  --good: #0a6f0a;
+  --warn: #8a5200;
+  --crit: #b52d2d;
+  --btn: #111820;
+  --btn-ink: #ffffff;
+  --lift: 0 1px 2px rgba(17, 24, 32, 0.07), 0 12px 28px rgba(17, 24, 32, 0.1);
+  --deal: 0 2px 4px rgba(17, 24, 32, 0.1), 0 18px 40px rgba(17, 24, 32, 0.18);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #0c1218;
+    --well: #080d12;
+    --surface: #151d25;
+    --surface-2: #1c2630;
+    --line: #2a3742;
+    --line-2: #212c36;
+    --ink: #e7edf3;
+    --ink-2: #a2b1bf;
+    --ink-3: #8497a6;
+    --hue: #3987e5;
+    --hue-soft: #14304f;
+    --hue-deep: #86b6ef;
+    --r0: #cfd2d9;
+    --r1: #a7b1c6;
+    --r2: #8391ad;
+    --r3: #607395;
+    --r4: #3d567c;
+    --r5: #143a63;
+    --tintA: 0.18;
+    --warn: #fab219;
+    --good: #3fbf3f;
+    --crit: #f0716b;
+    --btn: #e7edf3;
+    --btn-ink: #0c1218;
+    --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 28px rgba(0, 0, 0, 0.45);
+    --deal: 0 2px 6px rgba(0, 0, 0, 0.6), 0 20px 44px rgba(0, 0, 0, 0.55);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0c1218;
+  --well: #080d12;
+  --surface: #151d25;
+  --surface-2: #1c2630;
+  --line: #2a3742;
+  --line-2: #212c36;
+  --ink: #e7edf3;
+  --ink-2: #a2b1bf;
+  --ink-3: #8497a6;
+  --hue: #3987e5;
+  --hue-soft: #14304f;
+  --hue-deep: #86b6ef;
+  --r0: #cfd2d9;
+  --r1: #a7b1c6;
+  --r2: #8391ad;
+  --r3: #607395;
+  --r4: #3d567c;
+  --r5: #143a63;
+  --tintA: 0.18;
+  --warn: #fab219;
+  --good: #3fbf3f;
+  --crit: #f0716b;
+  --btn: #e7edf3;
+  --btn-ink: #0c1218;
+  --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 28px rgba(0, 0, 0, 0.45);
+  --deal: 0 2px 6px rgba(0, 0, 0, 0.6), 0 20px 44px rgba(0, 0, 0, 0.55);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* ================= scrollbars ================= */
+/* Thin, rounded, and coloured off the same tokens as everything else -- the OS
+   default is a stark grey box with square arrow buttons that clashes with the rest of
+   this palette. Applied globally rather than to one selector, so any scrollable
+   region (this one today, another tomorrow) looks the same without having to
+   remember to opt it in each time. `var(--line)`/`var(--ink-3)` already flip with the
+   theme, so no separate light/dark rule is needed here. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-3);
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+html,
+body {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  overflow: hidden;
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+button[disabled] {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+:focus-visible {
+  outline: 2px solid var(--hue);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+.n {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.hero {
+  font-family: "Martian Mono", "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.05em;
+}
+.lbl {
+  font-size: 9.5px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  font-weight: 500;
+}
+/* Text present for a screen reader and for anyone reading with colour removed. */
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 344px minmax(0, 1fr);
+  height: 100vh;
+}
+
+/* ================= left: language ================= */
+.chat {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  min-width: 0;
+  /* `.chat` is itself a grid item in `.app`, and grid items have the same "grow to fit
+     content" default as flex items -- without this, long enough content in `.log`
+     grows `.chat` past its grid-allocated height instead of `.log` scrolling inside
+     it. `overflow: hidden` (matching `.rig`, its sibling column) is the enforcement:
+     it guarantees `.chat` itself never exceeds that height no matter what its content
+     wants, so `.log`'s own `overflow: auto` is the only place left for it to go. */
+  min-height: 0;
+  overflow: hidden;
+}
+.chat .hd {
+  padding: 15px 18px;
+  border-bottom: 1px solid var(--line-2);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.chat .hd .who {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.chat .log {
+  flex: 1;
+  /* A flex child's height defaults to its content's natural height no matter what
+     `flex: 1` says, unless this is set -- without it, a long enough log grows the
+     whole `.chat` column instead of scrolling internally, pushing the input row
+     below the fold. */
+  min-height: 0;
+  overflow: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+.chat .from-trader {
+  align-self: flex-end;
+  max-width: 88%;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  padding: 8px 12px;
+  border-radius: 14px 14px 4px 14px;
+}
+.chat .from-copilot {
+  color: var(--ink-2);
+  max-width: 94%;
+}
+.chat .seeds {
+  padding: 10px 18px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.chat .seeds button {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 11px 12px;
+  min-height: 44px;
+  font-size: 13px;
+  color: var(--ink-2);
+  background: var(--surface);
+  transition: border-color 0.14s, color 0.14s, transform 0.14s;
+}
+.chat .seeds button:hover {
+  border-color: var(--ink-2);
+  color: var(--ink);
+  transform: translateX(2px);
+}
+.chat .box {
+  margin: 6px 18px 18px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 10px 12px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+/* ================= right: money ================= */
+.rig {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--ground);
+}
+.tape {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 8px 20px;
+  min-height: 58px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.tape .px {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+.tape .px b {
+  font-family: "Martian Mono", "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.06em;
+}
+.tape .tick {
+  font-size: 11px;
+  font-family: "IBM Plex Mono", monospace;
+  min-width: 20px;
+  color: var(--ink-2);
+}
+.tape .tick.up {
+  color: var(--good);
+}
+.tape .ends {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+.tape .ends .clk {
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--hue-deep);
+  font-weight: 500;
+}
+.exp {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--well);
+  border: 1px solid var(--line);
+}
+.exp button {
+  padding: 6px 14px;
+  min-height: 38px;
+  min-width: 44px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink-2);
+  transition: background 0.14s;
+}
+.exp button[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.sect {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+}
+.cap {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  min-height: 24px;
+  flex-wrap: wrap;
+}
+
+/* ---- direction flipper ---- */
+.dir {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--well);
+  border: 1px solid var(--line);
+}
+.dir button {
+  padding: 8px 16px;
+  min-height: 38px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  font-weight: 500;
+  transition: background 0.16s, color 0.16s;
+}
+.dir button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--ground);
+}
+
+/* ---- the well + deck ---- */
+.well {
+  background: var(--well);
+  border-radius: 16px;
+  padding: 16px 14px 14px;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.09);
+  min-width: 0;
+}
+.deck {
+  display: flex;
+  gap: 11px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 14px 4px 16px;
+  scroll-snap-type: x proximity;
+  list-style: none;
+  margin: 0;
+}
+.card {
+  position: relative;
+  flex: none;
+  width: 122px;
+  height: 158px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface);
+  overflow: hidden;
+  scroll-snap-align: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 13px 13px 11px 26px;
+  transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.25, 1.1), box-shadow 0.2s, border-color 0.16s;
+}
+/*
+  The Implied Chance, drawn twice.
+
+  `.rail` is the information carrier: full opacity, so the six ramp steps separate by
+  the dE 8 bar red/green was held to and failed. Nothing is ever printed on top of it,
+  which is what lets it be saturated enough to be told apart.
+
+  `.tint` is atmosphere -- the same colour washed across the card body so the Deck reads
+  as one gradient at a glance. It is deliberately faint: text sits on this, and a tint
+  strong enough to compare would be a tint too strong to read through. Comparing is the
+  rail's job.
+*/
+.card .rail {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 14px;
+  border-top-right-radius: 3px;
+  border-right: 1px solid rgba(17, 24, 32, 0.14);
+  transition: height 0.45s cubic-bezier(0.3, 0.8, 0.3, 1), background 0.3s;
+}
+.card .tint {
+  position: absolute;
+  left: 14px;
+  right: 0;
+  bottom: 0;
+  opacity: var(--tintA);
+  transition: height 0.45s cubic-bezier(0.3, 0.8, 0.3, 1), background 0.3s;
+}
+.card > * {
+  position: relative;
+}
+.card .od {
+  font-size: 29px;
+  font-weight: 700;
+  line-height: 0.9;
+}
+.card .od i {
+  font-size: 13px;
+  font-weight: 500;
+  font-style: normal;
+  color: var(--ink-2);
+  letter-spacing: 0;
+}
+.card .k {
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.card .mi {
+  font-size: 10px;
+  color: var(--ink-2);
+  line-height: 1.35;
+}
+/* The words that carry what the fill carries, for anyone the fill reaches. */
+.card .words {
+  font-size: 10px;
+  color: var(--ink-2);
+  line-height: 1.2;
+}
+.card:hover {
+  transform: translateY(-5px);
+  border-color: var(--ink-2);
+}
+.card[aria-pressed="true"] {
+  border-color: var(--ink);
+  box-shadow: var(--lift);
+  transform: translateY(-9px);
+}
+.card.dealt::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: 13px;
+  border: 1.5px solid var(--hue);
+  pointer-events: none;
+}
+.tag {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--hue-deep);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+}
+.tag.mine {
+  color: var(--warn);
+}
+.tag i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+.note {
+  font-size: 12px;
+  color: var(--ink-2);
+  padding: 0 4px 6px;
+}
+
+/* ---- payoff strip ---- */
+.strip {
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.strip .plot {
+  position: relative;
+  padding: 14px 14px 2px;
+  cursor: crosshair;
+  touch-action: none;
+}
+.strip svg {
+  display: block;
+  width: 100%;
+  height: 110px;
+}
+.strip .cross {
+  position: absolute;
+  top: 8px;
+  pointer-events: none;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: var(--ground);
+  border-radius: 7px;
+  padding: 3px 8px;
+  white-space: nowrap;
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  font-weight: 500;
+}
+.strip .rd {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  border-top: 1px solid var(--line-2);
+}
+.strip .rd > div {
+  padding: 10px 14px;
+  border-right: 1px solid var(--line-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.strip .rd > div:last-child {
+  border-right: 0;
+}
+.strip .rd b {
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* ---- the board ---- */
+.board {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 3px;
+  list-style: none;
+  margin: 0;
+}
+.hold {
+  flex: none;
+  width: 182px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 11px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+/* A Practice Run is never a solid card. The dashes say it before the label does. */
+.hold.prac {
+  border-style: dashed;
+  border-color: var(--ink-2);
+  background: transparent;
+}
+.hold .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.hold .k {
+  font-family: "IBM Plex Mono", monospace;
+  font-weight: 600;
+  font-size: 14px;
+}
+.hold .pl {
+  font-family: "Martian Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.05em;
+}
+.hold .clk {
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.hold .rail {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  overflow: hidden;
+}
+.hold .rail i {
+  display: block;
+  height: 100%;
+  background: var(--hue);
+  transition: width 1s linear;
+}
+.hold .t2 {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  font-weight: 600;
+}
+.hold.prac .t2 {
+  color: var(--warn);
+}
+.emptyb {
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  padding: 15px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+/* ---- commit ---- */
+.commit {
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  padding: 13px 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.maxloss {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 96px;
+}
+.maxloss b {
+  font-family: "Martian Mono", "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.05em;
+}
+.risk {
+  flex: 1;
+  min-width: 190px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.risk .bar {
+  height: 10px;
+  border-radius: 6px;
+  background: var(--well);
+  border: 1px solid var(--line);
+  overflow: hidden;
+  display: flex;
+}
+.risk .bar i {
+  display: block;
+  height: 100%;
+  background: var(--hue);
+  transition: width 0.3s;
+}
+/* The pending Fill. Hatched as well as faded, so it reads as pending without colour. */
+.risk .bar i.pend {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--hue) 0 3px,
+    color-mix(in srgb, var(--hue) 30%, transparent) 3px 6px
+  );
+}
+.risk .rowx {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.gate {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.gate li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  font-size: 11.5px;
+  color: var(--ink-2);
+  transition: all 0.2s;
+}
+.gate li i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--line);
+  flex: none;
+}
+.gate li.pass i {
+  background: var(--good);
+}
+.gate li.pass {
+  color: var(--ink);
+}
+.gate li.wait {
+  border-style: dashed;
+}
+.gate li.fail {
+  color: var(--crit);
+  border-color: var(--crit);
+}
+.gate li.fail i {
+  background: var(--crit);
+}
+.go {
+  background: var(--btn);
+  color: var(--btn-ink);
+  padding: 13px 22px;
+  min-height: 44px;
+  border-radius: 11px;
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  transition: transform 0.12s, opacity 0.12s;
+}
+.go:hover:not([disabled]) {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+/* Practice is an outline, Confirm is a solid slab. Nobody presses one meaning the other. */
+.go.prac {
+  background: transparent;
+  color: var(--ink);
+  border: 1px dashed var(--ink-3);
+  font-weight: 500;
+}
+.refusal {
+  flex-basis: 100%;
+  color: var(--crit);
+  font-size: 12.5px;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+/* ---- halt states ---- */
+.halt {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  padding: 28px;
+  overflow-y: auto;
+}
+.halt h2 {
+  margin: 0;
+  font-size: 23px;
+  letter-spacing: -0.025em;
+  text-align: center;
+}
+.halt .sub {
+  color: var(--ink-2);
+  text-align: center;
+  max-width: 46ch;
+  margin: 0;
+  font-size: 13.5px;
+}
+/* Read across a room: a wide banner, a rule, and the word in full caps. */
+.halt .banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 2px solid var(--crit);
+  border-radius: 12px;
+  padding: 10px 18px;
+  color: var(--crit);
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-size: 13px;
+}
+.halt .banner::before {
+  content: "\2715";
+  font-size: 19px;
+  line-height: 1;
+}
+.face {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.face .rd2 {
+  width: 200px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface);
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  box-shadow: var(--lift);
+}
+.face .rd2.b {
+  border-color: var(--crit);
+}
+.face .split {
+  width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--crit);
+  font-size: 22px;
+  font-weight: 600;
+}
+.face dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 10px;
+  font-size: 12px;
+}
+.face dt {
+  color: var(--ink-2);
+}
+.face dd {
+  margin: 0;
+  font-family: "IBM Plex Mono", monospace;
+  text-align: right;
+}
+.face dd.bad {
+  color: var(--crit);
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-style: wavy;
+  text-underline-offset: 3px;
+}
+
+.loading {
+  padding: 28px 4px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+@media (max-width: 900px) {
+  /*
+    Story 32: a Trader on a phone is not excluded by their device. 44px is the smallest
+    target a finger hits reliably, and `tests/deck.spec.ts` measures every control on
+    the page rather than trusting that the obvious ones were remembered.
+  */
+  .dir button,
+  .exp button,
+  .gate li,
+  button {
+    min-height: 44px;
+  }
+  .dir button,
+  .exp button {
+    min-width: 44px;
+  }
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    height: auto;
+    min-height: 100vh;
+  }
+  body {
+    overflow: auto;
+  }
+  .chat {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .chat .log {
+    max-height: 180px;
+  }
+  .rig {
+    overflow: visible;
+  }
+  .body {
+    overflow: visible;
+  }
+  .commit {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+  }
+}
+
+/* The payoff plot's foot: where the range ends, and what the two lines mean. */
+.strip .axis {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 2px 2px 8px;
+  font-size: 10.5px;
+  color: var(--ink-2);
+}
+.strip .axis b {
+  font-weight: 700;
+  color: var(--hue-deep);
+}
+.strip .axis span:nth-child(2) b:last-of-type {
+  color: var(--ink-2);
+}
+
+/* The transaction, after real money has moved. */
+.commit .receipt {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.commit .receipt a {
+  color: var(--hue-deep);
+}
+
+/* ================= chat panel: engine tabs ================= */
+/* Switches what the SAME chatbox is wired to -- never navigates, never remounts the
+   panel itself, so nothing about the surrounding layout changes when it's pressed. */
+.engine-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 18px 0;
+}
+.engine-tabs button {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.engine-tabs button:hover {
+  color: var(--ink);
+}
+.engine-tabs button[aria-selected="true"] {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+/* ================= chat panel: insights engine ================= */
+.chat .from-copilot .coin-answer {
+  margin: 0 0 8px;
+}
+.chat .from-copilot .coin-answer:last-child {
+  margin-bottom: 0;
+}
+.chat .from-copilot .disclaimer {
+  color: var(--ink-3);
+  font-size: 11px;
+  margin-top: 2px;
+}
+.chat .from-copilot .err {
+  color: var(--crit);
+}
+.ask-row {
+  display: flex;
+  gap: 8px;
+  margin: 6px 18px 18px;
+}
+.ask-row input {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--ink);
+  font: inherit;
+  min-width: 0;
+}
+.ask-row input:focus-visible {
+  outline: 2px solid var(--hue);
+  outline-offset: 1px;
+}
+.ask-row button {
+  background: var(--btn);
+  color: var(--btn-ink);
+  border-radius: 10px;
+  padding: 0 16px;
+  font-weight: 500;
+}

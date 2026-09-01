@@ -1,0 +1,44 @@
+app:
+  applicationId: ${APP_ID:1c33d190-c637-4ae3-b3a9-a1d30848a2ff}
+  env: ${APP_ENV:Development}
+  host: ${APP_HOST:http://127.0.0.1:3001}
+
+  # POST /fill is the only route that spends real USDC on Base mainnet. It is
+  # deliberately excluded from both the OpenAPI spec below and here, belt-and-braces,
+  # so a scan can never reach it even if something else on the surface links to it.
+  excludePaths:
+    - "^/fill$"
+
+  openApiConf:
+    filePath: stackhawk-openapi.yaml
+
+  authentication:
+    # external: the app's Authorization header is a pre-issued static bearer token
+    # (COPILOT_API_TOKEN), not something obtained via a login flow -- so there is no
+    # session to re-authenticate. Indicators are intentionally inert; testPath is the
+    # real check. See "External authentication notes" in `hawk config show`.
+    loggedInIndicator: ".*"
+    loggedOutIndicator: "$^"
+    external:
+      values:
+        - type: TOKEN
+          tokenType: Bearer
+          value:
+            name: Authorization
+            val: ${COPILOT_API_TOKEN}
+    testPath:
+      path: /session
+      requestMethod: GET
+      success: ".*200.*"
+
+tags:
+  - name: _STACKHAWK_AGENT
+    value: ${HAWK_AGENT:none}
+  # ASM has no matching repo indexed yet (hawk op repo link found no match), so the
+  # origin is recorded here instead per Phase 0a's fallback.
+  - name: git_origin
+    value: "shaoxian04/muba-options-copilot"
+  - name: _STACKHAWK_GIT_COMMIT_SHA
+    value: ${COMMIT_SHA:none}
+  - name: _STACKHAWK_GIT_BRANCH
+    value: ${BRANCH_NAME:none}

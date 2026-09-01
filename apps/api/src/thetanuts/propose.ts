@@ -6,26 +6,71 @@
  * the breakeven and every Settlement Scenario come from the SDK. The model is given
  * these values to narrate; it never originates one.
  *
+ * This module now does exactly two things: it SELECTS an Order, and it hands that Order
+ * to `priceOrder`. It derives no economics of its own. That separation is what lets the
+ * Deck price a Card through the identical call -- see `pricing.ts`.
+ *
  * Read-only: no signer, no approvals, no money. Safe to call on every keystroke.
  */
 import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
-import type { TradeIntent, TradeProposal, SettlementScenario } from "@copilot/shared";
-import { getClient, fromPrice, fromUsdc, toUsdc, PRICE_DECIMALS, CONTRACT_DECIMALS } from "./client.js";
-import { buyableOrders, CALL, PUT, daysToExpiry } from "./orders.js";
+import type { TradeIntent, TradeProposal, SettlementScenario, PayoffPoint } from "@copilot/shared";
+import { buyableOrders, CALL, PUT, daysToExpiry, orderIdentity, isEth } from "./orders.js";
+import { payoffAt, priceOrder, StakeTooSmall, type OrderEconomics } from "./pricing.js";
+import { spotPrice } from "./market.js";
+import { usd } from "../format.js";
 
+/**
+ * Nothing on the book expresses what the Trader asked for.
+ *
+ * This becomes a NO_ORDER result, which a Trader reads as a market condition rather
+ * than a broken app. When the cause is scarcity -- nobody quoting, nothing at this
+ * expiry -- the message names when maker liquidity reloads, because "nothing found"
+ * leaves them refreshing and a time leaves them something to do.
+ *
+ * When the cause is a contract that simply does not match what they asked for, it does
+ * not: waiting for makers would not help, and tacking a reload time onto "that is not a
+ * DOWN bet" makes a clear sentence sound like a weather report.
+ */
 export class NoSuitableOrder extends Error {
-  constructor(readonly intent: TradeIntent, message: string) {
-    super(message);
+  constructor(readonly intent: TradeIntent, message: string, scarcity = true) {
+    super(scarcity ? `${message} ${RELOADS}` : message);
     this.name = "NoSuitableOrder";
   }
 }
 
-/** Spot price of the underlying, from the protocol's own market data. */
-async function spotPrice(): Promise<number> {
-  const md: any = await getClient().api.getMarketData();
-  const p = md?.prices?.ETH;
-  if (typeof p !== "number") throw new Error("No ETH spot price in market data");
-  return p;
+/** When makers repost. Worth saying whenever there is simply nothing to sell. */
+const RELOADS = "Maker liquidity renews around 09:00 UTC.";
+
+/**
+ * The Order must actually express what the Trader asked for.
+ *
+ * ADR-0006 lists this among the hard checks that run before any signature: option type
+ * matches direction, underlying matches the intent, expiry within 2x the requested
+ * horizon. On the agent path `selectOrder` picks an Order that satisfies these by
+ * construction -- but "by construction" is a property of today's selection code, and
+ * the Trader-override path has no selection code at all.
+ *
+ * So it runs on BOTH paths, deliberately. Issue #1, story 19: every hard check runs
+ * whether the Card was dealt or chosen, so overruling the agent does not also switch
+ * off the safety. Without this, a cardRef naming a call could be proposed under a
+ * `direction: "DOWN"` intent, and a Trader would be shown a down-bet and filled on a
+ * call -- Max Loss still true, but the trade the opposite of the one they asked for.
+ */
+function assertExpressesIntent(order: OrderWithSignature, intent: TradeIntent): void {
+  const wantType = intent.direction === "DOWN" ? PUT : CALL;
+  if (order.order.optionType !== wantType)
+    throw new NoSuitableOrder(intent, `That contract does not express a ${intent.direction} view on ETH.`, false);
+
+  if (!isEth(order)) throw new NoSuitableOrder(intent, "That contract is not on ETH.", false);
+
+  const days = daysToExpiry(order);
+  if (days <= 0) throw new NoSuitableOrder(intent, "That contract has already expired.", false);
+  if (days > intent.horizonDays * 2)
+    throw new NoSuitableOrder(
+      intent,
+      `That contract runs well past the ${intent.horizonDays}-day horizon you asked for.`,
+      false
+    );
 }
 
 /**
@@ -59,36 +104,139 @@ function selectOrder(orders: OrderWithSignature[], intent: TradeIntent): OrderWi
  * Max Loss and breakeven -- and draw the rest, rather than quoting an upside estimate
  * that would be a Forecast wearing a guarantee's clothes (ADR-0005).
  */
-function settlementScenarios(
-  isCall: boolean,
-  strikes: bigint[],
-  numContracts: bigint,
-  premiumUsdc: number,
-  spot: number
-): SettlementScenario[] {
-  const client = getClient();
+function settlementScenarios(economics: OrderEconomics, spot: number): SettlementScenario[] {
   const steps = [-0.2, -0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15, 0.2];
   return steps.map((pct) => {
     const settlementPrice = spot * (1 + pct);
-    // NOTE: for an inverse call the on-chain payout is denominated in WETH. We still show
-    // the shape here; `payoutAsset` on the proposal tells the UI which unit to render.
-    const gross = client.utils.calculatePayout({
-      type: isCall ? "call" : "put",
-      strikes,
-      settlementPrice: BigInt(Math.round(settlementPrice * 10 ** PRICE_DECIMALS)),
-      numContracts,
-      // calculatePayout defaults sizeDecimals to 18, but previewFillOrder returns
-      // numContracts in 6. Derived, not guessed: numContracts * pricePerContract must
-      // equal the premium, and 0.869434 * $2.30034660 = $2.0000 exactly.
-      // Leaving the default silently zeroes every payout and every scenario reads
-      // "you lose the premium" -- which looks plausible and is completely wrong.
-      sizeDecimals: CONTRACT_DECIMALS,
-    });
+    // The displayed price is rounded; the payout is computed from the unrounded one.
+    return { settlementPrice: Number(settlementPrice.toFixed(2)), returnUsdc: payoffAt(economics, settlementPrice) };
+  });
+}
+
+/**
+ * The window the payoff curve is drawn across, and how finely it is sampled.
+ *
+ * Narrower than the Settlement Scenario ladder on purpose. The ladder runs +/-20%
+ * because it is a table and an extreme row costs nothing to print; the curve is a
+ * PICTURE, and one point 20% out of the money is worth two hundred times the premium,
+ * which flattens everything a Trader actually needs to see into the bottom pixel. The
+ * window below keeps the kink at the strike in the middle of the plot -- taken from the
+ * prototype, where this was settled by looking at it.
+ *
+ * The crosshair snaps to the nearest sample, so the point count is really the answer to
+ * "how wrong may the price under the Trader's cursor be": 81 points across this window
+ * put them a quarter of a percent apart, about $6 at $2,445, finer than a cursor can be
+ * aimed. Interpolating in React would be cheaper and would also be the frontend
+ * originating a number (ADR-0006), so it is bought with samples instead.
+ */
+const CURVE_FROM = -0.12;
+const CURVE_TO = 0.08;
+const CURVE_POINTS = 81;
+
+/**
+ * The same payoff, sampled finely and pre-formatted, for the curve and its crosshair.
+ *
+ * One derivation, two samplings: this and `settlementScenarios` both read `payoffAt`,
+ * so the ladder the CLI prints and the curve the Trader sweeps cannot disagree.
+ */
+function payoffCurve(economics: OrderEconomics, spot: number): PayoffPoint[] {
+  return Array.from({ length: CURVE_POINTS }, (_, i) => {
+    const pct = CURVE_FROM + ((CURVE_TO - CURVE_FROM) * i) / (CURVE_POINTS - 1);
+    const settlementPrice = spot * (1 + pct);
+    // Same convention as the ladder above: the label rounds, the payout does not.
     return {
-      settlementPrice: Number(settlementPrice.toFixed(2)),
-      returnUsdc: Number((fromUsdc(gross) - premiumUsdc).toFixed(2)),
+      settlementPrice: usd(Number(settlementPrice.toFixed(2)), 0),
+      returnUsdc: usd(payoffAt(economics, settlementPrice)),
     };
   });
+}
+
+/**
+ * Assemble a Trade Proposal around an Order that has already been chosen.
+ *
+ * Split out from `proposeTrade` so that a Card the Trader picked can travel this exact
+ * path -- the Order is re-fetched and re-priced either way, and nothing numeric ever
+ * arrives from outside. See issue #6: a cardRef selects; it never supplies values.
+ */
+export async function proposeOrder(
+  intent: TradeIntent,
+  order: OrderWithSignature,
+  chosenBy: TradeProposal["chosenBy"] = "AGENT"
+): Promise<{ proposal: TradeProposal; order: OrderWithSignature; economics: OrderEconomics }> {
+  assertExpressesIntent(order, intent);
+
+  let economics: OrderEconomics;
+  try {
+    economics = priceOrder(order, intent.sizeUsdc);
+  } catch (e) {
+    if (e instanceof StakeTooSmall) throw new NoSuitableOrder(intent, e.message);
+    throw e;
+  }
+
+  const spot = await spotPrice();
+
+  const proposal: TradeProposal = {
+    intent,
+    instrument: economics.instrument,
+    strike: economics.strike.value,
+    expiry: economics.expiryIso,
+    premiumUsdc: economics.premiumUsdc.value,
+    maxLossUsdc: economics.maxLossUsdc.value,
+    breakevenPrice: economics.breakevenPrice.value,
+    scenarios: settlementScenarios(economics, spot),
+    payoffCurve: payoffCurve(economics, spot),
+    payoutAsset: economics.payoutAsset,
+    // The same Figures a Card carries, from the same call, so the Deck and the
+    // confirmation cannot present one value two ways.
+    figures: {
+      strike: economics.strike,
+      perContractUsd: economics.perContractUsd,
+      contracts: economics.contracts,
+      premiumUsdc: economics.premiumUsdc,
+      maxLossUsdc: economics.maxLossUsdc,
+      breakevenPrice: economics.breakevenPrice,
+      expiry: economics.expiry,
+    },
+    chosenBy,
+  };
+
+  return { proposal, order, economics };
+}
+
+/**
+ * A Trader's own pick, priced.
+ *
+ * The Order named by a Card is looked up again on a freshly fetched book rather than
+ * taken from the reference's stored copy. Two things follow, both load-bearing. An Order
+ * the maker has pulled since the Deck was dealt cannot be filled from a stale snapshot.
+ * And because the lookup runs over `buyableOrders`, a chosen Card passes exactly the
+ * ADR-0002 gate an agent-chosen one does -- overruling the agent does not also switch
+ * off the safety.
+ */
+export async function proposeChosenOrder(
+  intent: TradeIntent,
+  chosen: OrderWithSignature
+): Promise<{ proposal: TradeProposal; order: OrderWithSignature; economics: OrderEconomics }> {
+  // The same `orderIdentity` the reference was minted from -- these two must never
+  // drift apart, which is why neither builds its own.
+  const fresh = (await buyableOrders()).find((o) => orderIdentity(o) === orderIdentity(chosen));
+  if (!fresh) throw new QuoteMoved();
+
+  return proposeOrder(intent, fresh, "TRADER");
+}
+
+/**
+ * The Card a Trader picked is no longer buyable.
+ *
+ * Unknown reference, expired reference, a reference from someone else's session, or an
+ * Order the maker has since pulled -- a Trader cannot act on the difference, and telling
+ * them which it was would leak whether a guessed reference existed.
+ */
+export class QuoteMoved extends Error {
+  constructor() {
+    super("That quote has moved. Prices change every few seconds -- take a fresh Deck and pick again.");
+    this.name = "QuoteMoved";
+  }
 }
 
 /**
@@ -99,38 +247,10 @@ function settlementScenarios(
  */
 export async function proposeTrade(
   intent: TradeIntent
-): Promise<{ proposal: TradeProposal; order: OrderWithSignature }> {
+): Promise<{ proposal: TradeProposal; order: OrderWithSignature; economics: OrderEconomics }> {
   const orders = await buyableOrders();
   if (!orders.length)
-    throw new NoSuitableOrder(intent, "The order book is empty right now. Maker liquidity renews around 09:00 UTC.");
+    throw new NoSuitableOrder(intent, "The order book is empty right now.");
 
-  const order = selectOrder(orders, intent);
-  const budget = toUsdc(intent.sizeUsdc);
-
-  // previewFillOrder is synchronous and takes a bigint USDC amount (6 decimals).
-  // An order's availableAmount is a collateral budget, NOT a contract count -- never size from it.
-  const preview = getClient().optionBook.previewFillOrder(order, budget);
-  if (!preview || preview.numContracts <= 0n)
-    throw new NoSuitableOrder(intent, `$${intent.sizeUsdc} is too small to buy any of this option.`);
-
-  const spot = await spotPrice();
-  const strike = fromPrice(preview.strikes[0]!);
-  const premiumUsdc = fromUsdc(preview.totalCollateral);
-  const perContract = fromPrice(preview.pricePerContract);
-
-  const proposal: TradeProposal = {
-    intent,
-    orderId: `${order.makerAddress}:${order.order.nonce}`,
-    instrument: preview.isCall ? "INVERSE_CALL" : "PUT",   // never shown to the Trader (Q10)
-    strike,
-    expiry: new Date(Number(preview.expiry) * 1000).toISOString(),
-    premiumUsdc,
-    // ADR-0002: we only ever buy, so Max Loss is exactly what the Trader pays. Not an estimate.
-    maxLossUsdc: premiumUsdc,
-    breakevenPrice: Number((preview.isCall ? strike + perContract : strike - perContract).toFixed(2)),
-    scenarios: settlementScenarios(preview.isCall, preview.strikes, preview.numContracts, premiumUsdc, spot),
-    payoutAsset: preview.isCall ? "WETH" : "USDC",
-  };
-
-  return { proposal, order };
+  return proposeOrder(intent, selectOrder(orders, intent));
 }
