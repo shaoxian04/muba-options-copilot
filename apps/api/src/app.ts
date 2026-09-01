@@ -121,6 +121,13 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(cors, { origin: allowedOrigins(), credentials: false });
   await app.register(rateLimit, { global: false });
 
+  // Every response declares its content type as final -- stops a browser from
+  // sniffing a JSON error body as something executable.
+  app.addHook("onSend", async (_req, reply, payload) => {
+    reply.header("X-Content-Type-Options", "nosniff");
+    return payload;
+  });
+
   app.get("/health", async () => ({ ok: true, canSign: canSign() }));
 
   /**
