@@ -24,6 +24,7 @@ import { spotPrice } from "./thetanuts/market.js";
 import { UnknownUnderlying } from "./thetanuts/underlyings.js";
 import { proposeTrade, proposeChosenOrder, NoSuitableOrder, QuoteMoved } from "./thetanuts/propose.js";
 import { buildDeck } from "./thetanuts/deck.js";
+import { buildDepth } from "./thetanuts/depth-view.js";
 import { reviewIntent } from "./agents/review.js";
 import { practiceRoutes, practiceHoldings } from "./practice.js";
 import { realHoldings } from "./thetanuts/holdings.js";
@@ -88,6 +89,17 @@ const DeckQuery = z.object({
   direction: z.enum(["UP", "DOWN"]),
   horizonDays: z.coerce.number().int().min(1).max(MAX_HORIZON_DAYS),
   sizeUsdc: z.coerce.number().positive().max(1000),
+});
+
+/**
+ * The depth chart answers for one Underlying and is filtered by nothing else.
+ *
+ * `horizonDays` is here and `direction` is deliberately NOT: the horizon labels one
+ * statistic, while a direction would filter the chart and turn it back into a Deck.
+ */
+const DepthQuery = z.object({
+  asset: UnderlyingSymbol,
+  horizonDays: z.coerce.number().int().min(1).max(MAX_HORIZON_DAYS).optional(),
 });
 
 /** Guards the routes that move money or cost real API credits. No token configured means loopback-only trust. */
@@ -197,6 +209,32 @@ export async function buildApp(): Promise<FastifyInstance> {
       // Belt and braces: the query schema already rejects an unregistered symbol, but
       // `buildDeck` refuses one too, and a refusal that names the asset asked for is a
       // better 400 than a stack trace.
+      if (e instanceof UnknownUnderlying) return reply.code(400).send({ error: e.message });
+      throw e;
+    }
+  });
+
+  /**
+   * Where makers will actually trade on one Underlying. Read-only.
+   *
+   * NOT a Deck. Unfiltered by direction and unfiltered by expiry, deliberately: a chart
+   * that emptied the moment a Trader pressed a chip would just be the Deck again, drawn
+   * as bars, and would teach them nothing about the market they are standing in.
+   *
+   * `horizonDays` is optional and governs one statistic -- the expected move. Absent
+   * means that statistic is null rather than quoted over a horizon nobody chose.
+   *
+   * Not rate-limited alongside /propose: it costs no Thetanuts pricing calls. It IS slow
+   * -- the indexer hands back every Position it has ever recorded to count the live ones
+   * -- and the fix for that is a loading state, not a cache (ADR-0003).
+   */
+  app.get("/depth", async (req, reply) => {
+    const parsed = DepthQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid depth request", issues: parsed.error.issues });
+
+    try {
+      return await buildDepth(parsed.data);
+    } catch (e) {
       if (e instanceof UnknownUnderlying) return reply.code(400).send({ error: e.message });
       throw e;
     }

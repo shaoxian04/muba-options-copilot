@@ -38,6 +38,12 @@ interface StubState {
   spot: number | null;
   canSign: boolean;
   positions: unknown[];
+  /**
+   * Every Position the indexer has ever recorded, as `getBookState` returns them --
+   * keyed by address, and mostly settled. Open interest is the `active` ones, which is
+   * the distinction a test that seeded "some positions" would miss.
+   */
+  bookPositions: Record<string, unknown>;
 }
 
 /** What the fake chain currently looks like. Reset between tests. */
@@ -53,6 +59,7 @@ export const state: StubState = {
   },
   canSign: false,
   positions: [],
+  bookPositions: {},
 };
 
 /** Anything that would have moved money. Asserted on, never expected to fire. */
@@ -69,6 +76,7 @@ export function resetStub(): void {
   state.prices = { ...PRICES };
   state.canSign = false;
   state.positions = [];
+  state.bookPositions = {};
   for (const spy of Object.values(spies)) spy.mockClear();
 }
 
@@ -78,6 +86,7 @@ export function getClient(): any {
       fetchOrders: spies.fetchOrders,
       getMarketData: spies.getMarketData,
       getUserPositionsFromIndexer: async () => state.positions,
+      getBookState: async () => ({ positions: state.bookPositions }),
     },
     optionBook: {
       previewFillOrder: spies.previewFillOrder,

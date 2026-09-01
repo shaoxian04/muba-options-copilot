@@ -338,6 +338,98 @@ export const Deck = z.object({
 export type Deck = z.infer<typeof Deck>;
 
 /**
+ * Maker Depth on one side of one strike.
+ *
+ * Maker Depth is how much cover makers are collectively willing to sell there, in USDC,
+ * derived from the collateral budget resting on each Order. Several Orders at one strike
+ * are one number of dollars, not several Positions.
+ *
+ * It is NOT volume -- nothing has traded. It is NOT liquidity -- that word means whatever
+ * the reader wants. It is NOT open interest -- that is `held`, and counts Positions people
+ * actually own. Nothing may label it as any of those.
+ *
+ * The Order count travels with it because $200,000 posted by one maker and $200,000
+ * posted by eight are different markets, and the dollar figure cannot tell them apart.
+ */
+export const MakerDepth = z.object({
+  usdc: Figure,
+  orders: Figure,
+});
+export type MakerDepth = z.infer<typeof MakerDepth>;
+
+/** One rung of the depth ladder: where makers will trade, and who is already there. */
+export const DepthStrike = z.object({
+  strike: Figure,
+  call: MakerDepth,
+  put: MakerDepth,
+  /** Live Positions open here. Null when there are none -- never a zero. */
+  held: Figure.nullable(),
+  /** Which expiries are represented at this strike, nearest first. */
+  expiryDays: z.array(z.number().int()),
+});
+export type DepthStrike = z.infer<typeof DepthStrike>;
+
+/** The strip above the chart. Every one of these is a string a Trader reads. */
+export const DepthStats = z.object({
+  spotUsd: Figure,
+  /**
+   * How far the market is pricing this Underlying to move over the chosen horizon. An
+   * observation read out of quoted volatility, not a Forecast (ADR-0005). Null when
+   * nothing at that horizon quotes a volatility, and null when no horizon was chosen.
+   */
+  expectedMoveUsd: Figure.nullable(),
+  callDepthUsdc: Figure,
+  putDepthUsdc: Figure,
+  /** Put depth against call depth. Null when nothing is quoting calls. */
+  putCallRatio: Figure.nullable(),
+  strikeCount: Figure,
+  openPositions: Figure,
+});
+export type DepthStats = z.infer<typeof DepthStats>;
+
+/**
+ * Where makers will actually trade on one Underlying.
+ *
+ * NOT a Deck. A Deck is filtered by direction and expiry; this is filtered by neither,
+ * or the chart empties the moment a Trader presses a chip and teaches them nothing about
+ * the market they are trading in.
+ *
+ * It reports availability and open interest and prices NOTHING. Option economics have
+ * one home and this is not it.
+ */
+export const DepthView = z.object({
+  asset: UnderlyingSymbol,
+  assetName: z.string(),
+  spotUsd: Figure,
+  /**
+   * The tallest bar, so the browser can scale the others. Geometry, not a figure a
+   * Trader reads -- but it ships from here because the alternative is React finding a
+   * maximum across values, and a max is arithmetic on figures.
+   */
+  axisMaxUsdc: Figure,
+  /** The window the chart is drawn across, +/-15% of spot. */
+  windowLowUsd: Figure,
+  windowHighUsd: Figure,
+  strikes: z.array(DepthStrike),
+  /**
+   * Orders whose strike fell outside the window, counted rather than swallowed.
+   *
+   * The window is clipped for a measured reason: BTC carries a lone strike 24% above
+   * spot with nothing between it and the next one down, and on an unclipped linear axis
+   * that single Order flattens the other fifteen strikes into nothing. A rank axis was
+   * rejected -- this chart's job is to show distance from today's price, and a rank axis
+   * makes a far-out lottery ticket sit adjacent to an at-the-money strike.
+   *
+   * Excluding them silently would be the chart lying about the book, so the count is
+   * stated: `3 outside range`.
+   */
+  excludedOrders: Figure,
+  excludedLabel: z.string(),
+  stats: DepthStats,
+});
+export type DepthView = z.infer<typeof DepthView>;
+
+/**
  * One thing a Trader holds, real or practised.
  *
  * `kind` is mandatory and first, because the single rule the board must never break is

@@ -48,6 +48,7 @@ const NAMES = [
   "deck-down-3",
   "deck-up-1",
   "deck-empty",
+  "depth-eth",
   "deck-compressed",
   "session",
   "positions-empty",
@@ -112,6 +113,7 @@ beforeAll(async () => {
   generated["deck-down-2"] = await get("/deck?asset=ETH&direction=DOWN&horizonDays=2&sizeUsdc=2");
   generated["deck-down-3"] = await get("/deck?asset=ETH&direction=DOWN&horizonDays=3&sizeUsdc=2");
   generated["deck-up-1"] = await get("/deck?asset=ETH&direction=UP&horizonDays=1&sizeUsdc=2");
+  generated["depth-eth"] = await get("/depth?asset=ETH&horizonDays=1");
   generated["session"] = await get("/session");
   generated["positions-empty"] = await get("/positions");
 

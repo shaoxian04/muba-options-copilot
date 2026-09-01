@@ -48,6 +48,26 @@ export function count(value: number): Figure {
   return { value, display: String(Math.round(value)) };
 }
 
+/**
+ * `$481k`, `$1.2M`, `$850`. Maker Depth, which runs to hundreds of thousands.
+ *
+ * Written short because it sits in a statistics strip and on an axis, where
+ * "$481,000.00" is eight characters of precision nobody reads and a column that no
+ * longer lines up. The `value` beside it is exact, so nothing downstream is rounding --
+ * this is the label, not the number.
+ */
+export function compactUsd(value: number): Figure {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return { value, display: `$${(value / 1_000_000).toFixed(1)}M` };
+  if (abs >= 1_000) return { value, display: `$${Math.round(value / 1000)}k` };
+  return { value, display: `$${Math.round(value)}` };
+}
+
+/** `0.47`. A bare ratio, two decimals -- put depth against call depth. */
+export function ratio(value: number): Figure {
+  return { value, display: value.toFixed(2) };
+}
+
 /** `1d`, `11d`. Whole days to an expiry, as a chip reads it. */
 export function days(value: number): Figure {
   return { value, display: `${Math.round(value)}d` };

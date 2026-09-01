@@ -222,6 +222,36 @@ export function calculatePayout(args: {
 }
 
 /**
+ * A live Position as `getBookState().positions` holds them -- keyed by address.
+ *
+ * The live book returns fifteen thousand of these and nineteen are `active`; the rest
+ * are settled. A fixture that seeded only open ones would never catch a filter that
+ * forgot to check `status`, so `makeBookPositions` seeds settled ones alongside.
+ */
+export function makeBookPositions(
+  live: Array<{ symbol: keyof typeof FEED; strike: number; count?: number }>,
+  settled: Array<{ symbol: keyof typeof FEED; strike: number }> = []
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  let n = 0;
+  const put = (symbol: keyof typeof FEED, strike: number, status: string) => {
+    const id = `0xPOSITION${String(++n).padStart(30, "0")}`;
+    out[id] = {
+      id,
+      status,
+      side: "buyer",
+      strikes: [String(price8(strike))],
+      priceFeed: FEED[symbol],
+      expiryTimestamp: expiryAt(1),
+      underlyingAsset: symbol,
+    };
+  };
+  for (const l of live) for (let i = 0; i < (l.count ?? 1); i++) put(l.symbol, l.strike, "active");
+  for (const s of settled) put(s.symbol, s.strike, "settled");
+  return out;
+}
+
+/**
  * A Position as `getUserPositionsFromIndexer` returns it.
  *
  * Shaped from the SDK's own `Position` declaration. Nobody has held one of these on
