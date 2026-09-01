@@ -33,7 +33,8 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { usePathname } from "next/navigation";
 import type { ChatLine } from "../lib/surface";
-import { askForecast, type CoinAskResult } from "../lib/api";
+import { askForecast } from "../lib/api";
+import { deriveHistory, type InsightsLine } from "../lib/insightsHistory";
 
 export interface Seed {
   said: string;
@@ -41,12 +42,6 @@ export interface Seed {
 }
 
 type Engine = "trade" | "insights";
-
-interface InsightsLine {
-  who: "trader" | "copilot";
-  text?: string;
-  results?: Record<string, CoinAskResult>;
-}
 
 const INSIGHTS_LOG_KEY = "copilot-insights-log";
 const INSIGHTS_PENDING_KEY = "copilot-insights-pending";
@@ -238,14 +233,16 @@ function InsightsEngine({
     setLog((prev) => [...prev, { who: "trader", text: fragment }]);
     setBusy(true);
 
-    // `/forecast/ask` has no memory between calls -- each request is independent. So a
-    // one-word reply to a clarification ("ETH", "in 7 days") has to travel with the
-    // question it's completing, or the backend sees it as a brand-new, unrelated
-    // question and asks the same thing again.
+    // `pending` handles only one thing -- completing a "please specify..."
+    // clarification, unchanged from before. `history` is separate: the last few
+    // successful exchanges, sent as lightweight memory so a genuine follow-up
+    // ("what about SOL too?") can be resolved without dragging the whole
+    // conversation along.
     const combined = pending ? `${pending} ${fragment}` : fragment;
+    const history = deriveHistory(log);
 
     try {
-      const results = await askForecast(combined);
+      const results = await askForecast(combined, history);
       setLog((prev) => [...prev, { who: "copilot", results }]);
       setPending(null);
     } catch (e: any) {
