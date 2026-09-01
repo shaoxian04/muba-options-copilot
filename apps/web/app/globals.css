@@ -424,6 +424,27 @@ button[disabled] {
   color: var(--hue-deep);
   font-weight: 500;
 }
+/*
+  Direction and expiry, one row. Variant E's `.chips`.
+
+  The separator is what stops the two groups reading as one set of six equivalent
+  buttons: a direction and an expiry are different questions, and answering the second
+  before the first makes no sense.
+*/
+.chips {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.chips .sep {
+  width: 1px;
+  align-self: stretch;
+  min-height: 24px;
+  background: var(--line);
+}
+
 .exp {
   display: flex;
   gap: 2px;
@@ -449,6 +470,22 @@ button[disabled] {
   background: var(--surface);
   color: var(--ink);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+/*
+  An expiry nobody quotes: visibly dead, and still there.
+  Struck through as well as dimmed, so "unavailable" does not rest on colour alone --
+  and `disabled` already announces it to a screen reader. Hiding it instead would be
+  hiding the shape of the book, which is information: the four cash-settled Underlyings
+  quote a short grid, and no Underlying quotes a put beyond three days.
+*/
+.exp button.dead {
+  color: var(--ink-3);
+  text-decoration: line-through;
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+.exp button.dead:hover {
+  background: none;
 }
 
 .body {

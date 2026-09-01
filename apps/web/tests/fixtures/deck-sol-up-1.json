@@ -14,6 +14,13 @@
       "label": "1d",
       "cards": 2,
       "live": true
+    },
+    {
+      "horizonDays": 2,
+      "label": "2d",
+      "cards": 0,
+      "live": false,
+      "reason": "No maker is quoting SOL rises at 2d."
     }
   ],
   "expiry": {

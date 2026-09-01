@@ -13,20 +13,14 @@
  */
 import { Board } from "../components/Board";
 import { Chat, type Seed } from "../components/Chat";
+import { Chips } from "../components/Chips";
 import { CommitBar } from "../components/CommitBar";
 import { DeckRow } from "../components/DeckRow";
 import { EmptyDeck, VetoScreen } from "../components/Halt";
 import { PayoffStrip } from "../components/PayoffStrip";
 import { Rail } from "../components/Rail";
 import { Tape } from "../components/Tape";
-import { agentGate, agreedMaxLoss, useNow, useSurface, type Direction } from "../lib/surface";
-
-const DIRECTIONS: Array<{ value: Direction; label: string }> = [
-  // "Falls" and "Rises", never "put" and "call". A Trader should be able to express a
-  // view without first learning the vocabulary of the instrument that expresses it.
-  { value: "DOWN", label: "▾ Falls" },
-  { value: "UP", label: "▴ Rises" },
-];
+import { agentGate, agreedMaxLoss, useNow, useSurface } from "../lib/surface";
 
 export default function Page() {
   const s = useSurface();
@@ -75,7 +69,7 @@ export default function Page() {
 
       <div className="rig">
         <Rail markets={s.markets} asset={s.asset} onPick={s.setAsset} />
-        <Tape deck={s.deck} horizonDays={s.horizonDays} onHorizon={s.setHorizon} now={now} />
+        <Tape deck={s.deck} now={now} />
 
         {s.result?.kind === "VETO" ? (
           <VetoScreen
@@ -98,19 +92,18 @@ export default function Page() {
             <div className="body">
               <section className="sect" aria-label="The Deck">
                 <div className="cap">
-                  <div className="dir" role="group" aria-label="Which way you think ETH goes">
-                    {DIRECTIONS.map((d) => (
-                      <button
-                        key={d.value}
-                        type="button"
-                        aria-pressed={s.direction === d.value}
-                        onClick={() => s.setDirection(d.value)}
-                        data-testid={`direction-${d.value}`}
-                      >
-                        {d.label}
-                      </button>
-                    ))}
-                  </div>
+                  {/*
+                    Direction and expiry in one row, in the order variant E settles on:
+                    Falls, Rises, a separator, then the expiry chips. The door that names
+                    your own strike joins the end of this row in ticket #31.
+                  */}
+                  <Chips
+                    deck={s.deck}
+                    direction={s.direction}
+                    horizonDays={s.horizonDays}
+                    onDirection={s.setDirection}
+                    onHorizon={s.setHorizon}
+                  />
 
                   {proposal ? (
                     <span className={`tag${proposal.chosenBy === "TRADER" ? " mine" : ""}`} data-testid="chosen-by">

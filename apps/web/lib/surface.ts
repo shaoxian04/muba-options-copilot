@@ -166,6 +166,17 @@ export function agentGate(result: ProposeResult | null): Array<{ label: string; 
 export function useSurface(): Surface {
   const [asset, setAssetState] = useState<UnderlyingSymbol>(DEFAULT_ASSET);
   const [markets, setMarkets] = useState<MarketRow[]>([]);
+  /**
+   * Whether the Trader has picked this expiry themselves.
+   *
+   * False means the surface is free to move them to the fullest one when the Deck lands.
+   * Cleared whenever the Underlying or the direction changes, because a horizon chosen
+   * for ETH falls says nothing about which SOL rises expiry is worth opening on.
+   *
+   * A ref rather than state: nothing renders from it, and making it state would re-run
+   * the Deck effect for a value the request does not depend on.
+   */
+  const expiryChosen = useRef(false);
   const [direction, setDirectionState] = useState<Direction>("DOWN");
   const [horizonDays, setHorizonState] = useState<number>(1);
   const [deck, setDeck] = useState<Deck | null>(null);
@@ -209,6 +220,25 @@ export function useSurface(): Surface {
         const next = await getDeck({ asset: a, direction: d, horizonDays: h, sizeUsdc: STAKE_USDC });
         setDeck(next);
         setDeckError(null);
+
+        /*
+         * Land the Trader on an expiry that has something behind it.
+         *
+         * Two cases, one rule. Before they have chosen, open on the expiry with the MOST
+         * Cards rather than the shortest -- one day is routinely the emptiest cell in the
+         * whole book, and on a recent snapshot ETH puts at one day were a single Card
+         * against nine at four days. A Trader's first impression should be the market as
+         * it actually is.
+         *
+         * And after they have chosen, never leave them standing on a chip that answers
+         * with nothing: changing direction re-evaluates which expiries are live, and no
+         * Underlying quotes a put beyond three days at all.
+         */
+        const stillLive = next.expiries.find((e) => e.horizonDays === h)?.live ?? false;
+        if (!expiryChosen.current || !stillLive) {
+          const fullest = fullestExpiry(next.expiries);
+          if (fullest !== null && fullest !== h) setHorizonState(fullest);
+        }
 
         const { ref, premium } = shownQuote.current;
         if (ref && premium !== null) {
@@ -272,6 +302,9 @@ export function useSurface(): Surface {
     (a: UnderlyingSymbol) => {
       if (a === asset) return;
       clearSelection();
+      // A horizon chosen for one Underlying says nothing about the next -- the four
+      // cash-settled ones quote a much shorter grid than ETH and BTC.
+      expiryChosen.current = false;
       setAssetState(a);
     },
     [asset, clearSelection]
@@ -281,6 +314,10 @@ export function useSurface(): Surface {
     (d: Direction) => {
       if (d === direction) return;
       clearSelection();
+      // Which expiries are live is a property of the DIRECTION as well as the
+      // Underlying: no Underlying quotes a put beyond three days, while ETH and BTC
+      // quote calls out to about sixty.
+      expiryChosen.current = false;
       setDirectionState(d);
     },
     [direction, clearSelection]
@@ -290,6 +327,7 @@ export function useSurface(): Surface {
     (h: number) => {
       if (h === horizonDays) return;
       clearSelection();
+      expiryChosen.current = true;
       setHorizonState(h);
     },
     [horizonDays, clearSelection]
@@ -348,6 +386,7 @@ export function useSurface(): Surface {
       const asking = switchTo ?? direction;
       if (switchTo && switchTo !== direction) {
         clearSelection();
+        expiryChosen.current = false;
         setDirectionState(switchTo);
         row = await loadDeck(asset, switchTo, horizonDays, { spinner: true });
       }

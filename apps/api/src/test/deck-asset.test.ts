@@ -96,20 +96,39 @@ describe("the asset is required", () => {
 });
 
 describe("which expiries exist", () => {
-  it("answers every expiry the Underlying quotes in this direction", async () => {
+  it("offers every expiry the Underlying quotes at all, in both directions", async () => {
     state.book = [
-      makeOrder({ nonce: 1, optionType: 1, strike: 2400, perContract: 5, days: 1, iv: 0.46 }),
-      makeOrder({ nonce: 1, optionType: 1, strike: 2400, perContract: 7, days: 2, iv: 0.46 }),
-      makeOrder({ nonce: 1, optionType: 1, strike: 2400, perContract: 9, days: 3, iv: 0.46 }),
-      // Calls run further out. They must not appear on a DOWN Deck's chips.
-      makeOrder({ nonce: 2, optionType: 0, strike: 2600, perContract: 6, days: 25, iv: 0.5 }),
+      makeOrder({ nonce: 1, id: 1, optionType: 1, strike: 2400, perContract: 5, days: 1, iv: 0.46 }),
+      makeOrder({ nonce: 1, id: 2, optionType: 1, strike: 2400, perContract: 7, days: 2, iv: 0.46 }),
+      makeOrder({ nonce: 1, id: 3, optionType: 1, strike: 2400, perContract: 9, days: 3, iv: 0.46 }),
+      // Calls run further out than puts do -- the real asymmetry of this book.
+      makeOrder({ nonce: 2, id: 4, optionType: 0, strike: 2600, perContract: 6, days: 25, iv: 0.5 }),
     ];
 
-    const down = (await deck("asset=ETH&direction=DOWN&horizonDays=1&sizeUsdc=2")).body;
-    expect(down.expiries.map((e: any) => e.horizonDays)).toEqual([1, 2, 3]);
+    // The SAME chips in both directions. An expiry that quotes puts and no calls must
+    // not vanish from the Rises Deck; it renders dead. A vanishing chip reads as a bug.
+    for (const direction of ["DOWN", "UP"]) {
+      const body = (await deck(`asset=ETH&direction=${direction}&horizonDays=1&sizeUsdc=2`)).body;
+      expect(body.expiries.map((e: any) => e.horizonDays), direction).toEqual([1, 2, 3, 25]);
+    }
+  });
 
-    const up = (await deck("asset=ETH&direction=UP&horizonDays=25&sizeUsdc=2")).body;
-    expect(up.expiries.map((e: any) => e.horizonDays)).toEqual([25]);
+  it("marks a chip live or dead according to the direction being asked about", async () => {
+    state.book = [
+      makeOrder({ nonce: 1, id: 1, optionType: 1, strike: 2400, perContract: 5, days: 1, iv: 0.46 }),
+      makeOrder({ nonce: 2, id: 2, optionType: 0, strike: 2600, perContract: 6, days: 25, iv: 0.5 }),
+    ];
+
+    const live = (body: any) => Object.fromEntries(body.expiries.map((e: any) => [e.horizonDays, e.live]));
+
+    expect(live((await deck("asset=ETH&direction=DOWN&horizonDays=1&sizeUsdc=2")).body)).toEqual({
+      1: true,
+      25: false,
+    });
+    expect(live((await deck("asset=ETH&direction=UP&horizonDays=25&sizeUsdc=2")).body)).toEqual({
+      1: false,
+      25: true,
+    });
   });
 
   it("distinguishes an expiry with Cards from one without, rather than omitting it", async () => {
@@ -129,16 +148,21 @@ describe("which expiries exist", () => {
     expect(one.reason).toBeUndefined();
   });
 
-  it("re-evaluates availability per direction, not once per Underlying", async () => {
+  it("gives a dead chip the reason it is dead, naming the direction", async () => {
     state.book = [
-      makeOrder({ nonce: 1, optionType: 1, strike: 2400, perContract: 5, days: 1, iv: 0.46 }),
-      makeOrder({ nonce: 2, optionType: 0, strike: 2600, perContract: 4, days: 3, iv: 0.5 }),
+      makeOrder({ nonce: 1, id: 1, optionType: 1, strike: 2400, perContract: 5, days: 1, iv: 0.46 }),
+      makeOrder({ nonce: 2, id: 2, optionType: 0, strike: 2600, perContract: 4, days: 3, iv: 0.5 }),
     ];
 
-    expect((await deck("asset=ETH&direction=DOWN&horizonDays=1&sizeUsdc=2")).body.expiries.map((e: any) => e.horizonDays))
-      .toEqual([1]);
-    expect((await deck("asset=ETH&direction=UP&horizonDays=3&sizeUsdc=2")).body.expiries.map((e: any) => e.horizonDays))
-      .toEqual([3]);
+    const down = (await deck("asset=ETH&direction=DOWN&horizonDays=1&sizeUsdc=2")).body;
+    const dead = down.expiries.find((e: any) => e.horizonDays === 3);
+    expect(dead.live).toBe(false);
+    // A Trader who hovers it learns rather than guesses -- and the server writes the
+    // sentence, because the surface would have to derive market structure to compose it.
+    expect(dead.reason).toBe("No maker is quoting ETH falls at 3d.");
+
+    const up = (await deck("asset=ETH&direction=UP&horizonDays=3&sizeUsdc=2")).body;
+    expect(up.expiries.find((e: any) => e.horizonDays === 1).reason).toBe("No maker is quoting ETH rises at 1d.");
   });
 });
 

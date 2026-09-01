@@ -25,6 +25,13 @@ separate Python service that has not been started — the Review Agent is stubbe
 always-agreeing, and the surface's only way to ask for a proposal is the seed prompts on the
 left. Cover has a glossary and an ADR but no code.
 
+**The book is multi-asset** (issues #23-#27): six Underlyings — BTC, ETH, SOL, BNB, XRP,
+AVAX — keyed by Chainlink **price feed**, never by underlying token (four of them are
+cash-settled and share the zero address). `GET /deck` takes a **required** `asset`,
+`GET /depth` answers where makers will trade, `GET /markets` feeds the ticker rail, and the
+surface carries the rail and the Falls/Rises + expiry chips. Call/put is **blue and orange**;
+`apps/web/tests/support/ramp.test.ts` holds the pair to the same ΔE 8 bar red/green failed.
+
 **Forecast analysis** is built as three read-only routes (`GET /forecast/news|price|risk-benefit`)
 plus `npm run forecast`. It is opinion, quarantined from the trade flow by ADR-0005: nothing on
 the money path imports it, and no surface shows it beside a Max Loss. Its tests are written
@@ -92,7 +99,18 @@ These are needed on every task. Violating one silently breaks the product's cent
   Implied Chance are observations, not opinions, and may appear anywhere. (ADR-0005)
 - **One pricing path.** The Deck and the Trade Proposal both come from `priceOrder` in
   `apps/api/src/thetanuts/pricing.ts`. Nothing else may derive option economics, or a Trader
-  is shown one price and filled at another. (Issue #1)
+  is shown one price and filled at another. `/depth` reports availability and prices
+  nothing. (Issue #1)
+- **An Underlying is a price feed, not a token.** SOL, BNB, XRP and AVAX are cash-settled
+  and all report the zero `underlyingToken`; keyed by token they collapse into one bucket.
+  The registry in `apps/api/src/thetanuts/underlyings.ts` is an **allowlist** — an Order
+  whose feed is not in it is excluded from the book entirely. (ADR-0010, issue #23)
+- **Payout asset is a property of the Underlying**, never of `isCall`. A BTC call delivers
+  WBTC and a SOL call settles in USDC. Derived only in `underlyings.ts`. (Issue #23)
+- **`asset` is required on `/deck`.** No default. A default is how an ETH-only assumption
+  survives the migration meant to remove it. (Issue #24)
+- **Distance from spot is signed.** `Math.abs` turns "already below — must stay" into a
+  confident, grammatical, backwards "must fall 0.4%". (Issue #24)
 - **The server formats every number.** Figures cross the wire as `{ value, display }`. The
   frontend renders `display` verbatim — a `toFixed` in React undoes ADR-0006 invisibly. Two
   files may do arithmetic, each saying why: `lib/clock.ts` (durations, which no response can
@@ -145,7 +163,9 @@ it here with a one-line lesson.
   built. Superseded for new work by the file below.
 - **`apps/web/prototype-deck-v2.html`** — the settled design for the multi-asset surface, on real
   book data. Five variants; **`?variant=E` is the one chosen** — the others are kept only as the
-  comparison that chose it. **Read before building any frontend.**
+  comparison that chose it. **Read before building any frontend.** Four of its habits must not
+  cross over: it formats numbers in the page, its confirmation prints CALL/PUT, it computes
+  Implied Chance in the browser, and its stake is a page constant.
 - **Issue #1 on the tracker** — the full spec for the Deck trading surface, including seams and
   test cases. **Read before starting frontend or `/deck` API work.**
 

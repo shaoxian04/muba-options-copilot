@@ -51,6 +51,7 @@ const NAMES = [
   "depth-eth",
   "markets",
   "deck-sol-down-1",
+  "deck-sol-down-2",
   "deck-sol-up-1",
   "deck-compressed",
   "session",
@@ -172,16 +173,22 @@ beforeAll(async () => {
    * both of which the ETH fixtures would let a regression slip past.
    */
   state.book = [
-    makeOrder({ nonce: 40, id: 40, optionType: 1, strike: 98, perContract: 0.42, days: 1, symbol: "SOL", iv: 0.78, availableUsdc: 10_000 }),
-    makeOrder({ nonce: 40, id: 41, optionType: 1, strike: 100, perContract: 0.71, days: 1, symbol: "SOL", iv: 0.74, availableUsdc: 10_000 }),
-    makeOrder({ nonce: 40, id: 42, optionType: 1, strike: 102, perContract: 1.27, days: 1, symbol: "SOL", iv: 0.68, availableUsdc: 10_000 }),
-    makeOrder({ nonce: 41, id: 43, optionType: 0, strike: 104, perContract: 1.59, days: 1, symbol: "SOL", iv: 0.69, availableUsdc: 10_000 }),
-    makeOrder({ nonce: 41, id: 44, optionType: 0, strike: 106, perContract: 0.89, days: 1, symbol: "SOL", iv: 0.71, availableUsdc: 10_000 }),
-    // A 2-day bucket that quotes puts and no calls, so the surface has a genuinely dead
-    // chip to render -- the shape the four cash-settled Underlyings actually have.
-    makeOrder({ nonce: 42, id: 45, optionType: 1, strike: 100, perContract: 1.1, days: 2, symbol: "SOL", iv: 0.72, availableUsdc: 10_000 }),
+    // ONE put at a day, THREE at two days. Not an arbitrary shape: one day is routinely
+    // the emptiest cell in the whole book -- on a recent live snapshot ETH puts at one
+    // day were a single Card against nine at four days. The surface must open on the
+    // fullest expiry rather than the shortest, and a fixture where the shortest is also
+    // the fullest could not tell the two rules apart.
+    makeOrder({ nonce: 40, id: 40, optionType: 1, strike: 100, perContract: 0.71, days: 1, symbol: "SOL", iv: 0.74, availableUsdc: 10_000 }),
+    makeOrder({ nonce: 41, id: 41, optionType: 1, strike: 98, perContract: 0.62, days: 2, symbol: "SOL", iv: 0.78, availableUsdc: 10_000 }),
+    makeOrder({ nonce: 41, id: 42, optionType: 1, strike: 100, perContract: 1.04, days: 2, symbol: "SOL", iv: 0.74, availableUsdc: 10_000 }),
+    makeOrder({ nonce: 41, id: 43, optionType: 1, strike: 102, perContract: 1.71, days: 2, symbol: "SOL", iv: 0.68, availableUsdc: 10_000 }),
+    // Calls at one day only. So the two-day chip is live on Falls and DEAD on Rises --
+    // the asymmetry the chips exist to show, and the reason a dead chip must not vanish.
+    makeOrder({ nonce: 42, id: 44, optionType: 0, strike: 104, perContract: 1.59, days: 1, symbol: "SOL", iv: 0.69, availableUsdc: 10_000 }),
+    makeOrder({ nonce: 42, id: 45, optionType: 0, strike: 106, perContract: 0.89, days: 1, symbol: "SOL", iv: 0.71, availableUsdc: 10_000 }),
   ];
   generated["deck-sol-down-1"] = await get("/deck?asset=SOL&direction=DOWN&horizonDays=1&sizeUsdc=2", "sol-session");
+  generated["deck-sol-down-2"] = await get("/deck?asset=SOL&direction=DOWN&horizonDays=2&sizeUsdc=2", "sol-session");
   generated["deck-sol-up-1"] = await get("/deck?asset=SOL&direction=UP&horizonDays=1&sizeUsdc=2", "sol-session");
   resetStub();
 

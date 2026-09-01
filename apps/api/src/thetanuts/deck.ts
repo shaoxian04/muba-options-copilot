@@ -103,7 +103,9 @@ export async function buildDeck(session: Session, request: DeckRequest): Promise
     horizonDays,
     sizeUsdc,
     spotUsd: usd(spot, underlying.priceDp),
-    expiries: expiriesFor(session, inDirection, { sizeUsdc, spot, isPut, orders, held, direction, asset: underlying.symbol }),
+    expiries: expiriesFor(session, orders, inDirection, {
+      sizeUsdc, spot, isPut, orders, held, direction, asset: underlying.symbol,
+    }),
     expiry: cards[0]?.expiry ?? null,
     cards,
     // One Card cannot be a gradient, and neither can six that all sit at the same
@@ -114,13 +116,16 @@ export async function buildDeck(session: Session, request: DeckRequest): Promise
 }
 
 /**
- * Which expiries this Underlying quotes in this direction, and which are empty.
+ * Which expiries this Underlying quotes at all, and which of them are live in this
+ * direction.
  *
- * Answered for EVERY expiry the book carries in this direction, dead ones included, so
- * the surface can render a chip with nothing behind it as dead rather than hiding it.
- * The four cash-settled Underlyings quote a short grid, and no Underlying quotes a put
- * beyond three days at all -- that shape is a fact about the market. A chip that
- * disappears reads as a bug in the app instead (issue #27).
+ * The buckets come from the WHOLE book for this Underlying -- both directions -- and
+ * only `live` is per-direction. That split is the point of the field. Taking the buckets
+ * from one direction instead makes an expiry that quotes puts and no calls simply vanish
+ * from the Rises Deck, which is the disappearance this exists to prevent: no Underlying
+ * quotes a put beyond three days at all, while ETH and BTC quote calls out to about
+ * sixty. That asymmetry is a fact about the market, and a chip that vanishes reads as a
+ * bug in the app instead (issue #27).
  *
  * The count is of CARDS, not Orders: an expiry whose every Order lacks a quoted IV, or
  * is too thin to take the whole stake, would deal an empty Deck. Reporting it as live
@@ -128,10 +133,11 @@ export async function buildDeck(session: Session, request: DeckRequest): Promise
  */
 function expiriesFor(
   session: Session,
+  everything: OrderWithSignature[],
   inDirection: OrderWithSignature[],
   ctx: CardContext & { direction: "UP" | "DOWN"; asset: string }
 ): ExpiryOption[] {
-  const buckets = [...new Set(inDirection.map(wholeDaysToExpiry))].filter((d) => d >= 1).sort((a, b) => a - b);
+  const buckets = [...new Set(everything.map(wholeDaysToExpiry))].filter((d) => d >= 1).sort((a, b) => a - b);
 
   return buckets.map((horizonDays) => {
     const label = fmtDays(horizonDays).display;

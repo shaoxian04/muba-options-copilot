@@ -59,10 +59,12 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 
 | Route | Spends money? | What it does |
 |---|---|---|
-| `GET /book` | no | spot, how many options are buyable, the Implied Move |
+| `GET /markets` | no | all six Underlyings at once: spot and the call/put split of Maker Depth. What the ticker rail is drawn from |
+| `GET /book` | no | the ETH book: spot, how many options are buyable, the Implied Move |
 | `GET /session` | no | Risk Budget and what is left of it |
 | `POST /session/budget` | no | set the Risk Budget |
-| `GET /deck` | no | every Order buyable right now for one direction and one expiry, as Cards. `?direction=DOWN\|UP&horizonDays=1\|2\|3&sizeUsdc=n` |
+| `GET /deck` | no | every Order buyable right now on one Underlying, for one direction and one expiry, as Cards. `?asset=BTC\|ETH\|SOL\|BNB\|XRP\|AVAX&direction=DOWN\|UP&horizonDays=n&sizeUsdc=n`. **`asset` is required** -- a default is how an ETH-only assumption survives |
+| `GET /depth` | no | where makers will actually trade on one Underlying, every expiry and both directions at once. Not a Deck; prices nothing. `?asset=X&horizonDays=n` (the horizon labels one statistic) |
 | `POST /propose` | **no** | TradeIntent in, `PROPOSAL \| VETO \| NO_ORDER` out. Prices a real order, signs nothing. Takes an optional `cardRef`. |
 | `POST /practice` | **no** | opens a simulated Position from a `proposalId`. No token, no Risk Budget, no signer in reach. |
 | `POST /fill` | **yes** | takes a proposalId from `/propose` and buys it |

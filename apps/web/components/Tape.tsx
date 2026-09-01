@@ -3,6 +3,9 @@
 /**
  * The tape: what the selected Underlying costs, and when this expiry ends.
  *
+ * The expiry CHIPS are not here -- they moved to `Chips.tsx` in issue #27, which puts
+ * direction and expiry in one row above the Deck. The tape reports; it does not choose.
+ *
  * Two jobs, both about making the surface visibly connected to a live market rather
  * than a mockup. The price re-reads on every Deck poll, and the countdown runs against
  * the real 08:00 UTC boundary the server named -- these contracts end at a fixed
@@ -15,17 +18,7 @@ import { useEffect, useRef } from "react";
 import type { Deck } from "@copilot/shared";
 import { countdown, countdownWords } from "../lib/clock";
 
-export function Tape({
-  deck,
-  horizonDays,
-  onHorizon,
-  now,
-}: {
-  deck: Deck | null;
-  horizonDays: number;
-  onHorizon: (h: number) => void;
-  now: number;
-}) {
+export function Tape({ deck, now }: { deck: Deck | null; now: number }) {
   const previous = useRef<number | null>(null);
   const spot = deck?.spotUsd ?? null;
 
@@ -64,27 +57,6 @@ export function Tape({
           </div>
         ) : null}
 
-        {/*
-          Driven by what the book actually quotes, never a hard-coded [1, 2, 3]. That
-          list was true of ETH puts and of nothing else: the live grid runs out past
-          fifty days on calls, and the four cash-settled Underlyings stop sooner. The
-          server answers which expiries exist for THIS Underlying in THIS direction.
-        */}
-        <div className="exp" role="group" aria-label="How long the contract runs">
-          {(deck?.expiries ?? []).map((e) => (
-            <button
-              key={e.horizonDays}
-              type="button"
-              aria-pressed={e.horizonDays === horizonDays}
-              disabled={!e.live}
-              title={e.reason}
-              onClick={() => onHorizon(e.horizonDays)}
-              data-testid={`horizon-${e.horizonDays}`}
-            >
-              {e.label}
-            </button>
-          ))}
-        </div>
       </div>
     </div>
   );

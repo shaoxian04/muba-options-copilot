@@ -20,6 +20,7 @@ import deckUp1 from "./fixtures/deck-up-1.json" with { type: "json" };
 import deckEmpty from "./fixtures/deck-empty.json" with { type: "json" };
 import deckCompressed from "./fixtures/deck-compressed.json" with { type: "json" };
 import deckSolDown1 from "./fixtures/deck-sol-down-1.json" with { type: "json" };
+import deckSolDown2 from "./fixtures/deck-sol-down-2.json" with { type: "json" };
 import deckSolUp1 from "./fixtures/deck-sol-up-1.json" with { type: "json" };
 import markets from "./fixtures/markets.json" with { type: "json" };
 import depthEth from "./fixtures/depth-eth.json" with { type: "json" };
@@ -61,6 +62,8 @@ export const FIXTURE_NOW = Date.UTC(2026, 0, 15, 12, 0, 0);
 export const fixtures = {
   deckDown1,
   deckSolDown1,
+  deckSolDown2,
+  deckSolUp1,
   markets,
   deckUp1,
   deckCompressed,
@@ -112,7 +115,10 @@ const deckFor = (url: URL) => {
   const asset = url.searchParams.get("asset");
   const direction = url.searchParams.get("direction");
   const days = url.searchParams.get("horizonDays");
-  if (asset === "SOL") return direction === "UP" ? deckSolUp1 : deckSolDown1;
+  if (asset === "SOL") {
+    if (direction === "UP") return deckSolUp1;
+    return days === "2" ? deckSolDown2 : deckSolDown1;
+  }
   if (direction === "UP") return deckUp1;
   if (days === "2") return deckDown2;
   if (days === "3") return deckDown3;
