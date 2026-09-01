@@ -9,6 +9,7 @@ import {
   RiskBenefitView,
   ChatQuery,
   CoinAskResult,
+  ConversationTurn,
 } from "./forecast.js";
 
 const validMarketData = {
@@ -171,4 +172,38 @@ test("CoinAskResult round-trips a synthesized answer and raw market data", () =>
   assert.equal(result.success, true);
   assert.equal(result.success && result.data.answer, input.answer);
   assert.deepEqual(result.success && result.data.market, validMarketData);
+});
+
+test("ConversationTurn accepts a well-formed turn with a full coin entry", () => {
+  const result = ConversationTurn.safeParse({
+    question: "what's ETH's price?",
+    coins: [{ symbol: "ETH", answer: "ETH is at $2465, up 2%.", price: 2465, direction: "up", sentiment: "bullish" }],
+  });
+  assert.equal(result.success, true);
+});
+
+test("ConversationTurn accepts a coin entry with only symbol and answer", () => {
+  const result = ConversationTurn.safeParse({
+    question: "what's ETH's price?",
+    coins: [{ symbol: "ETH", answer: "ETH is at $2465, up 2%." }],
+  });
+  assert.equal(result.success, true);
+});
+
+test("ConversationTurn accepts an empty coins array", () => {
+  const result = ConversationTurn.safeParse({ question: "what's up with crypto?", coins: [] });
+  assert.equal(result.success, true);
+});
+
+test("ConversationTurn rejects a coin entry missing answer", () => {
+  const result = ConversationTurn.safeParse({ question: "what's ETH's price?", coins: [{ symbol: "ETH" }] });
+  assert.equal(result.success, false);
+});
+
+test("ConversationTurn rejects an invalid direction value", () => {
+  const result = ConversationTurn.safeParse({
+    question: "what's ETH's price?",
+    coins: [{ symbol: "ETH", answer: "...", direction: "sideways" }],
+  });
+  assert.equal(result.success, false);
 });

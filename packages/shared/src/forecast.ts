@@ -112,3 +112,29 @@ export const CoinAskResult = z.object({
   error: z.string().optional(),
 });
 export type CoinAskResult = z.infer<typeof CoinAskResult>;
+
+/** Cap on how many recent successful turns travel with a new /forecast/ask question. */
+export const CONVERSATION_HISTORY_MAX_TURNS = 5;
+
+/**
+ * One coin's contribution to a stored conversation turn -- deliberately just the
+ * already-short synthesized answer plus a couple of bare fields, never the full
+ * market/news/price/risk-benefit blocks a CoinAskResult carries. See
+ * docs/superpowers/specs/2026-09-01-forecast-ask-conversation-history-design.md.
+ */
+export const ConversationTurnCoin = z.object({
+  symbol: z.string(),
+  answer: z.string(),
+  price: z.number().optional(),
+  direction: z.enum(["up", "down", "flat"]).optional(),
+  sentiment: z.enum(["bullish", "bearish", "neutral"]).optional(),
+});
+export type ConversationTurnCoin = z.infer<typeof ConversationTurnCoin>;
+
+/** One prior successful question+answer exchange, sent by the client as lightweight
+ *  conversation memory for /forecast/ask. */
+export const ConversationTurn = z.object({
+  question: z.string(),
+  coins: z.array(ConversationTurnCoin),
+});
+export type ConversationTurn = z.infer<typeof ConversationTurn>;
