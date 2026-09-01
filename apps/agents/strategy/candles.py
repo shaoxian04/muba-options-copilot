@@ -79,19 +79,17 @@ def _fetch_coinbase(product: str, granularity: int, limit: int) -> pd.DataFrame:
     return _normalized(df)
 
 
-def fetch_daily_candles(
+def fetch_daily_candles_with_source(
     symbol: str = "ETHUSDT",
     coinbase_product: str = "ETH-USD",
     limit: int = 1000,   # Binance's per-call maximum; Coinbase caps itself near 300
-) -> pd.DataFrame:
-    """Fetch daily OHLCV candles, Binance first, Coinbase as a fallback.
+) -> tuple[pd.DataFrame, str]:
+    """Same fetch as below, but also says which exchange answered.
 
-    Raises RuntimeError naming both failures if neither source answers,
-    rather than silently returning something that shows up as a mystery
-    NaN three functions later.
+    The HTTP layer reports its source; a CLI eyeballing numbers doesn't care.
     """
     try:
-        return _fetch_binance(symbol, limit)
+        return _fetch_binance(symbol, limit), "binance"
     except Exception as binance_error:  # noqa: BLE001 - reported, not swallowed
         try:
             df = _fetch_coinbase(coinbase_product, 86400, limit)
@@ -99,10 +97,25 @@ def fetch_daily_candles(
                 f"[candles] Binance failed ({binance_error!r}); "
                 f"used Coinbase fallback."
             )
-            return df
+            return df, "coinbase"
         except Exception as coinbase_error:  # noqa: BLE001
             raise RuntimeError(
-                "Could not fetch ETH/USD daily candles from either source. "
+                f"Could not fetch {symbol} daily candles from either source. "
                 f"Binance error: {binance_error!r}. "
                 f"Coinbase error: {coinbase_error!r}."
             ) from coinbase_error
+
+
+def fetch_daily_candles(
+    symbol: str = "ETHUSDT",
+    coinbase_product: str = "ETH-USD",
+    limit: int = 1000,
+) -> pd.DataFrame:
+    """Fetch daily OHLCV candles, Binance first, Coinbase as a fallback.
+
+    Raises RuntimeError naming both failures if neither source answers,
+    rather than silently returning something that shows up as a mystery
+    NaN three functions later.
+    """
+    df, _ = fetch_daily_candles_with_source(symbol, coinbase_product, limit)
+    return df

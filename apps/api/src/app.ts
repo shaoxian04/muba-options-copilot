@@ -40,6 +40,7 @@ import { predictPrice } from "./forecast/price.js";
 import { assessRiskBenefit } from "./forecast/riskBenefit.js";
 import { parseForecastQuery, parseAskBody, forecastErrorStatus } from "./forecast/http.js";
 import { answerQuestion } from "./forecast/ask.js";
+import { fetchIndicators, IndicatorsUnavailable } from "./forecast/indicators.js";
 
 /**
  * This process holds a funded key and exposes routes that spend money or cost real API
@@ -365,6 +366,26 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.get("/forecast/news", { config: COST_ROUTE_LIMIT }, forecast(analyzeNews));
   app.get("/forecast/price", { config: COST_ROUTE_LIMIT }, forecast(predictPrice));
   app.get("/forecast/risk-benefit", { config: COST_ROUTE_LIMIT }, forecast(assessRiskBenefit));
+
+  /**
+   * Indicators for one coin, from the Python agents service. The odd one out among the
+   * /forecast/* routes: no AI call, no horizon, and its numbers are arithmetic over
+   * public candles rather than opinion -- so it carries no disclaimer. Rate-limited
+   * anyway, since it makes an outbound exchange request.
+   *
+   * 503 when the service is down, per ADR-0007. The other Forecast routes keep working.
+   */
+  app.get("/forecast/indicators", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const symbol = typeof (req.query as any)?.symbol === "string" ? (req.query as any).symbol.trim() : "";
+    if (!symbol) return reply.code(400).send({ error: "symbol query parameter is required" });
+    try {
+      return await fetchIndicators(symbol);
+    } catch (e) {
+      if (e instanceof IndicatorsUnavailable) return reply.code(503).send({ error: e.message });
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not fetch indicators."));
+    }
+  });
 
   /**
    * Free-text entry point: extracts which coin(s), horizon, and analyses a question is
