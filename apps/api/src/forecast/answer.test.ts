@@ -76,3 +76,25 @@ test("synthesizeAnswer includes comparison context for other coins when provided
   assert.match(capturedUser, /SHIB:/);
   assert.match(capturedUser, /comparison/i);
 });
+
+test("synthesizeAnswer includes recent conversation history in the prompt, delimited", async () => {
+  let capturedUser = "";
+  const fakeCreate: AgentCreateFn = async (params) => {
+    capturedUser = params.messages[0].content;
+    return { content: [{ type: "text", text: JSON.stringify({ answer: "PEPE is still around $0.00001." }) }] };
+  };
+  const history = [{ question: "what's ETH's price?", coins: [{ symbol: "ETH", answer: "ETH is at $2465, up 2%." }] }];
+  await synthesizeAnswer("and PEPE?", "PEPE", { market: marketData, history }, fakeCreate);
+  assert.match(capturedUser, /<<HISTORY>>/);
+  assert.match(capturedUser, /ETH is at \$2465, up 2%\./);
+});
+
+test("synthesizeAnswer omits the history block entirely when history is empty or absent", async () => {
+  let capturedUser = "";
+  const fakeCreate: AgentCreateFn = async (params) => {
+    capturedUser = params.messages[0].content;
+    return { content: [{ type: "text", text: JSON.stringify({ answer: "PEPE is at $0.00001." }) }] };
+  };
+  await synthesizeAnswer("what's PEPE's price?", "PEPE", { market: marketData }, fakeCreate);
+  assert.ok(!capturedUser.includes("<<HISTORY>>"));
+});

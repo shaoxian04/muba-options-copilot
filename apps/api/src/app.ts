@@ -380,7 +380,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     const parsed = parseAskBody((req.body ?? {}) as Record<string, unknown>);
     if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
     try {
-      return await answerQuestion(parsed.question);
+      return await answerQuestion(parsed.question, { history: parsed.history });
     } catch (e) {
       const { status, error } = forecastErrorStatus(e);
       return reply.code(status).send({ error });

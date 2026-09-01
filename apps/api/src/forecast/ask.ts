@@ -156,7 +156,14 @@ export async function answerQuestion(
         const answer = await synthesizeAnswer(
           question,
           s.data.symbol,
-          { market: s.data.market, news: s.data.news, price: s.data.price, riskBenefit: s.data.riskBenefit, otherCoins },
+          {
+            market: s.data.market,
+            news: s.data.news,
+            price: s.data.price,
+            riskBenefit: s.data.riskBenefit,
+            otherCoins,
+            history,
+          },
           deps?.create
         );
 

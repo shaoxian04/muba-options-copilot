@@ -552,3 +552,41 @@ test("comparison context passed to other coins includes each coin's own gathered
   assert.ok(capturedSynthesis.PEPE.includes("Momentum looks positive"), "PEPE's comparison context should include ETH's speculative price rationale");
   assert.ok(capturedSynthesis.PEPE.includes("Price prediction"), "PEPE's comparison context should include an opinion label for ETH");
 });
+
+test("answerQuestion forwards history to both extraction and synthesis", async () => {
+  let sawHistoryInExtraction = false;
+  let sawHistoryInSynthesis = false;
+  const create: AgentCreateFn = async (params) => {
+    if (params.system.includes("extract structured information")) {
+      if (params.messages[0].content.includes("<<HISTORY>>")) sawHistoryInExtraction = true;
+      return {
+        content: [
+          { type: "text", text: JSON.stringify({ requests: [{ coin: "SOL", horizon: "", analyses: ["market"] }], isComparison: false }) },
+        ],
+      };
+    }
+    if (params.system.includes("answer a user's question")) {
+      if (params.messages[0].content.includes("<<HISTORY>>")) sawHistoryInSynthesis = true;
+      return { content: [{ type: "text", text: JSON.stringify({ answer: "SOL info" }) }] };
+    }
+    throw new Error(`unexpected AI call for system prompt starting: ${params.system.slice(0, 40)}`);
+  };
+  const marketData: MarketDataDeps = {
+    getThetanutsPrices: async () => ({ SOL: 100 }),
+    fetchCoinGeckoMarket: async () => ({
+      id: "solana",
+      current_price: 100,
+      high_24h: 105,
+      low_24h: 95,
+      total_volume: 1_000_000,
+      price_change_percentage_24h: 1,
+    }),
+    resolveViaCoinGeckoSearch: async () => { throw new Error("should not be called for a major"); },
+  };
+  const history = [{ question: "what's ETH's price?", coins: [{ symbol: "ETH", answer: "ETH is at $2465." }] }];
+
+  await answerQuestion("what about SOL too?", { create, marketData, history });
+
+  assert.ok(sawHistoryInExtraction, "history should have reached the extraction prompt");
+  assert.ok(sawHistoryInSynthesis, "history should have reached the synthesis prompt");
+});
