@@ -140,10 +140,30 @@ export interface Surface {
   asset: UnderlyingSymbol;
   /** Every market that is quoting, for the rail. Empty until the first answer lands. */
   markets: MarketRow[];
+  /**
+   * Issue #32: true only until `GET /markets` answers ONCE -- the rail is fetched a
+   * single time (see the effect below), so there is no "refreshing" state to draw for
+   * it the way the Deck and the Depth chart have, only a first read to wait out.
+   */
+  marketsLoading: boolean;
   direction: Direction;
   horizonDays: number;
   deck: Deck | null;
   deckError: string | null;
+  /**
+   * True whenever a Deck request the Trader is WAITING on is in flight -- the first
+   * paint, an Underlying/direction/horizon switch, or a `reset()`. NOT true for the
+   * background poll that keeps the tape honest (`loadDeck` without `{ spinner: true }`),
+   * because that one is not something a Trader is watching a spinner for.
+   *
+   * Issue #32: `deck` itself is never cleared while this is true -- the stale Deck stays
+   * on screen and `page.tsx` draws a small "Updating…" note over it rather than blanking
+   * the section, which is what "an Underlying switch does not blank the whole surface"
+   * means in practice. The one place this flag DOES change behaviour is `DeckRow`'s
+   * `busy` prop: a Card from the Underlying being replaced must not be clickable while
+   * the request in flight is for a DIFFERENT Underlying, or a click sends the new
+   * `asset` alongside a `cardRef` that belongs to the old one.
+   */
   loading: boolean;
 
   /**
@@ -154,6 +174,13 @@ export interface Surface {
    */
   depth: DepthView | null;
   depthError: string | null;
+  /**
+   * Issue #32: the same `spinner`-gated meaning `loading` has for the Deck above --
+   * true for the fetch a Trader is waiting on (first paint, an asset/horizon switch),
+   * not for the background poll. `depth` is never cleared while this is true either;
+   * `page.tsx` overlays a non-blocking note on the stale chart instead.
+   */
+  depthLoading: boolean;
 
   selectedRef: string | null;
   dealtRef: string | null;
@@ -202,6 +229,13 @@ export interface Surface {
 
   session: SessionState | null;
   board: Board | null;
+  /**
+   * Issue #32: true only until `GET /positions` answers for the FIRST time. The board
+   * degrades to "Nothing open yet" once it has, and stays there -- a Trader who has just
+   * confirmed a Fill or a Practice Run should see their existing rows update in place,
+   * not the whole board blank out to a loading message while `/positions` is re-read.
+   */
+  boardLoading: boolean;
   receipt: FillReceipt | null;
   busy: boolean;
   log: ChatLine[];
@@ -290,6 +324,7 @@ export function agentGate(result: ProposeResult | null): Array<{ label: string; 
 export function useSurface(): Surface {
   const [asset, setAssetState] = useState<UnderlyingSymbol>(DEFAULT_ASSET);
   const [markets, setMarkets] = useState<MarketRow[]>([]);
+  const [marketsLoading, setMarketsLoading] = useState(true);
   /**
    * Whether the Trader has picked this expiry themselves.
    *
@@ -309,6 +344,7 @@ export function useSurface(): Surface {
 
   const [depth, setDepth] = useState<DepthView | null>(null);
   const [depthError, setDepthError] = useState<string | null>(null);
+  const [depthLoading, setDepthLoading] = useState(true);
 
   const [selectedRef, setSelectedRef] = useState<string | null>(null);
   const [dealtRef, setDealtRef] = useState<string | null>(null);
@@ -329,6 +365,7 @@ export function useSurface(): Surface {
 
   const [session, setSession] = useState<SessionState | null>(null);
   const [board, setBoard] = useState<Board | null>(null);
+  const [boardLoading, setBoardLoading] = useState(true);
   const [receipt, setReceipt] = useState<FillReceipt | null>(null);
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<ChatLine[]>([]);
@@ -336,10 +373,18 @@ export function useSurface(): Surface {
   const say = useCallback((text: string) => setLog((l) => [...l, { who: "copilot", text }]), []);
   const heard = useCallback((text: string) => setLog((l) => [...l, { who: "trader", text }]), []);
 
+  /**
+   * The board, and the Risk Budget it sits beside, together -- but only the board has
+   * its own loading state (issue #32). `setBoardLoading(false)` unconditionally, on
+   * every call: it only ever matters the first time (the flag starts `true` and this is
+   * the only place it changes), and a Fill or a Practice Run calling this again must
+   * update the rows in place rather than re-arming a loading message over them.
+   */
   const refreshMoney = useCallback(async () => {
     const [s, b] = await Promise.all([getSession().catch(() => null), getBoard().catch(() => null)]);
     if (s) setSession(s);
     if (b) setBoard(b);
+    setBoardLoading(false);
   }, []);
 
   /**
@@ -421,11 +466,15 @@ export function useSurface(): Surface {
 
   // The rail, once. Spot moves and the Deck poll keeps the tape honest about that; the
   // set of markets and their standing depth does not move minute to minute, and polling
-  // it would be six books re-read for a bar that would not visibly change.
+  // it would be six books re-read for a bar that would not visibly change. There is
+  // still exactly one loading state to draw for it (issue #32): `marketsLoading` covers
+  // this single request, start to finish, success or failure alike -- a rail that never
+  // answers should not spin forever, only stop claiming to be loading.
   useEffect(() => {
     void getMarkets()
       .then((m) => setMarkets(m.markets))
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => setMarketsLoading(false));
   }, []);
 
   // The tape is only honest if it keeps asking. Cheap: /deck is read-only and local.
@@ -441,19 +490,27 @@ export function useSurface(): Surface {
    * expiry at once and is unfiltered by direction on purpose (issue #28): it orients a
    * Trader rather than duplicating the Deck, and a chart that emptied or re-fetched the
    * moment "Falls" became "Rises" would just be the Deck again, drawn as bars.
+   *
+   * `{ spinner }` mirrors `loadDeck` exactly, for the same reason (issue #32): the first
+   * paint and an asset/horizon switch are requests a Trader is waiting on and get
+   * `depthLoading`; the background poll below does not, or the chart would flash an
+   * "Updating…" note every six seconds for a value that rarely moves.
    */
-  const loadDepth = useCallback(async (a: UnderlyingSymbol, h: number) => {
+  const loadDepth = useCallback(async (a: UnderlyingSymbol, h: number, { spinner = false } = {}) => {
+    if (spinner) setDepthLoading(true);
     try {
       const next = await getDepth({ asset: a, horizonDays: h });
       setDepth(next);
       setDepthError(null);
     } catch (e) {
       setDepthError(e instanceof Error ? e.message : "The Maker Depth chart could not be read.");
+    } finally {
+      if (spinner) setDepthLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void loadDepth(asset, horizonDays);
+    void loadDepth(asset, horizonDays, { spinner: true });
   }, [asset, horizonDays, loadDepth]);
 
   useEffect(() => {
@@ -794,6 +851,7 @@ export function useSurface(): Surface {
   return {
     asset,
     markets,
+    marketsLoading,
     direction,
     horizonDays,
     deck,
@@ -801,6 +859,7 @@ export function useSurface(): Surface {
     loading,
     depth,
     depthError,
+    depthLoading,
     selectedRef,
     dealtRef,
     selectedCard,
@@ -818,6 +877,7 @@ export function useSurface(): Surface {
     rfqRefusal,
     session,
     board,
+    boardLoading,
     receipt,
     busy,
     log,

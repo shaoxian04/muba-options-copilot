@@ -81,12 +81,30 @@ export function Mark({ symbol, size = 26 }: { symbol: string; size?: number }) {
 export function Rail({
   markets,
   asset,
+  loading,
   onPick,
 }: {
   markets: MarketRow[];
   asset: UnderlyingSymbol;
+  /**
+   * Issue #32: `GET /markets` is fetched exactly once (see `surface.ts`), so this is a
+   * first-read state, not a refresh -- once it goes false it never goes true again for
+   * the life of the page. Shown only while there is nothing to draw yet: a rail that
+   * silently rendered zero rows on a slow connection read as broken, not as loading.
+   */
+  loading: boolean;
   onPick: (symbol: UnderlyingSymbol) => void;
 }) {
+  if (!markets.length) {
+    return (
+      <div className="rail-top" role="group" aria-label="Which market to trade">
+        <p className="loading" role="status" data-testid="rail-loading">
+          {loading ? "Reading the markets…" : "No markets are quoting right now."}
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="rail-top" role="group" aria-label="Which market to trade">
       {markets.map((m) => {

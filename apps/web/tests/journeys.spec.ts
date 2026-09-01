@@ -634,6 +634,26 @@ test.describe("finishing, for real and for practice", () => {
     // Story 30: never filled at a price they did not see.
     expect(traffic.paths()).not.toContain("/fill");
   });
+
+  test("issue #32: a moved quote does not follow the Trader when they close and reopen for a different Card", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await deal(page);
+    await openConfirm(page, agentCard);
+
+    traffic.moveTheQuote();
+    await page.clock.runFor(7000);
+    await expect(page.getByTestId("quote-moved")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("confirm-modal")).toHaveCount(0);
+
+    // A different Card, freshly priced -- `quoteMoved` is about the ONE proposal a
+    // Trader was shown going stale, not a flag that sticks to the confirmation itself.
+    await openConfirm(page, overrideCard.cardRef);
+    await expect(page.getByTestId("quote-moved")).toHaveCount(0);
+    await expect(page.getByTestId("confirm")).toBeEnabled();
+  });
 });
 
 test.describe("the Risk Budget refusing", () => {
@@ -693,6 +713,26 @@ test.describe("the halt states", () => {
     await expect(page.getByTestId("deck")).toHaveCount(0);
     const size = await page.getByRole("heading", { level: 2 }).evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
     expect(size).toBeGreaterThanOrEqual(20);
+  });
+
+  test("issue #32: replaces the board, the confirmation and the payoff curve too -- but not the book's own standing state", async ({ page }) => {
+    await stubApi(page, "veto");
+    await page.goto("/");
+    await deal(page).catch(() => {});
+    await expect(page.getByTestId("veto")).toBeVisible();
+
+    // Nothing that lets a Trader act on a proposal survives a Veto: no board (real or
+    // practised), no confirmation, no payoff curve for a proposal that was never made.
+    await expect(page.getByTestId("board")).toHaveCount(0);
+    await expect(page.getByTestId("board-empty")).toHaveCount(0);
+    await expect(page.getByTestId("confirm-modal")).toHaveCount(0);
+    await expect(page.getByTestId("payoff-plot")).toHaveCount(0);
+
+    // But the rail, the tape and the Maker Depth chart -- the book's own standing
+    // state, not a proposal -- stay up, so a Trader is not stranded with no way back
+    // to the market they were just looking at (see the comment in `page.tsx`).
+    await expect(page.getByTestId("rail-ETH")).toBeVisible();
+    await expect(page.getByTestId("depth-chart")).toBeVisible();
   });
 
   test("the Veto survives colour being removed", async ({ page }) => {
@@ -1009,6 +1049,21 @@ test.describe("the RFQ door", () => {
     await expect(focusable.first()).toBeFocused();
   });
 
+  test("issue #32: has no 'quote moved' state -- nothing is priced here for the book to move out from under", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    // The same reprice that flips the Card confirmation's `quote-moved` banner, held
+    // open across a full poll interval -- but inside the RFQ dialog instead.
+    traffic.moveTheQuote();
+    await page.clock.runFor(7000);
+
+    await expect(page.locator('[data-testid="quote-moved"]')).toHaveCount(0);
+    await expect(page.getByTestId("rfq-modal")).not.toContainText("price moved");
+    await expect(page.getByTestId("rfq-submit")).toBeEnabled();
+  });
+
   test("has no critical or serious accessibility violations, open or refused", async ({ page }) => {
     await page.goto("/");
     await page.getByTestId("rfq-door").click();
@@ -1025,5 +1080,136 @@ test.describe("the RFQ door", () => {
     expect(
       refused.violations.filter((v) => v.impact === "critical" || v.impact === "serious").map((v) => v.id)
     ).toEqual([]);
+  });
+});
+
+/**
+ * Issue #32 -- the board, and loading without blanking.
+ *
+ * A network stub answers instantly, which is exactly the width the ticket's own
+ * loading states occupy in real life -- too narrow for a normal test to ever observe.
+ * `traffic.hold(path)` (see `stub.ts`) widens that window on demand: the tests below
+ * hold a request open, assert on the state while it is genuinely in flight, then
+ * release it and assert the state that follows.
+ */
+test.describe("loading, without blanking the surface", () => {
+  test("the board shows a loading state, not \"nothing open\", before positions have answered", async ({ page }) => {
+    const traffic = await stubApi(page);
+    const release = traffic.hold("/positions");
+    await page.goto("/");
+
+    await expect(page.getByTestId("board-loading")).toBeVisible();
+    await expect(page.getByTestId("board-empty")).toHaveCount(0);
+
+    release();
+    await expect(page.getByTestId("board-empty")).toBeVisible();
+    await expect(page.getByTestId("board-loading")).toHaveCount(0);
+  });
+
+  test("the board reads across every Underlying, not scoped to the one selected on the rail", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await expect(page.getByTestId("board-empty")).toBeVisible();
+
+    await page.getByTestId("rail-SOL").click();
+    await expect(page.getByTestId("rail-SOL")).toHaveAttribute("aria-pressed", "true");
+
+    // GET /positions carries no `asset` -- it is not re-fetched by, or scoped to, the
+    // rail's own selection (`apps/api/src/app.ts`'s `/positions` prices every
+    // Underlying's spot in the one read).
+    const positionsRequests = traffic.all.filter((r) => new URL(r.url()).pathname === "/positions");
+    expect(positionsRequests.length).toBe(1);
+    expect(new URL(positionsRequests[0]!.url()).searchParams.get("asset")).toBeNull();
+  });
+
+  test("the rail shows a loading state before markets have answered", async ({ page }) => {
+    const traffic = await stubApi(page);
+    const release = traffic.hold("/markets");
+    await page.goto("/");
+
+    await expect(page.getByTestId("rail-loading")).toBeVisible();
+    await expect(page.getByTestId("rail-loading")).toContainText("Reading the markets");
+    await expect(page.getByTestId("rail-ETH")).toHaveCount(0);
+
+    release();
+    await expect(page.getByTestId("rail-ETH")).toBeVisible();
+    await expect(page.getByTestId("rail-loading")).toHaveCount(0);
+  });
+
+  test("the Deck and the depth chart each show a loading state before the first read lands", async ({ page }) => {
+    const traffic = await stubApi(page);
+    const releaseDeck = traffic.hold("/deck");
+    const releaseDepth = traffic.hold("/depth");
+    await page.goto("/");
+
+    await expect(page.getByTestId("deck-loading")).toBeVisible();
+    await expect(page.getByTestId("depth-loading")).toBeVisible();
+    await expect(page.getByTestId("deck")).toHaveCount(0);
+    await expect(page.getByTestId("depth-chart")).toHaveCount(0);
+
+    releaseDeck();
+    await expect(page.getByTestId("deck")).toBeVisible();
+    await expect(page.getByTestId("deck-loading")).toHaveCount(0);
+
+    releaseDepth();
+    await expect(page.getByTestId("depth-chart")).toBeVisible();
+    await expect(page.getByTestId("depth-loading")).toHaveCount(0);
+  });
+
+  test("switching Underlying keeps the last Deck on screen, disabled, under an 'Updating' note -- not blanked", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await expect(page.getByTestId("card").first()).toBeVisible();
+    const priorCardCount = await page.getByTestId("card").count();
+
+    const release = traffic.hold("/deck");
+    await page.getByTestId("rail-SOL").click();
+
+    // The ETH Deck stays on screen -- not replaced by a bare loading paragraph -- and
+    // it is disabled: a stray click on a stale Card must not send the NEW asset
+    // alongside a `cardRef` that only exists on the OLD one.
+    await expect(page.getByTestId("deck-refreshing")).toBeVisible();
+    await expect(page.getByTestId("card")).toHaveCount(priorCardCount);
+    await expect(page.getByTestId("card").first()).toBeDisabled();
+
+    release();
+    await expect(page.getByTestId("deck-refreshing")).toHaveCount(0);
+    await expect(page.getByTestId("card").first()).toBeEnabled();
+  });
+
+  test("switching Underlying keeps the last depth chart on screen under an 'Updating' note -- not blanked", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await expect(page.getByTestId("depth-chart")).toBeVisible();
+
+    // Both /deck and /depth are held. /deck's answer is what `fullestExpiry` in
+    // `lib/surface.ts` uses to move a Trader onto the expiry with the most Cards --
+    // left to resolve here, on an instantly-answering stub, it would change
+    // `horizonDays` and drive a SECOND, un-held /depth request before this test ever
+    // gets to observe the loading state. A genuinely slow network would not race like
+    // that: both requests would still be in flight together.
+    const releaseDeck = traffic.hold("/deck");
+    const releaseDepth = traffic.hold("/depth");
+    await page.getByTestId("rail-SOL").click();
+
+    await expect(page.getByTestId("depth-refreshing")).toBeVisible();
+    await expect(page.getByTestId("depth-chart")).toBeVisible();
+
+    releaseDeck();
+    releaseDepth();
+    await expect(page.getByTestId("depth-refreshing")).toHaveCount(0);
+  });
+
+  test("has no critical or serious accessibility violations while the Deck, the depth chart, the rail and the board are all still loading", async ({ page }) => {
+    const traffic = await stubApi(page);
+    traffic.hold("/deck");
+    traffic.hold("/depth");
+    traffic.hold("/markets");
+    traffic.hold("/positions");
+    await page.goto("/");
+
+    await expect(page.getByTestId("deck-loading")).toBeVisible();
+    const { violations } = await new AxeBuilder({ page }).analyze();
+    expect(violations.filter((v) => v.impact === "critical" || v.impact === "serious").map((v) => v.id)).toEqual([]);
   });
 });

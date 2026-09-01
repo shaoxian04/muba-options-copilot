@@ -70,7 +70,7 @@ export default function Page() {
       <Chat log={s.log} seeds={seeds} busy={s.busy} />
 
       <div className="rig">
-        <Rail markets={s.markets} asset={s.asset} onPick={s.setAsset} />
+        <Rail markets={s.markets} asset={s.asset} loading={s.marketsLoading} onPick={s.setAsset} />
         <Tape deck={s.deck} now={now} />
 
         {/*
@@ -78,9 +78,47 @@ export default function Page() {
           direction and by expiry on purpose -- see `DepthChart.tsx` -- so it sits here,
           outside every branch below it, and keeps orienting a Trader through a VETO or
           an empty Deck rather than disappearing with them.
-        */}
-        {s.depth ? <DepthChart depth={s.depth} horizonDays={s.horizonDays} horizonLabel={horizonLabel} /> : null}
 
+          Issue #32: `depth` itself is never cleared for a switch (see `depthLoading` in
+          `lib/surface.ts`), so the chart on screen is the stale one until the fresh read
+          lands -- `depth-refreshing` says so in place, rather than the chart winking out
+          and back in on every Underlying pick. Only the very first read, before there is
+          anything to show at all, gets the full-width note below it.
+        */}
+        {s.depth ? (
+          <>
+            {s.depthLoading ? (
+              <p className="loading refresh" role="status" data-testid="depth-refreshing">
+                Updating the depth chart…
+              </p>
+            ) : s.depthError ? (
+              <p className="loading refresh" role="alert" data-testid="depth-stale-error">
+                {s.depthError} Showing the last read.
+              </p>
+            ) : null}
+            <DepthChart depth={s.depth} horizonDays={s.horizonDays} horizonLabel={horizonLabel} />
+          </>
+        ) : s.depthLoading ? (
+          <p className="loading" role="status" data-testid="depth-loading">
+            Reading the depth chart…
+          </p>
+        ) : s.depthError ? (
+          <p className="loading" role="alert" data-testid="depth-error">
+            {s.depthError}
+          </p>
+        ) : null}
+
+        {/*
+          Issue #32 verified this branch, rather than rebuilding it: a VETO replaces
+          everything below it -- the Deck, the confirmation, the RFQ door's own trigger
+          in the chips row -- with `VetoScreen`, which is `role="alert"` and carries its
+          own "Nothing was signed" banner (`journeys.spec.ts`, "the halt states"). Rail,
+          Tape and the Maker Depth chart above stay up, on purpose and unchanged from
+          issue #28: they are the book's own standing state, not "a live Deck" in the
+          sense the ticket means -- nothing there is a proposal a Trader could act on,
+          nothing there can be confirmed, and losing them on every Veto would strand a
+          Trader with no way back to a market they were just looking at.
+        */}
         {s.result?.kind === "VETO" ? (
           <VetoScreen
             tradeIntent={s.result.tradeIntent}
@@ -125,33 +163,88 @@ export default function Page() {
                   ) : null}
                 </div>
 
-                {s.loading && !s.deck ? (
-                  <p className="loading">Reading the book…</p>
+                {/*
+                  Issue #32: the two branches below used to be swapped -- `deckError` was
+                  checked before `deck`, so a transient failure on the background poll
+                  replaced a perfectly good, still-tradeable stale Deck with a bare error
+                  paragraph. Now `deck` wins whenever there is one: a stale Deck is a
+                  Deck, and the loading/error state becomes a small in-place note over it
+                  rather than a takeover. Only the FIRST read, before there is anything
+                  to show, still gets the full paragraph.
+
+                  `busy={s.busy || s.loading}` is the fix for the actual bug this ticket
+                  found: without it, the stale Deck's Cards stayed clickable while a
+                  switch was in flight, and a click sent the NEW `asset` alongside a
+                  `cardRef` that only exists on the OLD one.
+                */}
+                {s.deck ? (
+                  <>
+                    {s.loading ? (
+                      <p className="loading refresh" role="status" data-testid="deck-refreshing">
+                        Updating the book…
+                      </p>
+                    ) : s.deckError ? (
+                      <p className="loading refresh" role="alert" data-testid="deck-stale-error">
+                        {s.deckError} Showing the last book we read.
+                      </p>
+                    ) : null}
+                    <DeckRow
+                      deck={s.deck}
+                      selectedRef={s.selectedRef}
+                      dealtRef={s.dealtRef}
+                      busy={s.busy || s.loading}
+                      now={now}
+                      onPick={(ref) => void s.pick(ref)}
+                    />
+                  </>
+                ) : s.loading ? (
+                  <p className="loading" role="status" data-testid="deck-loading">
+                    Reading the book…
+                  </p>
                 ) : s.deckError ? (
-                  <p className="loading" role="alert">
+                  <p className="loading" role="alert" data-testid="deck-error">
                     {s.deckError}
                   </p>
-                ) : s.deck ? (
-                  <DeckRow
-                    deck={s.deck}
-                    selectedRef={s.selectedRef}
-                    dealtRef={s.dealtRef}
-                    busy={s.busy}
-                    now={now}
-                    onPick={(ref) => void s.pick(ref)}
-                  />
                 ) : null}
               </section>
 
+              {/*
+                Issue #32: variant E drops the payoff curve, and this ticket is where
+                that gets a decision rather than staying implicit. It survives -- it is
+                NOT a Forecast under ADR-0005 (`PayoffStrip.tsx` says why: it is
+                arithmetic on the contract the Trader already picked, not an opinion
+                about where the Underlying goes, the same footing Implied Move and
+                Implied Chance already stand on) -- and it stays HERE, in the main body,
+                rather than moving inside `ConfirmModal`. Two reasons: it already reads
+                off `proposal`, which `deal()` sets without ever opening the confirmation
+                (the seed prompts on the left deal a Card straight from the chat), so a
+                Trader who asked the Copilot for a trade and never clicked a Card would
+                lose the curve entirely if it only existed inside the modal; and issues
+                #11-#14 already built a keyboard-operable crosshair against this exact
+                placement (`journeys.spec.ts`, "draws the payoff curve…"), which moving
+                it would break for no gain -- a Forecast is exactly what ADR-0005 keeps
+                away from a confirmation, and the curve was never one.
+              */}
               {proposal ? (
                 <section className="sect" aria-label="What this pays">
                   <PayoffStrip proposal={proposal} spot={s.deck?.spotUsd ?? null} />
                 </section>
               ) : null}
 
+              {/*
+                Issue #32: the board reads across all SIX Underlyings, not scoped to
+                whichever one the rail has selected. This matches `GET /positions`
+                itself (`apps/api/src/app.ts`) -- it takes no `asset` parameter and
+                already prices every Underlying's spot in one read (`holdings.ts`'s
+                comment on why a single "the spot" was wrong for a multi-asset board) --
+                so there is no server-side per-asset endpoint to scope this against
+                without adding one for no reason: a Trader holding a BTC option while
+                looking at the SOL market must still see it, not lose it behind a filter
+                the rail was never meant to apply to their own money.
+              */}
               <section className="sect" aria-label="What you hold">
                 <span className="lbl">Yours</span>
-                <Board holdings={s.board?.holdings ?? []} now={now} />
+                <Board holdings={s.board?.holdings ?? []} now={now} loading={s.boardLoading} />
               </section>
             </div>
 

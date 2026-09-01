@@ -27,6 +27,16 @@
  * the RFQ's size snaps to the same four presets plus Max, each of which already
  * carries a real string: the preset's own literal label, or `Max`'s the server's own
  * `session.figures.remainingUsdc.display`.
+ *
+ * Issue #32 -- no `quoteMoved`, deliberately. `quoteMoved` in `lib/surface.ts` compares
+ * the premium string a Trader was SHOWN against what the next Deck poll answers, and
+ * this dialog never shows a premium: there is nothing priced here for the book to move
+ * out from under. What CAN go stale is the strike offset's relationship to spot as spot
+ * itself drifts while the dialog sits open -- but that is exactly what the percentage
+ * framing above already reads correctly moment to moment (spot is re-read on every
+ * `Tape`/`Deck` poll and this dialog's header shows it live), so there is no separate
+ * staleness state to invent. `POST /rfq` always answers 501 regardless of how long the
+ * dialog has been open, and the refusal echoes back whatever was actually submitted.
  */
 import { useEffect, useRef, useState } from "react";
 import type { Figure, RfqTenorDays, UnderlyingSymbol } from "@copilot/shared";

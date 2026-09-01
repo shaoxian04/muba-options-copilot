@@ -1321,6 +1321,16 @@ button[disabled] {
   color: var(--ink-2);
   font-size: 13px;
 }
+/*
+  Issue #32: the in-place note over a still-visible, stale Deck or Depth chart during a
+  refresh or a transient read error -- deliberately NOT the full block above, which is
+  reserved for the one moment there is genuinely nothing to show yet. Small and quiet on
+  purpose: it says "this is being updated", not "stop looking at what is on screen".
+*/
+.loading.refresh {
+  padding: 2px 2px 8px;
+  font-size: 12px;
+}
 
 @media (prefers-reduced-motion: reduce) {
   * {

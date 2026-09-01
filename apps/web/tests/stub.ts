@@ -111,6 +111,17 @@ export interface Traffic {
    * with. The surface has to notice on its next poll and say so BEFORE they confirm.
    */
   moveTheQuote: () => void;
+  /**
+   * Issue #32 -- hold the NEXT response to `pathname` open until the test releases it.
+   *
+   * The loading states this ticket is about only exist for the width of one network
+   * round trip, which a local stub answers instantly -- too fast for Playwright to ever
+   * observe. This makes that window as wide as a test needs: the held request sits
+   * unanswered until the returned function is called, so a test can assert on the
+   * loading affordance in between. Only the next matching request is held; the one
+   * after it answers normally, the same way a real slow request eventually completes.
+   */
+  hold: (pathname: string) => () => void;
 }
 
 const json = (route: Route, body: unknown, traffic: Traffic, status = 200) => {
@@ -243,6 +254,12 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
   let practised = false;
   let moved = false;
 
+  // Issue #32's `hold`/`release` pair -- see `Traffic.hold` above for why this exists.
+  // Keyed by pathname; only ONE outstanding hold per path at a time, which is all any
+  // test here needs.
+  const gates = new Map<string, Promise<void>>();
+  const releasers = new Map<string, () => void>();
+
   const traffic: Traffic = {
     all: [],
     paths: () => traffic.all.map((r) => new URL(r.url()).pathname),
@@ -250,11 +267,28 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
     moveTheQuote: () => {
       moved = true;
     },
+    hold: (pathname: string) => {
+      const promise = new Promise<void>((resolve) => releasers.set(pathname, resolve));
+      gates.set(pathname, promise);
+      return () => {
+        releasers.get(pathname)?.();
+        gates.delete(pathname);
+        releasers.delete(pathname);
+      };
+    },
   };
 
   await page.route(`${API}/**`, async (route, request) => {
     traffic.all.push(request);
     const url = new URL(request.url());
+
+    // Block here, before the response is decided, so the request is genuinely in
+    // flight from the browser's point of view for as long as the test wants it to be.
+    const gate = gates.get(url.pathname);
+    if (gate) {
+      gates.delete(url.pathname);
+      await gate;
+    }
 
     switch (url.pathname) {
       case "/deck": {
