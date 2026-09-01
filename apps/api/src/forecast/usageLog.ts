@@ -19,6 +19,8 @@ export async function logUsageToSupabase(event: UsageLogEvent): Promise<void> {
     input_tokens: event.inputTokens ?? null,
     output_tokens: event.outputTokens ?? null,
     latency_ms: event.latencyMs,
+    input: event.input,
+    output: event.output,
   });
 
   if (error) console.warn(`[forecast-usage-log] insert failed: ${error.message}`);

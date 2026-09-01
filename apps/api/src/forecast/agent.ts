@@ -197,6 +197,11 @@ export interface UsageLogEvent {
   latencyMs: number;
   inputTokens?: number;
   outputTokens?: number;
+  /** The `user` prompt actually sent. Not `system` too -- that's a static string per
+   *  callSite, constant across every row, and cheaply looked up in code if ever needed. */
+  input: string;
+  /** The raw text the model returned, before JSON parsing/schema validation. */
+  output: string;
 }
 
 /**
@@ -247,16 +252,21 @@ export async function callAgentForJson<T>(
       system,
       messages: [{ role: "user", content: user }],
     });
+    // Extracted before logUsage (not after) so a malformed/empty response still gets
+    // logged -- that's a real, billed call worth seeing in the audit log, not silence.
+    const block = response.content.find((b) => b.type === "text" && typeof b.text === "string");
+    const text = block?.text;
     logUsage({
       provider: response.provider ?? "unknown",
       callSite,
+      input: user,
+      output: text ?? "",
       latencyMs: Date.now() - startedAt,
       inputTokens: response.usage?.inputTokens,
       outputTokens: response.usage?.outputTokens,
     });
-    const block = response.content.find((b) => b.type === "text" && typeof b.text === "string");
-    if (!block?.text) throw new Error("No text content in agent response");
-    raw = block.text;
+    if (!text) throw new Error("No text content in agent response");
+    raw = text;
   } catch (e: any) {
     throw new ForecastGenerationFailed(`Agent call failed: ${e?.message ?? e}`);
   }
