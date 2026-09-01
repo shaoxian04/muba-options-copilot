@@ -543,102 +543,184 @@ button[disabled] {
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.09);
   min-width: 0;
 }
+/*
+  Issue #29: a responsive grid rather than a horizontally-scrolling row, so a Deck of
+  nine Cards and a Deck of one both look deliberate -- `auto-fill` lets one Card sit at
+  its natural width instead of stretching to fill the row.
+*/
 .deck {
-  display: flex;
-  gap: 11px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding: 14px 4px 16px;
-  scroll-snap-type: x proximity;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+  gap: 12px;
+  padding: 2px 2px 4px;
   list-style: none;
   margin: 0;
 }
+/*
+  The Card, redrawn as a labelled data sheet (issue #29). Every figure gets its own row
+  now, so the fixed postage-stamp size is gone -- content sets the height, and the grid
+  track above sets the width.
+*/
 .card {
   position: relative;
-  flex: none;
-  width: 122px;
-  height: 158px;
+  width: 100%;
   border: 1px solid var(--line);
   border-radius: 13px;
   background: var(--surface);
   overflow: hidden;
-  scroll-snap-align: center;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  padding: 13px 13px 11px 26px;
   transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.25, 1.1), box-shadow 0.2s, border-color 0.16s;
 }
 /*
-  The Implied Chance, drawn twice.
-
-  `.rail` is the information carrier: full opacity, so the six ramp steps separate by
-  the dE 8 bar red/green was held to and failed. Nothing is ever printed on top of it,
-  which is what lets it be saturated enough to be told apart.
-
-  `.tint` is atmosphere -- the same colour washed across the card body so the Deck reads
-  as one gradient at a glance. It is deliberately faint: text sits on this, and a tint
-  strong enough to compare would be a tint too strong to read through. Comparing is the
-  rail's job.
+  The left rail now carries DIRECTION (call/put, blue/orange) rather than Implied
+  Chance -- Implied Chance moved to the dial entirely in issue #29, so a Card is never
+  asked to carry the same meaning as two different colours at once.
 */
 .card .rail {
   position: absolute;
   left: 0;
+  top: 0;
   bottom: 0;
-  width: 14px;
-  border-top-right-radius: 3px;
-  border-right: 1px solid rgba(17, 24, 32, 0.14);
-  transition: height 0.45s cubic-bezier(0.3, 0.8, 0.3, 1), background 0.3s;
-}
-.card .tint {
-  position: absolute;
-  left: 14px;
-  right: 0;
-  bottom: 0;
-  opacity: var(--tintA);
-  transition: height 0.45s cubic-bezier(0.3, 0.8, 0.3, 1), background 0.3s;
+  width: 4px;
 }
 .card > * {
   position: relative;
 }
-.card .od {
-  font-size: 29px;
-  font-weight: 700;
-  line-height: 0.9;
+.card .etop {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 15px 12px 18px;
 }
-.card .od i {
-  font-size: 13px;
-  font-weight: 500;
-  font-style: normal;
-  color: var(--ink-2);
-  letter-spacing: 0;
-}
-.card .k {
+.card .etop .k {
   font-family: "IBM Plex Mono", monospace;
   font-variant-numeric: tabular-nums;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
 }
-.card .mi {
-  font-size: 10px;
+/*
+  The distance line: "must fall **2.1%**" or "already below — **must stay**".
+  `--ink-2`, not `--ink-3` -- issue #29's axe pass failed color-contrast at this size on
+  the tertiary ink, the same reason `.mi` and `.words` below were always `--ink-2`.
+*/
+.card .dist {
+  font-size: 12px;
   color: var(--ink-2);
-  line-height: 1.35;
+  margin-top: 3px;
 }
-/* The words that carry what the fill carries, for anyone the fill reaches. */
-.card .words {
-  font-size: 10px;
+.card .dist b {
+  color: var(--ink-2);
+  font-weight: 600;
+  font-family: "IBM Plex Mono", monospace;
+}
+.card .ch {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  text-align: center;
+}
+.card .ch small {
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  font-weight: 600;
+  line-height: 1.25;
+}
+/* The dial's digits: a label on the arc, not the only cue. */
+.dial-num {
+  font-family: "Martian Mono", "IBM Plex Mono", monospace;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: -0.06em;
+  fill: var(--ink);
+  text-anchor: middle;
+}
+.dial-arc {
+  transition: stroke-dashoffset 0.7s cubic-bezier(0.3, 0.8, 0.3, 1);
+}
+/* The chance said in words, same meaning as the arc, for when colour carries nothing. */
+.card .ch .words {
+  font-size: 9.5px;
   color: var(--ink-2);
   line-height: 1.2;
+  max-width: 64px;
+}
+.card dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0;
+  border-top: 1px solid var(--line-2);
+}
+.card dt {
+  font-size: 11px;
+  color: var(--ink-2);
+  padding: 7px 0 7px 18px;
+  letter-spacing: 0.02em;
+}
+.card dd {
+  margin: 0;
+  padding: 7px 15px 7px 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--ink);
+  text-align: right;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.card dd .u {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 10.5px;
+  color: var(--ink-2);
+}
+/* Maker Depth's proportional bar -- a width from `lib/geometry.ts`, never a figure. */
+.card .hbar {
+  width: 26px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+  flex: none;
+}
+.card .hbar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--r2), var(--r5));
+}
+.card .efoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 15px 10px 18px;
+  border-top: 1px solid var(--line-2);
+  background: var(--well);
+  margin-top: auto;
+}
+.card .efoot .clk {
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--ink-2);
+  font-weight: 500;
 }
 .card:hover {
-  transform: translateY(-5px);
+  transform: translateY(-3px);
   border-color: var(--ink-2);
 }
 .card[aria-pressed="true"] {
   border-color: var(--ink);
   box-shadow: var(--lift);
-  transform: translateY(-9px);
+  transform: translateY(-5px);
 }
 .card.dealt::before {
   content: "";

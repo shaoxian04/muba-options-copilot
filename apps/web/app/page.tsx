@@ -125,6 +125,7 @@ export default function Page() {
                     selectedRef={s.selectedRef}
                     dealtRef={s.dealtRef}
                     busy={s.busy}
+                    now={now}
                     onPick={(ref) => void s.pick(ref)}
                   />
                 ) : null}

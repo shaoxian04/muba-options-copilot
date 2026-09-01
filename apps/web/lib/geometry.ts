@@ -146,3 +146,60 @@ export function markGeometry(size: number, kind: "eth" | "btc" | "glyph") {
     fontSize: size * (kind === "btc" ? 0.66 : 0.54),
   };
 }
+
+/**
+ * The chance-it-pays dial, as an SVG ring.
+ *
+ * Issue #29: the arc IS the number -- the digits drawn inside it (`impliedChance.display`,
+ * read by the caller and never touched here) are a label on it, not the only cue, so the
+ * Card still carries its meaning with colour stripped out entirely. What this function
+ * returns is coordinates and lengths for `<circle>` and its `stroke-dasharray` -- never
+ * text, so it belongs beside `markGeometry` rather than in `DeckRow.tsx`.
+ *
+ * `filled` is the length of the arc that should be drawn solid; `circumference` is the
+ * whole ring. The caller uses BOTH in `stroke-dasharray` -- `Rail.tsx` already
+ * interpolates coordinates like these straight into an SVG attribute string, which is
+ * the precedent this follows rather than inventing a formatted string here.
+ */
+export interface Dial {
+  size: number;
+  center: number;
+  radius: number;
+  strokeWidth: number;
+  /** Length of the solid part of the ring, 0 at no chance up to `circumference` at certainty. */
+  filled: number;
+  circumference: number;
+}
+
+export function dialArc(chance: number, size: number): Dial {
+  const strokeWidth = 5;
+  const radius = Math.max(1, (size - strokeWidth * 2) / 2);
+  const circumference = 2 * Math.PI * radius;
+  const clamped = Math.min(1, Math.max(0, chance));
+  return {
+    size,
+    center: size / 2,
+    radius,
+    strokeWidth,
+    filled: circumference * clamped,
+    circumference,
+  };
+}
+
+/**
+ * Maker Depth's proportional bar, one strike measured against the deepest in the same
+ * Deck.
+ *
+ * A width, never a figure: nobody reads a percentage off this bar, they read which
+ * strike is deeper than its neighbours -- the figure itself is `depthUsdc.display`,
+ * printed beside it. Floored at 6% so the shallowest strike's bar still shows a sliver;
+ * a bar with no fill at all reads as "broken", not as "thin" (the same reasoning as
+ * `fillHeight` above). Takes every depth in the Deck at once, deliberately: finding the
+ * deepest one is a `Math.max` over several Cards, and that has to happen in here rather
+ * than in `DeckRow.tsx` for the same reason `splitBar` returns both segments.
+ */
+export function depthBarWidths(depths: number[]): string[] {
+  const deepest = depths.reduce((max, d) => (d > max ? d : max), 0);
+  if (deepest <= 0) return depths.map(() => "6%");
+  return depths.map((d) => `${Math.max(6, Math.min(100, (d / deepest) * 100))}%`);
+}
