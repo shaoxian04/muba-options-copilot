@@ -131,7 +131,8 @@ async function gatherCoinData(
 
   const gathered: GatheredCoin = { symbol: marketData.symbol, market: marketData };
 
-  if (request.analyses.includes("indicators")) {
+  
+  if (request.analyses.includes("indicators") || request.analyses.includes("price")) {
     try {
       gathered.indicators = await (deps?.indicators ?? fetchIndicators)(marketData.symbol);
     } catch {
@@ -140,7 +141,8 @@ async function gatherCoinData(
   }
 
   if (request.analyses.includes("news") && scenario) gathered.news = await analyzeNews(scenario, deps?.create);
-  if (request.analyses.includes("price") && scenario) gathered.price = await predictPrice(scenario, deps?.create);
+  if (request.analyses.includes("price") && scenario)
+    gathered.price = await predictPrice(scenario, deps?.create, gathered.indicators);
   if (request.analyses.includes("risk-benefit") && scenario)
     gathered.riskBenefit = await assessRiskBenefit(scenario, deps?.create);
 

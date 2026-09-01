@@ -563,7 +563,15 @@ test("comparison context passed to other coins includes each coin's own gathered
     resolveViaCoinGeckoSearch: async (query) => (query === "PEPE" ? { id: "pepecoin", symbol: "pepe" } : undefined),
   };
 
-  const results = await answerQuestion("compare ETH and PEPE", { create, marketData });
+  // A price request now gathers indicators too, so this needs a stub for the same
+  // reason it needs marketData: the suite makes no network calls.
+  const results = await answerQuestion("compare ETH and PEPE", {
+    create,
+    marketData,
+    indicators: async () => {
+      throw new Error("agents service not running in tests");
+    },
+  });
 
   assert.equal(results.ETH.disclaimer, FORECAST_DISCLAIMER, "ETH's own price prediction should carry the disclaimer");
   assert.equal(
@@ -733,4 +741,102 @@ test("indicators are not fetched for a question that never asks for them", async
     },
   });
   assert.equal(called, false);
+});
+
+test("a price question gathers indicators and hands them to predictPrice", async () => {
+  let sawIndicatorsInPricePrompt = false;
+  const create: AgentCreateFn = async (params) => {
+    if (params.system.includes("extract structured information"))
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ requests: [{ coin: "ETH", horizon: "7d", analyses: ["price"] }], isComparison: false }),
+          },
+        ],
+      };
+    if (params.system.includes("invent plausible"))
+      return {
+        content: [
+          { type: "text", text: JSON.stringify({ headlines: [{ text: "steady", sentiment: "neutral", source: "simulated" }] }) },
+        ],
+      };
+    if (params.system.includes("speculative price prediction")) {
+      sawIndicatorsInPricePrompt = /RSI\(14\): 28\.4/.test(params.messages[0].content);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              direction: "up",
+              predictedRange: { low: 2400, high: 2600 },
+              confidence: "low",
+              rationale: "Momentum is stretched but the trend holds.",
+            }),
+          },
+        ],
+      };
+    }
+    return { content: [{ type: "text", text: JSON.stringify({ answer: "ETH may drift up." }) }] };
+  };
+
+  const results = await answerQuestion("will ETH go up over 7d?", {
+    create,
+    marketData: workingMarketDataDeps,
+    indicators: async () => stubIndicators,
+  });
+
+  assert.ok(sawIndicatorsInPricePrompt, "predictPrice should have been given the indicator values");
+  assert.ok(results.ETH.price, "the prediction is still produced");
+  assert.equal(results.ETH.disclaimer, FORECAST_DISCLAIMER, "a price prediction is opinion");
+});
+
+test("a price question still predicts when the agents service is down", async () => {
+  let pricePromptHadIndicators = true;
+  const create: AgentCreateFn = async (params) => {
+    if (params.system.includes("extract structured information"))
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ requests: [{ coin: "ETH", horizon: "7d", analyses: ["price"] }], isComparison: false }),
+          },
+        ],
+      };
+    if (params.system.includes("invent plausible"))
+      return {
+        content: [
+          { type: "text", text: JSON.stringify({ headlines: [{ text: "steady", sentiment: "neutral", source: "simulated" }] }) },
+        ],
+      };
+    if (params.system.includes("speculative price prediction")) {
+      pricePromptHadIndicators = /Computed technical indicators/.test(params.messages[0].content);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              direction: "flat",
+              predictedRange: { low: 2400, high: 2500 },
+              confidence: "low",
+              rationale: "Nothing decisive in the data.",
+            }),
+          },
+        ],
+      };
+    }
+    return { content: [{ type: "text", text: JSON.stringify({ answer: "ETH looks flat." }) }] };
+  };
+
+  const results = await answerQuestion("will ETH go up over 7d?", {
+    create,
+    marketData: workingMarketDataDeps,
+    indicators: async () => {
+      throw new Error("Agents service unreachable: fetch failed");
+    },
+  });
+
+  assert.equal(pricePromptHadIndicators, false, "no indicator block when the service is down");
+  assert.ok(results.ETH.price, "the prediction is still produced");
+  assert.equal(results.ETH.error, undefined);
 });
