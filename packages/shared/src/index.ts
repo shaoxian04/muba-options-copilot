@@ -170,6 +170,39 @@ export const ProposeRequest = TradeIntent.extend({
 });
 export type ProposeRequest = z.infer<typeof ProposeRequest>;
 
+/**
+ * Issue #31 -- naming a strike the book does not offer.
+ *
+ * The tenors an RFQ may ask for. Deliberately longer than anything the live book
+ * carries (`MAX_HORIZON_DAYS` bounds the book's own grid, not this) -- the whole point
+ * of the door is to ask for what is NOT already a Card, so its tenor grid has to be
+ * visibly a different, longer shape than the chips beside it.
+ */
+export const RFQ_TENOR_DAYS = [7, 14, 30, 60] as const;
+export const RfqTenorDays = z.union([z.literal(7), z.literal(14), z.literal(30), z.literal(60)]);
+export type RfqTenorDays = z.infer<typeof RfqTenorDays>;
+
+/**
+ * What POST /rfq accepts.
+ *
+ * Deliberately NOT a TradeIntent: there is no Order behind this, so there is no
+ * `sizeUsdc.max(1000)`-shaped economics to price and nothing a `cardRef` could select.
+ * `strikeOffsetPct` is the one number the Trader originates here -- a distance from
+ * spot, signed, exactly as felt on the slider -- and it is never resolved to a dollar
+ * strike anywhere in the browser (issue #31): only the server, which alone holds live
+ * spot, may do that arithmetic, and only inside the 501 refusal's echoed sentence.
+ */
+export const RfqRequest = z.object({
+  underlying: UnderlyingSymbol,
+  direction: z.enum(["UP", "DOWN"]),
+  /** Percent distance from spot the slider names, signed, in half-percent steps across +/-30%. */
+  strikeOffsetPct: z.number().min(-30).max(30),
+  horizonDays: RfqTenorDays,
+  /** The reserve price a future Offer would have to respect -- not a premium, because none exists yet. */
+  sizeUsdc: z.number().positive().max(1000),
+});
+export type RfqRequest = z.infer<typeof RfqRequest>;
+
 export const FillResult = z.object({
   txHash: z.string(),
   optionAddress: z.string(),

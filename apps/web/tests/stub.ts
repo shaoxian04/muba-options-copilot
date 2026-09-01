@@ -180,6 +180,24 @@ const deepBudget = (base: typeof session): typeof session => ({
 const money = (v: number): string => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /**
+ * What the real POST /rfq answers: always 501, always echoing back the request. This
+ * mirrors `rfqRefusalMessage` in `apps/api/src/rfq.ts` -- test infrastructure standing
+ * in for the server, not the browser originating a figure. ETH spot is fixed at
+ * `deckDown1.spotUsd.value` ($2,445.49) across every fixture Deck.
+ */
+function rfqRefusal(body: { underlying: string; direction: "UP" | "DOWN"; strikeOffsetPct: number; horizonDays: number; sizeUsdc: number }) {
+  const spot = deckDown1.spotUsd.value;
+  const strike = money(spot * (1 + body.strikeOffsetPct / 100));
+  const directionWord = body.direction === "DOWN" ? "below" : "above";
+  return {
+    error:
+      "The sealed-bid RFQ backend is not built yet. Nothing was sent to a maker, nothing was signed, " +
+      "and no USDC moved. " +
+      `You asked for: ${body.underlying} ${directionWord} ${strike}, ${body.horizonDays} days, at most ${money(body.sizeUsdc)}.`,
+  };
+}
+
+/**
  * What the real `/propose` does when a size changes: re-derive premium, Max Loss and
  * the contract count for the SAME Order at the new stake. The fixture book quotes a
  * fixed price per contract, so scaling the base answer by `sizeUsdc / baseSizeUsdc`
@@ -279,6 +297,18 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
       case "/practice":
         practised = true;
         return json(route, practiceResult, traffic);
+
+      /** Issue #31 -- always 501, the honest refusal, echoing back the request. */
+      case "/rfq": {
+        const body = request.postDataJSON() as {
+          underlying: string;
+          direction: "UP" | "DOWN";
+          strikeOffsetPct: number;
+          horizonDays: number;
+          sizeUsdc: number;
+        };
+        return json(route, rfqRefusal(body), traffic, 501);
+      }
 
       /*
        * Deliberately reachable, and deliberately gated.

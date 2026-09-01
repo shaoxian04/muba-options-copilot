@@ -718,7 +718,16 @@ test.describe("the halt states", () => {
     await stubApi(page, "empty");
     await page.goto("/");
 
-    await expect(page.getByTestId("empty-rfq")).toBeDisabled();
+    // Issue #31: the empty-Deck button is no longer a dead stub -- it opens the same
+    // RFQ dialog the chips-row door does, and that dialog leads to an honest 501, not
+    // a fake success. "Not pretending it is wired" now means the refusal is real.
+    await expect(page.getByTestId("empty-rfq")).toBeEnabled();
+    await page.getByTestId("empty-rfq").click();
+    await expect(page.getByTestId("rfq-modal")).toBeVisible();
+
+    await page.getByTestId("rfq-submit").click();
+    await expect(page.getByTestId("rfq-refusal")).toBeVisible();
+    await expect(page.getByTestId("rfq-refusal")).toContainText("not built yet");
   });
 
   test("both halt states are reachable without the agents service", async ({ page }) => {
@@ -785,5 +794,236 @@ test.describe("the golden path", () => {
     await expect(page.getByTestId("holding")).toHaveCount(1);
 
     expect(traffic.paths()).not.toContain("/fill");
+  });
+});
+
+/**
+ * Issue #31 -- the RFQ door: naming a strike the book does not offer.
+ *
+ * Unlike the Card confirmation, this journey has no success path to walk: /rfq always
+ * answers 501, on purpose. So what these tests hold is the honesty of the refusal --
+ * that it reads as an answer to what was actually asked, states plainly that nothing
+ * moved, and never dresses itself up as a pending trade -- alongside the same shape
+ * and accessibility bar every other dialog on this surface is held to.
+ */
+test.describe("the RFQ door", () => {
+  test.beforeEach(async ({ page }) => {
+    await stubApi(page);
+  });
+
+  test("sits above the Deck's own cards, reachable without scrolling past them", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByTestId("card").first()).toBeVisible();
+
+    const door = page.getByTestId("rfq-door");
+    await expect(door).toBeVisible();
+    await expect(door).toContainText("Name your own strike");
+
+    // The claim is about POSITION relative to the card grid a Deck can grow to any
+    // length -- not about the page's initial fold, which issue #32 (not yet landed)
+    // owns. The door sits in the chips row, above every Card, so reaching it never
+    // means scrolling past them the way a control placed after the grid would.
+    const doorBox = (await door.boundingBox())!;
+    const firstCardBox = (await page.getByTestId("card").first().boundingBox())!;
+    expect(doorBox.y).toBeLessThan(firstCardBox.y);
+  });
+
+  test("is styled distinctly from a Card -- dashed, not a filled tile", async ({ page }) => {
+    await page.goto("/");
+    const borderStyle = await page.getByTestId("rfq-door").evaluate((el) => getComputedStyle(el).borderStyle);
+    expect(borderStyle).toBe("dashed");
+  });
+
+  test("opens the same shape of confirmation a Card opens", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    const modal = page.getByTestId("rfq-modal");
+    await expect(modal).toBeVisible();
+    await expect(modal).toHaveAttribute("role", "dialog");
+    await expect(modal).toHaveAttribute("aria-modal", "true");
+    await expect(page.getByTestId("rfq-submit")).toHaveCount(1);
+    await expect(page.getByTestId("rfq-cancel")).toHaveCount(1);
+  });
+
+  test("the strike slider is a percentage from spot, and the belief sentence updates as it is dragged", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    const slider = page.getByTestId("rfq-strike-slider");
+    await expect(slider).toHaveAttribute("min", "-30");
+    await expect(slider).toHaveAttribute("max", "30");
+    await expect(slider).toHaveAttribute("step", "0.5");
+    await expect(slider).toHaveAttribute("aria-label", "Strike, as a percentage from spot");
+
+    const before = await page.getByTestId("rfq-belief").innerText();
+    await slider.focus();
+    await page.keyboard.press("ArrowRight");
+    const after = await page.getByTestId("rfq-belief").innerText();
+    expect(after).not.toBe(before);
+    await expect(page.getByTestId("rfq-offset-readout")).toContainText("%");
+  });
+
+  test("never prints a dollar strike while dragging -- only the percentage the slider itself names", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    const slider = page.getByTestId("rfq-strike-slider");
+    await slider.focus();
+    for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowRight");
+
+    // Nobody has priced this strike -- server included -- so nothing in the belief
+    // sentence or the live offset readout may be a dollar figure, dragging or not.
+    await expect(page.getByTestId("rfq-belief")).not.toContainText("$");
+    await expect(page.getByTestId("rfq-offset-readout")).not.toContainText("$");
+  });
+
+  test("expiry is offered in tenors longer than the book, under a note that the book stops at 3 days", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    for (const days of [7, 14, 30, 60]) {
+      await expect(page.getByTestId(`rfq-tenor-${days}`)).toBeVisible();
+    }
+    await expect(page.getByTestId("rfq-modal")).toContainText("book stops at 3 days");
+
+    await page.getByTestId("rfq-tenor-30").click();
+    await expect(page.getByTestId("rfq-tenor-30")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("rfq-belief")).toContainText("30 days");
+  });
+
+  test("shows no premium and no Implied Chance -- both explicitly unpriced, never simply absent", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    await expect(page.getByTestId("rfq-premium")).toBeVisible();
+    await expect(page.getByTestId("rfq-premium")).toHaveText("not priced yet");
+    await expect(page.getByTestId("rfq-chance")).toBeVisible();
+    await expect(page.getByTestId("rfq-chance")).toHaveText("not priced yet");
+  });
+
+  test("shows Max Loss, and states the size is a reserve price enforced on-chain", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    await expect(page.getByTestId("rfq-max-loss")).toBeVisible();
+    await expect(page.getByTestId("rfq-max-loss")).toHaveText("$2");
+    await expect(page.getByTestId("rfq-reserve-note")).toContainText("reserve price");
+    await expect(page.getByTestId("rfq-reserve-note")).toContainText("enforced on-chain");
+  });
+
+  test("submitting surfaces the 501, stating nothing was sent, signed or spent -- never a pending state", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    await expect(page.getByTestId("rfq-refusal")).toHaveCount(0);
+    await page.getByTestId("rfq-submit").click();
+
+    const refusal = page.getByTestId("rfq-refusal");
+    await expect(refusal).toBeVisible();
+    await expect(refusal).toHaveAttribute("role", "alert");
+    await expect(refusal).toContainText("501");
+    await expect(refusal).toContainText("not built yet");
+    await expect(refusal).toContainText("Nothing was sent to a maker");
+    await expect(refusal).toContainText("nothing was signed");
+    await expect(refusal).toContainText("no USDC moved");
+
+    // Never a fake pending state: no receipt, no holding, no request to either route
+    // that would move money or open even a practised Position.
+    await expect(page.getByTestId("receipt")).toHaveCount(0);
+    await expect(page.getByTestId("practice-receipt")).toHaveCount(0);
+    expect(traffic.paths()).not.toContain("/fill");
+    expect(traffic.paths()).not.toContain("/practice");
+  });
+
+  test("the refusal echoes back exactly what was asked for", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    await page.getByTestId("rfq-tenor-14").click();
+    await page.getByTestId("rfq-size-preset-2").click();
+    await page.getByTestId("rfq-submit").click();
+
+    // ETH falls by default (direction DOWN), so the door opens 10% below the fixture's
+    // $2,445.49 spot -- $2,200.94, formatted the way `apps/api/src/format.ts` formats it.
+    await expect(page.getByTestId("rfq-refusal")).toContainText(
+      "You asked for: ETH below $2,200.94, 14 days, at most $2.00."
+    );
+  });
+
+  test("issues no additional request after a refusal, however hard Request quotes is clicked", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+    await page.getByTestId("rfq-submit").click();
+    await expect(page.getByTestId("rfq-refusal")).toBeVisible();
+
+    const before = traffic.paths().filter((p) => p === "/rfq").length;
+    await page.getByTestId("rfq-submit").click({ force: true }).catch(() => {});
+    expect(traffic.paths().filter((p) => p === "/rfq").length).toBe(before);
+  });
+
+  test("Escape dismisses, and returns focus to the door that opened it", async ({ page }) => {
+    await page.goto("/");
+    const door = page.getByTestId("rfq-door");
+    await door.click();
+    await expect(page.getByTestId("rfq-modal")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("rfq-modal")).toHaveCount(0);
+    await expect(door).toBeFocused();
+  });
+
+  test("a backdrop click dismisses", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    await page.getByTestId("rfq-scrim").click({ position: { x: 2, y: 2 } });
+    await expect(page.getByTestId("rfq-modal")).toHaveCount(0);
+  });
+
+  test("the empty-Deck message points at this door and opens the same dialog", async ({ page }) => {
+    await stubApi(page, "empty");
+    await page.goto("/");
+    await expect(page.getByTestId("empty-rfq")).toBeEnabled();
+
+    await page.getByTestId("empty-rfq").click();
+    await expect(page.getByTestId("rfq-modal")).toBeVisible();
+  });
+
+  test("traps focus inside the dialog, the slider included", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    const dialog = page.getByTestId("rfq-modal");
+    const focusable = dialog.locator('button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])');
+    const count = await focusable.count();
+    expect(count).toBeGreaterThan(1);
+
+    await focusable.first().focus();
+    await page.keyboard.press("Shift+Tab");
+    await expect(focusable.last()).toBeFocused();
+
+    await page.keyboard.press("Tab");
+    await expect(focusable.first()).toBeFocused();
+  });
+
+  test("has no critical or serious accessibility violations, open or refused", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    const opened = await new AxeBuilder({ page }).analyze();
+    expect(
+      opened.violations.filter((v) => v.impact === "critical" || v.impact === "serious").map((v) => v.id)
+    ).toEqual([]);
+
+    await page.getByTestId("rfq-submit").click();
+    await expect(page.getByTestId("rfq-refusal")).toBeVisible();
+
+    const refused = await new AxeBuilder({ page }).analyze();
+    expect(
+      refused.violations.filter((v) => v.impact === "critical" || v.impact === "serious").map((v) => v.id)
+    ).toEqual([]);
   });
 });

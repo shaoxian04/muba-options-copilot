@@ -29,12 +29,15 @@ export function Chips({
   horizonDays,
   onDirection,
   onHorizon,
+  onOpenRfq,
 }: {
   deck: Deck | null;
   direction: Direction;
   horizonDays: number;
   onDirection: (d: Direction) => void;
   onHorizon: (h: number) => void;
+  /** Issue #31 -- the door that names your own strike, joined to the end of this row. */
+  onOpenRfq: () => void;
 }) {
   const expiries: ExpiryOption[] = deck?.expiries ?? [];
   const asset = deck?.assetName ?? "it";
@@ -81,6 +84,16 @@ export function Chips({
           </button>
         ))}
       </div>
+
+      {/*
+        Issue #31 -- the door that names your own strike, at the end of this row so it
+        is reachable without scrolling past the Deck. `.rfqbtn` styles it distinctly
+        from a Card and from the chips beside it: dashed rather than filled, so it
+        reads as "ask for something" rather than "pick one of these".
+      */}
+      <button type="button" className="rfqbtn" onClick={onOpenRfq} data-testid="rfq-door">
+        <i aria-hidden="true">+</i> Name your own strike
+      </button>
     </div>
   );
 }

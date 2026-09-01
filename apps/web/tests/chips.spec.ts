@@ -167,3 +167,33 @@ test.describe("expiry chips", () => {
     expect(serious.map((v) => `${v.id}: ${v.description}`)).toEqual([]);
   });
 });
+
+/**
+ * Issue #31 -- the door that names your own strike joins the end of this row. The
+ * door's own behaviour (the dialog it opens, the refusal it leads to) is covered in
+ * `journeys.spec.ts`; what belongs here is its presence and position IN the row this
+ * file already owns.
+ */
+test.describe("the RFQ door, in the chip row", () => {
+  test("is the last thing in the row, after every expiry chip", async ({ page }) => {
+    await stubApi(page);
+    await page.goto("/");
+    await expect(page.getByTestId("card").first()).toBeVisible();
+
+    const kids = await page.locator(".chips > *").evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")));
+    const door = kids.indexOf("rfq-door");
+    expect(door).toBeGreaterThan(-1);
+    expect(door).toBe(kids.length - 1);
+  });
+
+  test("stays put as direction and expiry change", async ({ page }) => {
+    await stubApi(page);
+    await page.goto("/");
+
+    await page.getByTestId("direction-UP").click();
+    await expect(page.getByTestId("rfq-door")).toBeVisible();
+
+    await page.getByTestId("rail-SOL").click();
+    await expect(page.getByTestId("rfq-door")).toBeVisible();
+  });
+});

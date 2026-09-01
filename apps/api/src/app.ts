@@ -29,6 +29,7 @@ import { buildDepth } from "./thetanuts/depth-view.js";
 import { marketOverview } from "./thetanuts/markets.js";
 import { reviewIntent } from "./agents/review.js";
 import { practiceRoutes, practiceHoldings } from "./practice.js";
+import { rfqRoutes } from "./rfq.js";
 import { realHoldings } from "./thetanuts/holdings.js";
 import { usd } from "./format.js";
 import { executeFill, RiskBudgetExceeded, UnsafeOrder } from "./thetanuts/execute.js";
@@ -407,6 +408,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.get("/forecast/risk-benefit", { config: COST_ROUTE_LIMIT }, forecast(assessRiskBenefit));
 
   await app.register(practiceRoutes);
+  await app.register(rfqRoutes);
 
   return app;
 }

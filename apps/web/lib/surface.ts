@@ -17,7 +17,7 @@
  *     A Trader is told before they confirm, never after.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ExpiryOption, Figure, UnderlyingSymbol } from "@copilot/shared";
+import type { ExpiryOption, Figure, RfqTenorDays, UnderlyingSymbol } from "@copilot/shared";
 import {
   ApiRefusal,
   fill,
@@ -28,6 +28,7 @@ import {
   getSession,
   practice,
   propose,
+  requestRfq,
   type Board,
   type Card,
   type Deck,
@@ -37,6 +38,7 @@ import {
   type ProposeResult,
   type SessionState,
 } from "./api";
+import { clampSizeUsdc, rfqSizeCapUsdc } from "./geometry";
 
 /** Trades of 1-2 USDC are normal and expected for this product. */
 export const STAKE_USDC = 2;
@@ -66,6 +68,33 @@ export const SIZE_PRESETS_USDC: SizePreset[] = [
 /** The stepper's floor and its step, in USDC. */
 export const SIZE_MIN_USDC = 0.5;
 export const SIZE_STEP_USDC = 0.5;
+
+/**
+ * The RFQ door's strike slider (issue #31): how far either side of spot it reaches,
+ * and its step. Both in percent -- the slider never trades in dollars, because there
+ * is no dollar strike anywhere until the server derives one for the refusal's own
+ * echoed sentence.
+ */
+export const RFQ_STRIKE_BAND_PCT = 30;
+export const RFQ_STRIKE_STEP_PCT = 0.5;
+
+/**
+ * The RFQ's tenor grid. Mirrors `RFQ_TENOR_DAYS` in `@copilot/shared` exactly --
+ * `rfq.test.ts` (API) and this file cannot silently drift, because both are four
+ * literal numbers, not a derivation.
+ *
+ * Duplicated rather than imported as a VALUE from the shared package on purpose.
+ * Every existing import of `@copilot/shared` from `apps/web` is `import type`, which
+ * TypeScript erases before webpack ever sees it; pulling in a real export here would
+ * be the first runtime import of that package's `index.ts` from the client bundle,
+ * and Next's webpack cannot resolve the `.js`-suffixed `export * from "./forecast.js"`
+ * partway down that file outside a `moduleResolution: bundler` typecheck -- a build
+ * that fails at `next build`, not at `tsc`. Keeping this literal here sidesteps a
+ * webpack config change under this ticket, and as a side effect keeps ADR-0005's
+ * quarantine airtight: no code path exists by which `forecast.ts` could ever reach
+ * the client bundle at all.
+ */
+export const RFQ_TENOR_DAYS: readonly RfqTenorDays[] = [7, 14, 30, 60];
 
 /** The tape has to look alive without hammering a route that reads the chain. */
 const DECK_POLL_MS = 6000;
@@ -151,6 +180,26 @@ export interface Surface {
   /** A Practice Run opened for the confirmation currently on screen. */
   practiceDone: boolean;
 
+  /**
+   * Whether the RFQ door's dialog is open (issue #31). Two openers share it -- the
+   * door beside the direction and expiry chips, and the empty-Deck message's own
+   * button -- so an empty market is a next step rather than a dead end.
+   */
+  rfqOpen: boolean;
+  /**
+   * The strike slider's committed offset from spot, signed, in percent. Set on the
+   * slider's release, never its drag -- and never resolved to a dollar strike
+   * anywhere in the browser. Only the server may do that arithmetic, and only inside
+   * the 501 refusal's own echoed sentence.
+   */
+  rfqOffsetPct: number;
+  rfqHorizonDays: RfqTenorDays;
+  /** The RFQ's own stake. Shares `SIZE_PRESETS_USDC`/`SIZE_MIN_USDC` with the Card confirmation, capped differently (`rfqSizeCapUsdc`) because there is no Maker Depth yet to bind against. */
+  rfqSizeUsdc: number;
+  rfqBusy: boolean;
+  /** The 501's own sentence, once asked for. Shown verbatim -- never composed here. */
+  rfqRefusal: string | null;
+
   session: SessionState | null;
   board: Board | null;
   receipt: FillReceipt | null;
@@ -174,6 +223,18 @@ export interface Surface {
   runPractice: () => Promise<void>;
   /** Escape, the backdrop, or the close button. Clears the flow; does not reload the Deck. */
   closeConfirm: () => void;
+
+  /** Opens the RFQ dialog (issue #31), reset to sensible defaults for the current direction. */
+  openRfq: () => void;
+  /** The strike slider's release. Never called mid-drag -- the live value stays local to `RfqModal`. */
+  setRfqOffset: (pct: number) => void;
+  setRfqTenor: (days: RfqTenorDays) => void;
+  /** A server round trip is neither possible nor needed here -- nothing is priced yet, so this only clamps and stores. */
+  setRfqSize: (usdc: number) => void;
+  /** POST /rfq. Always ends in a 501; there is no success path to render. */
+  submitRfq: () => Promise<void>;
+  closeRfq: () => void;
+
   say: (text: string) => void;
   reset: () => void;
 }
@@ -259,6 +320,13 @@ export function useSurface(): Surface {
   const [sizeUsdc, setSizeUsdcState] = useState<number>(STAKE_USDC);
   const [practiceDone, setPracticeDone] = useState(false);
 
+  const [rfqOpen, setRfqOpen] = useState(false);
+  const [rfqOffsetPct, setRfqOffsetPctState] = useState(-10);
+  const [rfqHorizonDays, setRfqHorizonDaysState] = useState<RfqTenorDays>(14);
+  const [rfqSizeUsdc, setRfqSizeUsdcState] = useState<number>(STAKE_USDC);
+  const [rfqBusy, setRfqBusy] = useState(false);
+  const [rfqRefusal, setRfqRefusal] = useState<string | null>(null);
+
   const [session, setSession] = useState<SessionState | null>(null);
   const [board, setBoard] = useState<Board | null>(null);
   const [receipt, setReceipt] = useState<FillReceipt | null>(null);
@@ -295,6 +363,9 @@ export function useSurface(): Surface {
    * earlier, before `disabled` has reached the DOM at all.
    */
   const openerElRef = useRef<HTMLElement | null>(null);
+
+  /** The same capture, for the RFQ dialog (issue #31) -- see `openerElRef` above. */
+  const rfqOpenerElRef = useRef<HTMLElement | null>(null);
 
   const loadDeck = useCallback(
     async (a: UnderlyingSymbol, d: Direction, h: number, { spinner = false } = {}): Promise<Deck | null> => {
@@ -418,6 +489,91 @@ export function useSurface(): Surface {
     clearSelection();
     opener?.focus?.();
   }, [clearSelection]);
+
+  /**
+   * Opens the RFQ door's dialog (issue #31), from either opener -- the door beside the
+   * chips or the empty-Deck button.
+   *
+   * Reset to sensible defaults every time it opens, the same way `pick()` resets the
+   * confirmation's size: a stale offset or tenor from a dialog closed minutes ago is
+   * not a request the Trader is making now. The default offset leans the way the
+   * current `direction` already points -- a Falls belief starts the slider below
+   * spot, a Rises belief above it -- so the first thing the Trader sees is a strike
+   * that agrees with what they already told the surface, not one they have to drag
+   * past zero first.
+   */
+  const openRfq = useCallback(() => {
+    rfqOpenerElRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setRfqOffsetPctState(direction === "DOWN" ? -10 : 10);
+    setRfqHorizonDaysState(14);
+    setRfqSizeUsdcState(STAKE_USDC);
+    setRfqRefusal(null);
+    setRfqOpen(true);
+  }, [direction]);
+
+  /**
+   * The strike slider's release (issue #31). Never called mid-drag -- the live value
+   * while dragging stays local to `RfqModal`, so a pixel of pointer movement does not
+   * re-render the whole surface. This is the one number an RFQ carries that the
+   * browser originates itself, and it is never resolved to a dollar figure here: only
+   * the server may do that, and only inside the 501's own echoed sentence.
+   */
+  const setRfqOffset = useCallback((pct: number) => {
+    setRfqOffsetPctState(pct);
+  }, []);
+
+  const setRfqTenor = useCallback((days: RfqTenorDays) => {
+    setRfqHorizonDaysState(days);
+  }, []);
+
+  /**
+   * The RFQ's own size control. Unlike `setSize` above, this is not a server round
+   * trip -- there is no Order to re-price, because nothing has been quoted yet. It
+   * only clamps against `rfqSizeCapUsdc` (the Risk Budget remaining; there is no
+   * Maker Depth to bind against for a contract that does not exist) and stores the
+   * result, the same way `sizeUsdc` itself is a request parameter rather than a
+   * figure a Trader reads.
+   */
+  const setRfqSize = useCallback(
+    (usdc: number) => {
+      const cap = rfqSizeCapUsdc(session?.remainingUsdc ?? 0);
+      setRfqSizeUsdcState(clampSizeUsdc(usdc, SIZE_MIN_USDC, cap));
+    },
+    [session]
+  );
+
+  /**
+   * POST /rfq. Always answers 501 -- the sealed-bid backend is out of scope (issue
+   * #31) -- so there is no success branch to render, only the refusal's own sentence,
+   * shown the way the Card confirmation shows a Risk Budget refusal: never a fake
+   * pending state.
+   */
+  const submitRfq = useCallback(async () => {
+    setRfqBusy(true);
+    setRfqRefusal(null);
+    try {
+      await requestRfq({
+        underlying: asset,
+        direction,
+        strikeOffsetPct: rfqOffsetPct,
+        horizonDays: rfqHorizonDays,
+        sizeUsdc: rfqSizeUsdc,
+      });
+    } catch (e) {
+      if (e instanceof ApiRefusal) setRfqRefusal(e.message);
+      else throw e;
+    } finally {
+      setRfqBusy(false);
+    }
+  }, [asset, direction, rfqOffsetPct, rfqHorizonDays, rfqSizeUsdc]);
+
+  /** Escape, the backdrop, or the close button. Focus returns to whichever door opened it. */
+  const closeRfq = useCallback(() => {
+    const opener = rfqOpenerElRef.current;
+    setRfqOpen(false);
+    setRfqRefusal(null);
+    opener?.focus?.();
+  }, []);
 
   /**
    * Pick an Underlying. The picker is the source of truth; the chat does not drive it.
@@ -654,6 +810,12 @@ export function useSurface(): Surface {
     confirmOpen,
     sizeUsdc,
     practiceDone,
+    rfqOpen,
+    rfqOffsetPct,
+    rfqHorizonDays,
+    rfqSizeUsdc,
+    rfqBusy,
+    rfqRefusal,
     session,
     board,
     receipt,
@@ -668,6 +830,12 @@ export function useSurface(): Surface {
     confirm,
     runPractice,
     closeConfirm,
+    openRfq,
+    setRfqOffset,
+    setRfqTenor,
+    setRfqSize,
+    submitRfq,
+    closeRfq,
     say,
     reset,
   };

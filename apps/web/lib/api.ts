@@ -12,12 +12,12 @@
  */
 import type {
   Card, Deck, DepthView, ExpiryOption, Figure, Holding,
-  MarketOverview, MarketRow, ProposeResult, UnderlyingSymbol,
+  MarketOverview, MarketRow, ProposeResult, RfqTenorDays, UnderlyingSymbol,
 } from "@copilot/shared";
 
 export type {
   Card, Deck, DepthView, ExpiryOption, Figure, Holding,
-  MarketOverview, MarketRow, ProposeResult, UnderlyingSymbol,
+  MarketOverview, MarketRow, ProposeResult, RfqTenorDays, UnderlyingSymbol,
 };
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:3001";
@@ -187,3 +187,21 @@ export const fill = (proposalId: string): Promise<FillReceipt> =>
  */
 export const practice = (proposalId: string): Promise<{ holding: Holding }> =>
   call<{ holding: Holding }>("/practice", { method: "POST", body: JSON.stringify({ proposalId }) });
+
+/**
+ * Name a strike the book does not offer (issue #31).
+ *
+ * This always throws `ApiRefusal(501, ...)` -- the sealed-bid RFQ backend is out of
+ * scope, and this route exists to refuse honestly rather than pretend a maker is
+ * pricing anything. `strikeOffsetPct` is the slider's own raw number, never resolved
+ * to a dollar strike in this file or anywhere else in the browser: only the server,
+ * which alone holds live spot, may turn it into one, and it does that only inside the
+ * refusal's own echoed sentence.
+ */
+export const requestRfq = (body: {
+  underlying: UnderlyingSymbol;
+  direction: "UP" | "DOWN";
+  strikeOffsetPct: number;
+  horizonDays: RfqTenorDays;
+  sizeUsdc: number;
+}): Promise<never> => call<never>("/rfq", { method: "POST", body: JSON.stringify(body) });

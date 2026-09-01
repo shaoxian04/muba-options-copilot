@@ -517,6 +517,18 @@ export function sizeCapUsdc(remainingUsdc: number, depthUsdc: number): number {
 }
 
 /**
+ * The RFQ's size ceiling (issue #31): the Risk Budget remaining, and nothing else.
+ *
+ * A Card's cap above additionally binds against Maker Depth, because a size deeper
+ * than the maker will go cannot be filled. An RFQ has no maker and no depth yet -- the
+ * Trader's size stands as the reserve price a future Offer must respect, so the only
+ * ceiling that exists before any quote comes back is the Risk Budget itself.
+ */
+export function rfqSizeCapUsdc(remainingUsdc: number): number {
+  return Math.max(0, remainingUsdc);
+}
+
+/**
  * Snap a requested size into `[min, cap]`, for the stepper's +/- and for a preset that
  * would otherwise overshoot the ceiling above. When the ceiling sits below the floor
  * (a Risk Budget or a Maker Depth too thin for even the smallest step) there is no

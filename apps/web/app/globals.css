@@ -445,6 +445,39 @@ button[disabled] {
   background: var(--line);
 }
 
+/*
+  Issue #31 -- the door that names your own strike, pushed to the end of the chips
+  row with `margin-left: auto`. Dashed rather than filled and never a solid pill, so
+  it reads as "ask for something" and not as one more chip to press -- deliberately
+  distinct from both the direction chips and a Card.
+*/
+.chips .rfqbtn {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 13px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  transition: 0.12s;
+  white-space: nowrap;
+}
+.chips .rfqbtn:hover {
+  border-color: var(--warn);
+  color: var(--ink);
+  background: var(--surface);
+}
+.chips .rfqbtn i {
+  font-style: normal;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--warn);
+}
+
 .exp {
   display: flex;
   gap: 2px;
@@ -1668,4 +1701,66 @@ button[disabled] {
   color: var(--ink);
   border: 1px dashed var(--ink-3);
   font-weight: 500;
+}
+
+/* ==================================================================================
+ * The RFQ dialog (issue #31). Shares every rule above -- `.modal`, `.belief`, `.ctl`,
+ * `.presets`, `.bud`, `dl`/`dt`/`dd`, `.receipt`, `footer .btn` -- and adds only what
+ * a Card's confirmation never needed: the strike slider and its scale, a wider preset
+ * row for four tenor chips instead of five sizes, and a muted `dd` for "not priced
+ * yet".
+ * ================================================================================== */
+
+/* The strike slider. A native <input type="range">, so it is keyboard-operable by
+   construction rather than by extra wiring. */
+.ctl input.slider {
+  width: 100%;
+  margin-top: 6px;
+  accent-color: var(--hue);
+}
+.ctl .scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  font-size: 10px;
+  /* --ink-2, not --ink-3: at this size --ink-3 fails WCAG AA (see the same note by .strip .axis). */
+  color: var(--ink-2);
+  font-family: "IBM Plex Mono", monospace;
+}
+.ctl .scale .mid {
+  color: var(--warn);
+  font-weight: 600;
+}
+.ctl .off {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.ctl .off b {
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--warn);
+}
+
+/* Four tenor chips rather than five size presets -- its own row width so neither
+   grid inherits a gap sized for the other. */
+.presets.wide {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+/* Premium and Chance it pays, RFQ-side: present but explicitly unpriced, never
+   simply absent. --ink-2, not --ink-3: at this size --ink-3 fails WCAG AA (see the
+   same note by .strip .axis). */
+.modal dd.muted {
+  color: var(--ink-2);
+  font-style: italic;
+  font-weight: 500;
+}
+
+/* The reserve-price paragraph -- why Max Loss is shown when nothing else is. */
+.mnote {
+  margin: 14px 18px 0;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  line-height: 1.5;
 }

@@ -24,6 +24,7 @@ import { DepthChart } from "../components/DepthChart";
 import { EmptyDeck, VetoScreen } from "../components/Halt";
 import { PayoffStrip } from "../components/PayoffStrip";
 import { Rail } from "../components/Rail";
+import { RfqModal } from "../components/RfqModal";
 import { Tape } from "../components/Tape";
 import { agentGate, useNow, useSurface } from "../lib/surface";
 
@@ -95,6 +96,7 @@ export default function Page() {
                 : s.deck?.message ?? "No maker is quoting this right now."
             }
             onRetry={s.reset}
+            onRfq={s.openRfq}
           />
         ) : (
           <>
@@ -112,6 +114,7 @@ export default function Page() {
                     horizonDays={s.horizonDays}
                     onDirection={s.setDirection}
                     onHorizon={s.setHorizon}
+                    onOpenRfq={s.openRfq}
                   />
 
                   {proposal ? (
@@ -176,6 +179,29 @@ export default function Page() {
             />
           </>
         )}
+
+        {/*
+          Issue #31 -- mounted outside the branch above, deliberately: the RFQ door
+          opens this from the chips row (the normal Deck) AND from the empty-Deck
+          message (a different branch entirely), so it cannot live inside either one.
+        */}
+        <RfqModal
+          open={s.rfqOpen}
+          asset={s.asset}
+          direction={s.direction}
+          spot={s.deck?.spotUsd ?? null}
+          offsetPct={s.rfqOffsetPct}
+          horizonDays={s.rfqHorizonDays}
+          sizeUsdc={s.rfqSizeUsdc}
+          session={s.session}
+          busy={s.rfqBusy}
+          refusal={s.rfqRefusal}
+          onOffsetCommit={s.setRfqOffset}
+          onTenor={s.setRfqTenor}
+          onResize={s.setRfqSize}
+          onSubmit={() => void s.submitRfq()}
+          onClose={s.closeRfq}
+        />
       </div>
     </main>
   );
