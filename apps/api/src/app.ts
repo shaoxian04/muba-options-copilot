@@ -19,8 +19,9 @@ import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
 import { ProposeRequest, UnderlyingSymbol, MAX_HORIZON_DAYS, type ProposeResult } from "@copilot/shared";
 import { canSign } from "./thetanuts/client.js";
-import { buyableOrders, impliedVol, daysToExpiry, orderIdentity, PUT } from "./thetanuts/orders.js";
-import { spotPrice } from "./thetanuts/market.js";
+import { buyableOrders, daysToExpiry, orderIdentity, PUT } from "./thetanuts/orders.js";
+import { impliedMovePct } from "./thetanuts/implied-move.js";
+import { spotPrice, spotPrices } from "./thetanuts/market.js";
 import { UnknownUnderlying } from "./thetanuts/underlyings.js";
 import { proposeTrade, proposeChosenOrder, NoSuitableOrder, QuoteMoved } from "./thetanuts/propose.js";
 import { buildDeck } from "./thetanuts/deck.js";
@@ -71,6 +72,9 @@ const apiToken = (): string | undefined => process.env.COPILOT_API_TOKEN || unde
  * repeat one that will drift.
  */
 export const COST_ROUTE_MAX_PER_MINUTE = 30;
+
+/** The period `/book` quotes its Implied Move over. A week reads as "the near future". */
+const BOOK_MOVE_DAYS = 7;
 const COST_ROUTE_LIMIT = { rateLimit: { max: COST_ROUTE_MAX_PER_MINUTE, timeWindow: "1 minute" } };
 
 /**
@@ -154,15 +158,16 @@ export async function buildApp(): Promise<FastifyInstance> {
     // Same `spotPrice` the Deck and the board read, so the tape and a Card can never
     // disagree about what ETH costs for any reason but the seconds between two polls.
     const [orders, spot] = await Promise.all([buyableOrders("ETH"), spotPrice("ETH").catch(() => null)]);
-    const ivs = orders.map(impliedVol).filter((v): v is number => typeof v === "number");
-    const iv = ivs.length ? ivs.reduce((a, b) => a + b, 0) / ivs.length : undefined;
     return {
       spotUsd: spot,
       buyable: orders.length,
       puts: orders.filter((o) => o.order.optionType === PUT).length,
       calls: orders.filter((o) => o.order.optionType !== PUT).length,
       soonestExpiryDays: orders.length ? Math.min(...orders.map(daysToExpiry)) : null,
-      impliedMovePct: iv ? Number((iv * Math.sqrt(7 / 365) * 100).toFixed(1)) : null,
+      // Derived in `implied-move.ts` with every other reading of this idea, rather than
+      // inline here. This route and /depth quoting different numbers for "the Implied
+      // Move" is exactly what one home prevents.
+      impliedMovePct: impliedMovePct(orders, BOOK_MOVE_DAYS),
     };
   });
 
@@ -363,11 +368,19 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.get("/positions", async (req) => {
     const session = sessionFor(req.headers);
-    const spot = await spotPrice("ETH").catch(() => null);
+    // EVERY Underlying's spot, because the board can hold Positions on any of them. It
+    // used to read ETH's and value all six against it, which marked a BTC holding at
+    // `max(0, ETH_spot - BTC_strike)` -- zero, however deep in the money it really was.
+    const prices = await spotPrices().catch(() => ({}) as Record<string, number>);
 
-    const [real, address] = canSign() ? await realHoldings(spot) : [[], null];
+    const [real, address] = canSign() ? await realHoldings(prices) : [[], null];
 
-    return { address, spotUsd: spot === null ? null : usd(spot), holdings: [...real, ...practiceHoldings(session, spot)] };
+    return {
+      address,
+      // The headline price stays ETH's: it labels the tape, not any one holding.
+      spotUsd: prices.ETH === undefined ? null : usd(prices.ETH),
+      holdings: [...real, ...practiceHoldings(session, prices)],
+    };
   });
 
   /**

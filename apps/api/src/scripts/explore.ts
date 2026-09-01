@@ -45,7 +45,10 @@ async function main() {
     const mine = all.filter((o) => isOn(o, u));
     const wouldSell = mine.filter((o) => !isBuyable(o));
     const wrongCollateral = mine.filter((o) => isBuyable(o) && !isUsdcCollateral(o));
-    const mineBuyable = await buyableOrders(u.symbol);
+    // Filtered from the book already in hand, not re-fetched: `buyableOrders` per
+    // Underlying would be six more full reads for numbers this loop can already see.
+    // The same three checks, from the same door.
+    const mineBuyable = mine.filter((o) => isBuyable(o) && isUsdcCollateral(o));
     const puts = mineBuyable.filter((o) => o.order.optionType === PUT);
     const calls = mineBuyable.filter((o) => o.order.optionType !== PUT);
     const days = (xs: typeof mineBuyable) =>

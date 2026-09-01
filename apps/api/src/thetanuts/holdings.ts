@@ -1,6 +1,9 @@
 /**
  * What the chain says the Trader holds, mapped onto the board's shape.
  *
+ * Each Position is valued against ITS OWN Underlying's spot, looked up by the price feed
+ * the indexer records on it -- see `toHolding`.
+ *
  * Read fresh on every request. There is no `positions` table and no balance cache, ever
  * (ADR-0003) -- if the board feels slow, the fix is a loading state, not a cache. This
  * module is the only place indexer data becomes a Holding, so the mapping lives in one
@@ -25,7 +28,7 @@ import { usd, contracts as fmtContracts, moment } from "../format.js";
  * not come from here -- and rendering one on this board would put a Max Loss beside it
  * that is not true. It is omitted, not mislabelled.
  */
-export async function realHoldings(spot: number | null): Promise<[Holding[], string | null]> {
+export async function realHoldings(prices: Record<string, number>): Promise<[Holding[], string | null]> {
   const address = walletAddress();
   if (!address) return [[], null];
 
@@ -33,7 +36,7 @@ export async function realHoldings(spot: number | null): Promise<[Holding[], str
     const api = getClient().api as any;
     const positions: any[] = (await api.getUserPositionsFromIndexer?.(address)) ?? [];
 
-    return [positions.filter((p) => p?.side !== "seller").map((p) => toHolding(p, spot)), address];
+    return [positions.filter((p) => p?.side !== "seller").map((p) => toHolding(p, prices)), address];
   } catch {
     // A wallet or an indexer that will not answer is not a reason to hide the Practice
     // Runs sitting beside it. The board degrades to what it can still tell the truth about.
@@ -41,7 +44,7 @@ export async function realHoldings(spot: number | null): Promise<[Holding[], str
   }
 }
 
-function toHolding(p: any, spot: number | null): Holding {
+function toHolding(p: any, prices: Record<string, number>): Holding {
   const decimals = Number(p.collateralDecimals ?? USDC_DECIMALS);
   // Which Underlying this is, from the feed the Position record carries -- the same
   // identification the book uses. An indexer record that predates the registry, or names
@@ -49,6 +52,15 @@ function toHolding(p: any, spot: number | null): Holding {
   // than being dropped: a Position the Trader actually holds must appear on their board.
   const underlying = underlyingForFeed(p.option?.priceFeed ?? p.priceFeed);
   const dp = underlying?.priceDp ?? 2;
+  /*
+   * This Underlying's own spot, never a single "the" spot.
+   *
+   * The board used to be handed ETH's price and value everything against it, which was
+   * harmless while the book was ETH-only and silently wrong the moment it was not: a BTC
+   * Position marked at ETH's spot reads `max(0, 2450 - 77000)` -- zero, on a holding
+   * that may be deep in the money.
+   */
+  const spot = underlying ? prices[underlying.symbol] : undefined;
   const strike = fromPrice(BigInt(p.option?.strikes?.[0] ?? 0));
   const contracts = Number(p.amount ?? 0) / 10 ** CONTRACT_DECIMALS;
   const paid = Number(p.entryPrice ?? 0) / 10 ** decimals;
@@ -69,7 +81,7 @@ function toHolding(p: any, spot: number | null): Holding {
     currentValueUsdc:
       p.currentValue !== undefined
         ? usd(Number(p.currentValue) / 10 ** decimals)
-        : spot === null
+        : spot === undefined
           ? null
           : usd(intrinsic(strike, contracts, isCall, spot)),
     // A property of the Underlying, never of `isCall`. The ternary this replaces told a

@@ -38,6 +38,7 @@ export interface PracticePosition {
   isCall: boolean;
   payoutAsset: TradeProposal["payoutAsset"];
   direction: TradeProposal["intent"]["direction"];
+  asset: TradeProposal["intent"]["underlying"];
 }
 
 function open(session: Session, proposal: TradeProposal): PracticePosition {
@@ -49,7 +50,22 @@ function open(session: Session, proposal: TradeProposal): PracticePosition {
     breakevenPrice: proposal.figures.breakevenPrice,
     expiry: proposal.figures.expiry,
     openedAt: Date.now(),
-    isCall: proposal.payoutAsset === "WETH",
+    /*
+     * From the DIRECTION, not from the payout asset.
+     *
+     * This read `proposal.payoutAsset === "WETH"` -- the inverse of the ternary issue #23
+     * removed from `pricing.ts` and `holdings.ts`, and it survived because it was written
+     * backwards. It was true only while ETH was the whole book: a BTC call now delivers
+     * WBTC and every cash-settled call settles in USDC, so `isCall` came out FALSE for
+     * five of the six Underlyings and `intrinsicValue` below computed the put payoff for
+     * a call. A Trader practising a SOL call was shown the value of the opposite bet.
+     *
+     * The direction is the fact. `assertExpressesIntent` has already refused any Order
+     * whose option type disagrees with it, so these cannot come apart.
+     */
+    isCall: proposal.intent.direction === "UP",
+    /** Which Underlying, so the board values this against its own spot and not ETH's. */
+    asset: proposal.intent.underlying,
     payoutAsset: proposal.payoutAsset,
     direction: proposal.intent.direction,
   };
@@ -58,15 +74,20 @@ function open(session: Session, proposal: TradeProposal): PracticePosition {
 }
 
 /**
- * What this session's Practice Runs are worth at a given spot.
+ * What this session's Practice Runs are worth right now.
  *
- * `spot` is a parameter rather than something this module fetches, which is what keeps
- * the signer out of reach. Intrinsic value only: what the contract would settle at if
- * the market stopped here. That is an observation, not a Forecast (ADR-0005).
+ * Takes every Underlying's spot, keyed by symbol, and values each holding against its
+ * OWN -- a BTC Position measured at ETH's spot is not a rounding error, it is a
+ * different market. The prices are a parameter rather than something this module
+ * fetches, which is what keeps the signer out of reach. Intrinsic value only: what the
+ * contract would settle at if the market stopped here. An observation, not a Forecast
+ * (ADR-0005).
  */
-export function practiceHoldings(session: Session, spot: number | null): Holding[] {
-  return session.practice.map((p) => ({
-    kind: "PRACTICE" as const,
+export function practiceHoldings(session: Session, prices: Record<string, number>): Holding[] {
+  return session.practice.map((p) => {
+    const spot = prices[p.asset];
+    return {
+      kind: "PRACTICE" as const,
     strike: p.strike,
     contracts: p.contracts,
     premiumUsdc: p.premiumUsdc,
@@ -74,10 +95,12 @@ export function practiceHoldings(session: Session, spot: number | null): Holding
     breakevenPrice: p.breakevenPrice,
     expiry: p.expiry,
     openedAt: moment(new Date(p.openedAt).toISOString()),
-    currentValueUsdc: spot === null ? null : usd(intrinsicValue(p, spot)),
+    // Null rather than a guess when this Underlying is quoting no price.
+    currentValueUsdc: spot === undefined ? null : usd(intrinsicValue(p, spot)),
     payoutAsset: p.payoutAsset,
     direction: p.direction,
-  }));
+    };
+  });
 }
 
 /** What the contract settles at if the market stops here. Never below zero -- we only buy. */
@@ -115,7 +138,7 @@ export async function practiceRoutes(app: FastifyInstance): Promise<void> {
     return {
       // `currentValueUsdc` is null here: valuing a holding needs live spot, and this
       // module cannot reach the chain by design. The board values it -- see /positions.
-      holding: practiceHoldings(session, null).at(-1)!,
+      holding: practiceHoldings(session, {}).at(-1)!,
       // Echoed so the surface can show the ceiling is untouched.
       remainingUsdc: remainingBudget(session),
     };

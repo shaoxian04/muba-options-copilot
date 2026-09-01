@@ -8,13 +8,14 @@
  * is the Trade Agent's job and that service does not exist yet (ADR-0007). A regex here
  * that guessed would be a model originating a selection.
  *
- * Every figure arrives pre-formatted. The only arithmetic on this page is the split
- * bar's two widths, and even those are not computed here: the server ships `callShare`
- * as a proportion and `lib/geometry.ts` -- the module allowed to make coordinates --
- * turns it into a percentage.
+ * Every figure arrives pre-formatted, and this file does no arithmetic whatsoever. The
+ * split bar's two widths and the mark's radii are coordinates, and they come from
+ * `lib/geometry.ts` -- the module allowed to make those. Note that `1 - callShare` would
+ * count: the no-arithmetic check greps for formatters and rounding, so a bare subtraction
+ * is invisible to it, and the rule has to be kept rather than merely be enforced.
  */
 import type { MarketRow, UnderlyingSymbol } from "@copilot/shared";
-import { sharePercent } from "../lib/geometry";
+import { markGeometry, splitBar } from "../lib/geometry";
 
 /**
  * Each Underlying's own colour, used only for its mark.
@@ -46,27 +47,28 @@ const GLYPH: Record<string, string> = { SOL: "◎", BNB: "◆", XRP: "✕", AVAX
  * every row twice.
  */
 function Mark({ symbol, size = 26 }: { symbol: string; size?: number }) {
-  const r = size / 2;
+  const kind = symbol === "ETH" ? "eth" : symbol === "BTC" ? "btc" : "glyph";
+  const g = markGeometry(size, kind);
   const fill = BRAND[symbol] ?? "#7B8794";
 
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true" className="mk">
-      <circle cx={r} cy={r} r={r} fill={fill} />
-      {symbol === "ETH" ? (
-        <g transform={`translate(${r},${r}) scale(${size / 34})`} fill="#fff">
+      <circle cx={g.r} cy={g.r} r={g.r} fill={fill} />
+      {kind === "eth" ? (
+        <g transform={`translate(${g.r},${g.r}) scale(${g.ethScale})`} fill="#fff">
           <path d="M0 -12 L7.2 0.3 L0 4.6 L-7.2 0.3 Z" opacity=".95" />
           <path d="M0 6.1 L7.2 1.8 L0 12 L-7.2 1.8 Z" opacity=".6" />
         </g>
       ) : (
         <text
-          x={r}
-          y={r + size * (symbol === "BTC" ? 0.235 : 0.2)}
+          x={g.r}
+          y={g.baselineY}
           textAnchor="middle"
-          fill={symbol === "BTC" ? "#fff" : "#0A0E14"}
+          fill={kind === "btc" ? "#fff" : "#0A0E14"}
           fontWeight="700"
-          fontSize={size * (symbol === "BTC" ? 0.66 : 0.54)}
+          fontSize={g.fontSize}
         >
-          {symbol === "BTC" ? "₿" : (GLYPH[symbol] ?? symbol.slice(0, 1))}
+          {kind === "btc" ? "₿" : (GLYPH[symbol] ?? symbol.slice(0, 1))}
         </text>
       )}
     </svg>
@@ -111,8 +113,8 @@ export function Rail({
               carries this to a screen reader.
             */}
             <span className="sp" aria-hidden="true">
-              <i style={{ width: sharePercent(m.callShare), background: "var(--call)" }} />
-              <i style={{ width: sharePercent(1 - m.callShare), background: "var(--put)" }} />
+              <i style={{ width: splitBar(m.callShare).call, background: "var(--call)" }} />
+              <i style={{ width: splitBar(m.callShare).put, background: "var(--put)" }} />
             </span>
 
             <span className="sr">

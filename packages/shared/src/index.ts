@@ -32,20 +32,10 @@ export const PayoutAsset = z.enum(["USDC", "WETH", "WBTC"]);
 export type PayoutAsset = z.infer<typeof PayoutAsset>;
 
 /**
- * The wall described in ADR-0001.
- *
- * A TradeIntent is the ONLY thing that crosses from natural language into money.
- * The model produces one of these and nothing else: no order address, no price,
- * no premium, no max loss. Everything downstream is derived by deterministic code
- * from live protocol data.
- *
- * If you are adding a field here that names an Order or carries a number the model
- * chose, stop -- you are undoing ADR-0001.
- */
-/**
  * The Underlyings the book quotes. Mirrors the price-feed registry in
  * `apps/api/src/thetanuts/underlyings.ts`, which is the authority -- this enum is the
- * shape the browser and the wire agree on, and a test holds the two in step.
+ * shape the browser and the wire agree on, and `underlyings.test.ts` holds the two in
+ * step so neither can gain an Underlying the other does not have.
  */
 export const UNDERLYING_SYMBOLS = ["BTC", "ETH", "SOL", "BNB", "XRP", "AVAX"] as const;
 export const UnderlyingSymbol = z.enum(UNDERLYING_SYMBOLS);
@@ -62,6 +52,17 @@ export type UnderlyingSymbol = z.infer<typeof UnderlyingSymbol>;
  */
 export const MAX_HORIZON_DAYS = 90;
 
+/**
+ * The wall described in ADR-0001.
+ *
+ * A TradeIntent is the ONLY thing that crosses from natural language into money.
+ * The model produces one of these and nothing else: no order address, no price,
+ * no premium, no max loss. Everything downstream is derived by deterministic code
+ * from live protocol data.
+ *
+ * If you are adding a field here that names an Order or carries a number the model
+ * chose, stop -- you are undoing ADR-0001.
+ */
 export const TradeIntent = z.object({
   underlying: UnderlyingSymbol,
   direction: z.enum(["UP", "DOWN"]),    // the Trader's view, not an instrument type
@@ -414,11 +415,17 @@ export type DepthStrike = z.infer<typeof DepthStrike>;
 export const DepthStats = z.object({
   spotUsd: Figure,
   /**
-   * How far the market is pricing this Underlying to move over the chosen horizon. An
-   * observation read out of quoted volatility, not a Forecast (ADR-0005). Null when
-   * nothing at that horizon quotes a volatility, and null when no horizon was chosen.
+   * The Implied Move: how far the options market itself is pricing this Underlying to
+   * travel over the chosen period, read out of quoted volatility.
+   *
+   * An observation, not a Forecast, which is why it may sit anywhere (ADR-0005). Called
+   * an Implied Move and never an "expected move" -- CONTEXT.md lists that as a term to
+   * avoid, because it reads as a prediction and this is not one.
+   *
+   * Null when nothing at that horizon quotes a volatility, and null when no horizon was
+   * chosen.
    */
-  expectedMoveUsd: Figure.nullable(),
+  impliedMoveUsd: Figure.nullable(),
   callDepthUsdc: Figure,
   putDepthUsdc: Figure,
   /** Put depth against call depth. Null when nothing is quoting calls. */

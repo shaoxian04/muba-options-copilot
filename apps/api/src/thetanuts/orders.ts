@@ -69,8 +69,18 @@ export const isOn = (o: OrderWithSignature, underlying: Underlying): boolean =>
 export async function buyableOrders(symbol: string): Promise<OrderWithSignature[]> {
   const underlying = requireUnderlying(symbol);
   const all = await getClient().api.fetchOrders();
-  return all.filter((o) => isOn(o, underlying) && isBuyable(o) && isUsdcCollateral(o));
+  return all.filter((o) => isOn(o, underlying) && passesTheDoor(o));
 }
+
+/**
+ * The door itself: the checks every Order must pass, wherever it is being read for.
+ *
+ * One predicate rather than a chain repeated per caller, because "the book has one door"
+ * is about these three checks and a second copy of them is a second door however it is
+ * spelled. Adding a check here reaches every reader; adding it to a chain reaches one.
+ */
+const passesTheDoor = (o: OrderWithSignature): boolean =>
+  underlyingOf(o) !== undefined && isBuyable(o) && isUsdcCollateral(o);
 
 /**
  * The whole buyable book, every registered Underlying at once.
@@ -83,7 +93,7 @@ export async function buyableOrders(symbol: string): Promise<OrderWithSignature[
  */
 export async function buyableEverywhere(): Promise<OrderWithSignature[]> {
   const all = await getClient().api.fetchOrders();
-  return all.filter((o) => underlyingOf(o) !== undefined && isBuyable(o) && isUsdcCollateral(o));
+  return all.filter(passesTheDoor);
 }
 
 /** Implied volatility the maker is quoting, if the indexer supplied it. */

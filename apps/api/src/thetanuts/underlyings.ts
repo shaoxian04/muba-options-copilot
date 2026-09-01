@@ -21,6 +21,16 @@
  * unambiguous.
  */
 
+import type { PayoutAsset, UnderlyingSymbol } from "@copilot/shared";
+
+/**
+ * The symbols, typed. Imported from the shared package rather than re-declared, so the
+ * registry and the wire cannot come to disagree about which Underlyings exist --
+ * `underlyings.test.ts` asserts the two lists match, and this makes a mismatch a
+ * compile error as well.
+ */
+export type { UnderlyingSymbol };
+
 /** Base mainnet, lowercased at rest so a comparison never has to remember to. */
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 export const WETH = "0x4200000000000000000000000000000000000006".toLowerCase();
@@ -29,17 +39,20 @@ export const WBTC = "0x0555E30da8f98308EdB960aa94C0Db47230d2B9c".toLowerCase();
 /**
  * What an option pays out in when it finishes in the money.
  *
- * A property of the UNDERLYING, never of `isCall`. Two places in this codebase derived
- * it as `isCall ? "WETH" : "USDC"`, which is true for ETH and false for the other five:
+ * A property of the UNDERLYING, never of `isCall`. Three places in this codebase derived
+ * it from whether the contract was a call -- true for ETH and false for the other five:
  * a SOL call settles in USDC because there is no SOL on Base to deliver, and a BTC call
  * delivers WBTC. A Trader told they will receive WETH for a SOL call has been lied to by
  * a ternary.
+ *
+ * Re-exported from the shared package rather than declared again here, so the union this
+ * module returns and the one the wire validates cannot drift apart.
  */
-export type PayoutAsset = "USDC" | "WETH" | "WBTC";
+export type { PayoutAsset };
 
 export interface Underlying {
   /** How the rest of the codebase names it, and the key `getMarketData().prices` uses. */
-  symbol: string;
+  symbol: UnderlyingSymbol;
   /** What a Trader reads. */
   name: string;
   /** The Chainlink feed, lowercased. The identity. */
@@ -130,10 +143,12 @@ export const UNDERLYINGS: readonly Underlying[] = [
 ] as const;
 
 /** Every symbol the book opens to, in the order the rail renders them. */
-export const SYMBOLS: readonly string[] = UNDERLYINGS.map((u) => u.symbol);
+export const SYMBOLS: readonly UnderlyingSymbol[] = UNDERLYINGS.map((u) => u.symbol);
 
 const BY_FEED = new Map(UNDERLYINGS.map((u) => [u.feed, u]));
-const BY_SYMBOL = new Map(UNDERLYINGS.map((u) => [u.symbol, u]));
+// Keyed by plain string: the lookups below take untrusted input, and refusing an unknown
+// symbol is their job. Typing the parameter would only move that job to the caller.
+const BY_SYMBOL = new Map<string, Underlying>(UNDERLYINGS.map((u) => [u.symbol, u]));
 
 /** The Underlying a feed prices, or undefined if it is not on the allowlist. */
 export const underlyingForFeed = (feed: string | undefined | null): Underlying | undefined =>

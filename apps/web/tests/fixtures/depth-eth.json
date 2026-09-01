@@ -269,7 +269,7 @@
       "value": 2445.49,
       "display": "$2,445.49"
     },
-    "expectedMoveUsd": {
+    "impliedMoveUsd": {
       "value": 51.53086415318884,
       "display": "$51.53"
     },

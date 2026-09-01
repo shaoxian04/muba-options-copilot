@@ -23,7 +23,7 @@ import { spotPrice } from "./market.js";
 import { requireUnderlying } from "./underlyings.js";
 import { strikeDistance } from "./distance.js";
 import { depthAt, strikeOf } from "./depth.js";
-import { openInterestOrEmpty, type OpenInterest } from "./open-interest.js";
+import { openInterestOrEmpty, heldFigure, type OpenInterest } from "./open-interest.js";
 import { rememberCard, type Session } from "../sessions.js";
 import { usd, percent, count, compactUsd, days as fmtDays, chanceBand, chanceWords } from "../format.js";
 
@@ -97,13 +97,13 @@ export async function buildDeck(session: Session, request: DeckRequest): Promise
   const chances = cards.map((c) => c.impliedChance.value);
 
   return {
-    asset: underlying.symbol as Deck["asset"],
+    asset: underlying.symbol,
     assetName: underlying.name,
     direction,
     horizonDays,
     sizeUsdc,
     spotUsd: usd(spot, underlying.priceDp),
-    expiries: expiriesFor(session, orders, inDirection, {
+    expiries: expiriesFor(orders, inDirection, {
       sizeUsdc, spot, isPut, orders, held, direction, asset: underlying.symbol,
     }),
     expiry: cards[0]?.expiry ?? null,
@@ -132,7 +132,6 @@ export async function buildDeck(session: Session, request: DeckRequest): Promise
  * would strand the Trader on a chip that answers with nothing.
  */
 function expiriesFor(
-  session: Session,
   everything: OrderWithSignature[],
   inDirection: OrderWithSignature[],
   ctx: CardContext & { direction: "UP" | "DOWN"; asset: string }
@@ -143,10 +142,12 @@ function expiriesFor(
     const label = fmtDays(horizonDays).display;
     const cards = inDirection
       .filter((o) => wholeDaysToExpiry(o) === horizonDays)
-      // Counted by actually building them. A cheaper predicate here and the real filter
-      // in `buildDeck` is two answers to one question, and they drift.
-      .map((o) => toCard(session, o, ctx))
-      .filter((c) => c !== undefined).length;
+      // Counted by actually pricing them, because a cheaper predicate here and the real
+      // filter in `buildDeck` would be two answers to one question and they would drift.
+      // `quote`, not `toCard`: minting a cardRef is handing out a capability, and a
+      // capability for a Card nobody was shown has no business existing. Counting used
+      // to call `toCard` and did exactly that -- three Cards dealt, four refs minted.
+      .filter((o) => quote(o, ctx) !== undefined).length;
 
     return {
       horizonDays,
@@ -185,8 +186,8 @@ interface CardContext {
  * Silence rather than a throw, because one unquotable Order must not cost a Trader the
  * whole Deck.
  */
-function toCard(session: Session, order: OrderWithSignature, ctx: CardContext): Card | undefined {
-  const { sizeUsdc, spot, isPut, orders, held } = ctx;
+function quote(order: OrderWithSignature, ctx: CardContext): Quote | undefined {
+  const { sizeUsdc, spot, isPut } = ctx;
   const iv = impliedVol(order);
   if (typeof iv !== "number") return undefined;
 
@@ -202,7 +203,32 @@ function toCard(session: Session, order: OrderWithSignature, ctx: CardContext): 
       days: daysToExpiry(order),
       isPut,
     });
+    return { economics, chance };
+  } catch (e) {
+    if (e instanceof StakeTooSmall || e instanceof NoQuotedVolatility) return undefined;
+    throw e;
+  }
+}
 
+/**
+ * A priced Order, before it is given a name.
+ *
+ * The split exists so an expiry can be COUNTED without a cardRef being minted for every
+ * Order behind it -- see `expiriesFor`.
+ */
+interface Quote {
+  economics: ReturnType<typeof priceOrder>;
+  chance: number;
+}
+
+/** The Card a Trader is actually shown, named by an opaque reference. */
+function toCard(session: Session, order: OrderWithSignature, ctx: CardContext): Card | undefined {
+  const { isPut, orders, held, spot } = ctx;
+  const priced = quote(order, ctx);
+  if (!priced) return undefined;
+  const { economics, chance } = priced;
+
+  {
     // Depth is read across the WHOLE book for this Underlying, not just this Deck's
     // expiry -- it answers "where will makers trade this strike", which is not a
     // question about the expiry the Trader happens to be looking at.
@@ -231,12 +257,9 @@ function toCard(session: Session, order: OrderWithSignature, ctx: CardContext): 
       depthOrders: count(depth.orders),
       // Nothing rather than a zero. A strike nobody holds should say nothing about who
       // holds it, not report an emptiness the Trader has to interpret.
-      heldCount: heldHere === undefined ? null : count(heldHere),
+      heldCount: heldFigure(heldHere),
       expiry: economics.expiry,
       payoutAsset: economics.payoutAsset,
     };
-  } catch (e) {
-    if (e instanceof StakeTooSmall || e instanceof NoQuotedVolatility) return undefined;
-    throw e;
   }
 }

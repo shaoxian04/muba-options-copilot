@@ -249,20 +249,20 @@ describe("the statistics strip", () => {
     expect(s.putCallRatio.display).toBe("0.75");
     expect(s.strikeCount.value).toBe(3);
     expect(s.openPositions.value).toBe(0);
-    expect(s.expectedMoveUsd.value).toBeGreaterThan(0);
+    expect(s.impliedMoveUsd.value).toBeGreaterThan(0);
   });
 
-  it("quotes no expected move when no horizon was chosen", async () => {
+  it("quotes no Implied Move when no horizon was chosen", async () => {
     const { body } = await depth("asset=ETH");
-    // "The expected move" is meaningless without a horizon, and inventing one would put
-    // a number on the strip answering a question nobody asked.
-    expect(body.stats.expectedMoveUsd).toBeNull();
+    // An Implied Move is meaningless without a period, and inventing one would put a
+    // number on the strip answering a question nobody asked.
+    expect(body.stats.impliedMoveUsd).toBeNull();
   });
 
-  it("quotes no expected move when nothing at that horizon quotes a volatility", async () => {
+  it("quotes no Implied Move when nothing at that horizon quotes a volatility", async () => {
     state.book = [makeOrder({ nonce: 1, optionType: 1, strike: 2400, perContract: 5, days: 1, iv: 0 })];
     const { body } = await depth("asset=ETH&horizonDays=1");
-    expect(body.stats.expectedMoveUsd).toBeNull();
+    expect(body.stats.impliedMoveUsd).toBeNull();
   });
 
   it("has no put/call ratio when nothing is quoting calls", async () => {

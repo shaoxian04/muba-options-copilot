@@ -17,9 +17,11 @@
  * loading state). The one call is shared across a whole request rather than repeated per
  * strike, which is the optimisation that is actually available here.
  */
+import type { Figure } from "@copilot/shared";
 import { getClient } from "./client.js";
 import { fromPrice } from "./units.js";
 import { underlyingForFeed, type Underlying } from "./underlyings.js";
+import { count } from "../format.js";
 
 /**
  * A live Position. The indexer marks settled and closed ones with the same `status`
@@ -66,3 +68,15 @@ export async function openInterest(underlying: Underlying): Promise<OpenInterest
  */
 export const openInterestOrEmpty = async (underlying: Underlying): Promise<OpenInterest> =>
   openInterest(underlying).catch(() => new Map());
+
+/**
+ * A held count as it crosses the wire: the number, or NOTHING.
+ *
+ * Not zero. Open interest is genuinely scarce -- a recent read found nineteen live
+ * Positions protocol-wide across fifteen strikes -- and a column of "0 held" teaches a
+ * Trader the market is dead. A blank teaches them nothing, which is the correct amount.
+ *
+ * Here rather than at the two call sites so the Card and the depth chart cannot end up
+ * disagreeing about how "nobody holds this" is spelled.
+ */
+export const heldFigure = (n: number | undefined): Figure | null => (n === undefined ? null : count(n));

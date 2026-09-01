@@ -27,7 +27,7 @@ export async function marketOverview(): Promise<MarketOverview> {
     const spot = prices[u.symbol];
 
     return {
-      symbol: u.symbol as MarketRow["symbol"],
+      symbol: u.symbol,
       name: u.name,
       // A row whose feed quotes no price still appears, saying so. Dropping it would
       // make a market silently vanish from the rail, which reads as the app losing it.

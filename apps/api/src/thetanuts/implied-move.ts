@@ -21,6 +21,26 @@ import { strikeOf } from "./depth.js";
 const MIN_YEARS = 1 / 8760;
 
 /**
+ * The Implied Move over a fixed period, as a PERCENTAGE, from the book's average
+ * volatility.
+ *
+ * A cruder reading than `impliedMove` below and deliberately kept apart from it: this
+ * one averages every quoted IV on the book and asks "how far is this market pricing a
+ * week", which is a summary of the whole book rather than a statement about one expiry.
+ * `/book` reports it.
+ *
+ * It lives here beside the precise one because both are the Implied Move and the module
+ * header promises one home for that. Two derivations in two files is how `/book` and
+ * `/depth` would come to quote different numbers for the same idea.
+ */
+export function impliedMovePct(orders: OrderWithSignature[], overDays: number): number | null {
+  const ivs = orders.map(impliedVol).filter((v): v is number => typeof v === "number" && v > 0);
+  if (!ivs.length) return null;
+  const iv = ivs.reduce((a, b) => a + b, 0) / ivs.length;
+  return Number((iv * Math.sqrt(overDays / 365) * 100).toFixed(1));
+}
+
+/**
  * The move implied over one horizon, in dollars. Null when nothing at that horizon
  * quotes a volatility -- which is common and is not an error.
  */

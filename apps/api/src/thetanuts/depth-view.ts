@@ -9,12 +9,13 @@
  * It reports availability and open interest. It prices NOTHING: option economics have
  * one home (`pricing.ts`) and this is not it. Nothing here touches `previewFillOrder`.
  */
-import type { DepthStats, DepthStrike, DepthView, Figure } from "@copilot/shared";
+import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
+import type { DepthStats, DepthStrike, DepthView } from "@copilot/shared";
 import { buyableOrders } from "./orders.js";
 import { spotPrice } from "./market.js";
 import { requireUnderlying, type Underlying } from "./underlyings.js";
-import { byStrike, depthOf, strikeOf, type Depth } from "./depth.js";
-import { openInterestOrEmpty } from "./open-interest.js";
+import { byStrike, strikeOf, type Depth } from "./depth.js";
+import { openInterestOrEmpty, heldFigure } from "./open-interest.js";
 import { impliedMove } from "./implied-move.js";
 import { usd, compactUsd, count, ratio } from "../format.js";
 
@@ -34,10 +35,10 @@ export const WINDOW = 0.15;
 export interface DepthRequest {
   asset: string;
   /**
-   * The horizon the expected-move statistic is quoted over. Optional, and absent means
-   * the statistic is null rather than defaulted: "the expected move" is meaningless
-   * without a horizon, and inventing one would put a number on the strip that answers a
-   * question nobody asked.
+   * The horizon the Implied Move is quoted over. Optional, and absent means that
+   * statistic is null rather than defaulted: an Implied Move is meaningless without a
+   * period, and inventing one would put a number on the strip answering a question
+   * nobody asked.
    */
   horizonDays?: number;
 }
@@ -65,7 +66,7 @@ export async function buildDepth(request: DepthRequest): Promise<DepthView> {
     // found nineteen live Positions protocol-wide across fifteen strikes -- and a column
     // of "0 held" teaches a Trader the market is dead. A blank teaches them nothing,
     // which is the correct amount.
-    held: heldAt(held.get(row.strike)),
+    held: heldFigure(held.get(row.strike)),
     expiryDays: row.expiryDays,
   }));
 
@@ -74,7 +75,7 @@ export async function buildDepth(request: DepthRequest): Promise<DepthView> {
   const axisMax = Math.max(0, ...rows.flatMap((r) => [r.call.usdc, r.put.usdc]));
 
   return {
-    asset: underlying.symbol as DepthView["asset"],
+    asset: underlying.symbol,
     assetName: underlying.name,
     spotUsd: usd(spot, underlying.priceDp),
     axisMaxUsdc: compactUsd(axisMax),
@@ -90,11 +91,9 @@ export async function buildDepth(request: DepthRequest): Promise<DepthView> {
 
 const makerDepth = (d: Depth) => ({ usdc: compactUsd(d.usdc), orders: count(d.orders) });
 
-const heldAt = (n: number | undefined): Figure | null => (n === undefined ? null : count(n));
-
 function statsFor(
   rows: ReturnType<typeof byStrike>,
-  orders: Parameters<typeof depthOf>[0],
+  orders: OrderWithSignature[],
   held: Map<number, number>,
   spot: number,
   underlying: Underlying,
@@ -111,7 +110,7 @@ function statsFor(
   return {
     spotUsd: usd(spot, underlying.priceDp),
     // An observation, not a Forecast -- read out of quoted volatility (ADR-0005).
-    expectedMoveUsd: move === null ? null : usd(move, underlying.priceDp),
+    impliedMoveUsd: move === null ? null : usd(move, underlying.priceDp),
     callDepthUsdc: compactUsd(callUsdc),
     putDepthUsdc: compactUsd(putUsdc),
     putCallRatio: callUsdc > 0 ? ratio(putUsdc / callUsdc) : null,

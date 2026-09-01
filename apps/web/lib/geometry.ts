@@ -115,11 +115,34 @@ export function riskBudgetBar(budget: number, spent: number, pending: number) {
 export const fillHeight = (chance: number): string => `${Math.max(5, chance * 100)}%`;
 
 /**
- * A proportion, as a CSS width.
+ * The rail's split bar, as two CSS widths.
  *
- * A coordinate and never text: nobody reads "63.4%" off the rail's split bar, they read
- * which segment is longer. The server ships the proportion because dividing one figure
- * by another is arithmetic on figures; turning that proportion into a length is this
- * module's job, which is why it lives here rather than inline in the component.
+ * Coordinates and never text: nobody reads "63.4%" off the bar, they read which segment
+ * is longer. The server ships the proportion because dividing one figure by another is
+ * arithmetic on figures; turning it into two lengths -- including the complement -- is
+ * this module's job. Returning BOTH is the point: `1 - share` in a component is still a
+ * component doing arithmetic, and the no-arithmetic check cannot see a bare subtraction.
  */
-export const sharePercent = (share: number): string => `${Math.max(0, Math.min(1, share)) * 100}%`;
+export function splitBar(callShare: number): { call: string; put: string } {
+  const call = Math.max(0, Math.min(1, callShare));
+  return { call: `${call * 100}%`, put: `${(1 - call) * 100}%` };
+}
+
+/**
+ * Where the parts of a circular asset mark sit, for a given size.
+ *
+ * Pure geometry -- radii, offsets and glyph sizes, none of it read as text. It lives
+ * here for the same reason the payoff plot's coordinates do, and so that `Rail.tsx` can
+ * hold no arithmetic at all rather than merely a defensible amount.
+ */
+export function markGeometry(size: number, kind: "eth" | "btc" | "glyph") {
+  const r = size / 2;
+  return {
+    r,
+    /** The ETH diamond is drawn at a fixed scale and sized from it. */
+    ethScale: size / 34,
+    /** Baseline offset, tuned per glyph so each sits optically centred. */
+    baselineY: r + size * (kind === "btc" ? 0.235 : 0.2),
+    fontSize: size * (kind === "btc" ? 0.66 : 0.54),
+  };
+}

@@ -19,12 +19,21 @@ const {
   UNDERLYINGS, SYMBOLS, underlyingForFeed, requireUnderlying, UnknownUnderlying, payoutAsset, ZERO_ADDRESS,
 } = await import("../thetanuts/underlyings.js");
 const { makeOrder, FEED } = await import("./fixtures.js");
+const { UNDERLYING_SYMBOLS } = await import("@copilot/shared");
 
 beforeEach(resetStub);
 
 describe("the registry", () => {
   it("covers the six Underlyings the live book quotes", () => {
     expect(SYMBOLS).toEqual(["BTC", "ETH", "SOL", "BNB", "XRP", "AVAX"]);
+  });
+
+  it("stays in step with the symbols the wire declares", () => {
+    // The registry is the authority and the shared enum is the shape the browser agrees
+    // on. Nothing enforced that they matched, so either could gain an Underlying the
+    // other did not have -- and the failure would be a route accepting an asset it
+    // cannot price, or refusing one it can.
+    expect([...UNDERLYING_SYMBOLS]).toEqual([...SYMBOLS]);
   });
 
   it("gives every Underlying a symbol, a display name, a feed and strike decimals", () => {
