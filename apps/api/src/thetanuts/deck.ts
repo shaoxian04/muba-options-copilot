@@ -22,6 +22,8 @@ import { rememberCard, type Session } from "../sessions.js";
 import { usd, percent, chanceBand, chanceWords } from "../format.js";
 
 export interface DeckRequest {
+  /** Which Underlying. Required -- a default is how an ETH-only book stays ETH-only. */
+  asset: string;
   direction: "UP" | "DOWN";
   horizonDays: number;
   sizeUsdc: number;
@@ -48,8 +50,8 @@ export const NO_MAKERS =
   "No maker is quoting this right now. Maker liquidity renews around 09:00 UTC -- or ask for a different expiry.";
 
 export async function buildDeck(session: Session, request: DeckRequest): Promise<Deck> {
-  const { direction, horizonDays, sizeUsdc } = request;
-  const [orders, spot] = await Promise.all([buyableOrders(), spotPrice()]);
+  const { asset, direction, horizonDays, sizeUsdc } = request;
+  const [orders, spot] = await Promise.all([buyableOrders(asset), spotPrice(asset)]);
 
   const wantType = direction === "DOWN" ? PUT : CALL;
   const isPut = wantType === PUT;

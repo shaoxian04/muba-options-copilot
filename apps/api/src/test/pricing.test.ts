@@ -70,9 +70,12 @@ describe("priceOrder", () => {
     expect(e.availableUsdc.display).toBe("$500.00");
     expect(e.expiry.display).toBe("16 Jan, 08:00 UTC");
 
-    // Nothing a Trader reads may arrive as a bare number.
+    // Nothing a Trader reads may arrive as a bare number. `raw` and `underlying` are the
+    // two fields that are not read at all -- protocol units and registry metadata, both
+    // consumed by code downstream and neither rendered.
+    const NOT_READ = new Set(["raw", "underlying"]);
     for (const [key, figure] of Object.entries(e)) {
-      if (key === "raw" || typeof figure !== "object" || figure === null) continue;
+      if (NOT_READ.has(key) || typeof figure !== "object" || figure === null) continue;
       expect(figure, `${key} has no display string`).toHaveProperty("display");
       expect(typeof (figure as { display: unknown }).display).toBe("string");
     }

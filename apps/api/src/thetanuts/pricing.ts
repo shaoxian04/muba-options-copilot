@@ -17,6 +17,23 @@ import type { Figure } from "@copilot/shared";
 import { getClient } from "./client.js";
 import { fromPrice, fromUsdc, fromContracts, toUsdc, PRICE_DECIMALS, CONTRACT_DECIMALS } from "./units.js";
 import { usd, contracts as fmtContracts, moment } from "../format.js";
+import { payoutAsset, type PayoutAsset, type Underlying } from "./underlyings.js";
+import { underlyingOf } from "./orders.js";
+
+/**
+ * An Order reached the pricer carrying a feed the registry does not know.
+ *
+ * Not a market condition and not a Trader-facing message: the single door excludes these
+ * before anything can price them, so this can only fire if something fetched an Order
+ * another way. It throws rather than defaulting, because the alternative is naming a
+ * payout asset for a contract nobody can identify.
+ */
+export class UnpricedUnderlying extends Error {
+  constructor(order: OrderWithSignature) {
+    super(`Order carries a price feed outside the registry: ${(order.rawApiData as any)?.priceFeed ?? "none"}`);
+    this.name = "UnpricedUnderlying";
+  }
+}
 
 /** The stake is too small to buy any of this Order at the maker's price. */
 export class StakeTooSmall extends Error {
@@ -44,8 +61,15 @@ export interface OrderEconomics {
   /** The fixed moment the contract ends. */
   expiry: Figure;
   expiryIso: string;
-  /** An inverse call settles in WETH -- a Trader should not be surprised by that. */
-  payoutAsset: "USDC" | "WETH";
+  /**
+   * What this contract delivers if it finishes in the money -- a Trader should not be
+   * surprised by that. A property of the Underlying, never of `isCall`: an ETH call
+   * settles in WETH, a BTC call in WBTC, and a SOL call in USDC because there is no SOL
+   * on Base to deliver.
+   */
+  payoutAsset: PayoutAsset;
+  /** Which Underlying this Order is on. */
+  underlying: Underlying;
   isCall: boolean;
   /** PUT / INVERSE_CALL. Never shown to the Trader (Q10). */
   instrument: string;
@@ -63,6 +87,12 @@ export interface OrderEconomics {
  *                  budget, not a contract count -- never size a fill from it.
  */
 export function priceOrder(order: OrderWithSignature, sizeUsdc: number): OrderEconomics {
+  // The Order's own feed decides what this is. Anything the registry does not carry never
+  // reaches here -- `buyableOrders` is the only door and it excludes them -- so an
+  // unregistered feed at this point is a bug in the caller, not a market condition.
+  const underlying = underlyingOf(order);
+  if (!underlying) throw new UnpricedUnderlying(order);
+
   const preview = getClient().optionBook.previewFillOrder(order, toUsdc(sizeUsdc));
   if (!preview || preview.numContracts <= 0n) throw new StakeTooSmall(sizeUsdc);
 
@@ -72,16 +102,22 @@ export function priceOrder(order: OrderWithSignature, sizeUsdc: number): OrderEc
   const expiryIso = new Date(Number(preview.expiry) * 1000).toISOString();
 
   return {
-    strike: usd(strike),
+    // Priced to the Underlying's own precision. XRP strikes are two cents apart, so the
+    // default 2dp would round the market onto a strike and hide which side of it we are on.
+    strike: usd(strike, underlying.priceDp),
     perContractUsd: usd(perContract),
     contracts: fmtContracts(fromContracts(preview.numContracts)),
     premiumUsdc: usd(premium),
     maxLossUsdc: usd(premium),
-    breakevenPrice: usd(Number((preview.isCall ? strike + perContract : strike - perContract).toFixed(2))),
+    breakevenPrice: usd(
+      Number((preview.isCall ? strike + perContract : strike - perContract).toFixed(underlying.priceDp)),
+      underlying.priceDp
+    ),
     availableUsdc: usd(fromUsdc(order.availableAmount)),
     expiry: moment(expiryIso),
     expiryIso,
-    payoutAsset: preview.isCall ? "WETH" : "USDC",
+    payoutAsset: payoutAsset(underlying, preview.isCall),
+    underlying,
     isCall: preview.isCall,
     instrument: preview.isCall ? "INVERSE_CALL" : "PUT",
     raw: { strikes: preview.strikes, numContracts: preview.numContracts },
@@ -89,7 +125,7 @@ export function priceOrder(order: OrderWithSignature, sizeUsdc: number): OrderEc
 }
 
 /**
- * What the Trader ends up with, net of the premium, if ETH settles at this price.
+ * What the Trader ends up with, net of the premium, if the Underlying settles here.
  *
  * The single derivation of the payoff, and it lives here for the same reason
  * `priceOrder` does: it is option economics, and option economics have one home. The
@@ -100,8 +136,8 @@ export function priceOrder(order: OrderWithSignature, sizeUsdc: number): OrderEc
  * position that has already been priced through `priceOrder` above.
  */
 export function payoffAt(economics: OrderEconomics, settlementPrice: number): number {
-  // NOTE: for an inverse call the on-chain payout is denominated in WETH. We return the
-  // shape either way; `payoutAsset` tells the caller which unit to render.
+  // NOTE: an inverse call's on-chain payout is denominated in the delivered asset, not
+  // in USDC. We return the shape either way; `payoutAsset` says which unit to render.
   const gross = getClient().utils.calculatePayout({
     type: economics.isCall ? "call" : "put",
     strikes: economics.raw.strikes,

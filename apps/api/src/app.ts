@@ -75,6 +75,8 @@ const COST_ROUTE_LIMIT = { rateLimit: { max: COST_ROUTE_MAX_PER_MINUTE, timeWind
  * the book actually trades. ETH puts run to 3 days and no further.
  */
 const DeckQuery = z.object({
+  // Widened to a required parameter in issue #24; ETH-only until then.
+  asset: z.enum(["ETH"]).default("ETH"),
   direction: z.enum(["UP", "DOWN"]),
   horizonDays: z.coerce.number().int().min(1).max(3),
   sizeUsdc: z.coerce.number().positive().max(1000),
@@ -119,7 +121,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.get("/book", async () => {
     // Same `spotPrice` the Deck and the board read, so the tape and a Card can never
     // disagree about what ETH costs for any reason but the seconds between two polls.
-    const [orders, spot] = await Promise.all([buyableOrders(), spotPrice().catch(() => null)]);
+    const [orders, spot] = await Promise.all([buyableOrders("ETH"), spotPrice("ETH").catch(() => null)]);
     const ivs = orders.map(impliedVol).filter((v): v is number => typeof v === "number");
     const iv = ivs.length ? ivs.reduce((a, b) => a + b, 0) / ivs.length : undefined;
     return {
@@ -295,7 +297,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.get("/positions", async (req) => {
     const session = sessionFor(req.headers);
-    const spot = await spotPrice().catch(() => null);
+    const spot = await spotPrice("ETH").catch(() => null);
 
     const [real, address] = canSign() ? await realHoldings(spot) : [[], null];
 

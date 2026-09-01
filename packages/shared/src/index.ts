@@ -20,6 +20,18 @@ export const Figure = z.object({
 export type Figure = z.infer<typeof Figure>;
 
 /**
+ * What a contract delivers if it finishes in the money.
+ *
+ * A property of the UNDERLYING, never of whether it is a call. An ETH call settles in
+ * WETH, a BTC call in WBTC, and a call on any of the four cash-settled Underlyings in
+ * USDC because there is no such token on Base to deliver. Puts always settle in USDC.
+ * See `apps/api/src/thetanuts/underlyings.ts` -- the registry is the only thing that may
+ * answer this.
+ */
+export const PayoutAsset = z.enum(["USDC", "WETH", "WBTC"]);
+export type PayoutAsset = z.infer<typeof PayoutAsset>;
+
+/**
  * The wall described in ADR-0001.
  *
  * A TradeIntent is the ONLY thing that crosses from natural language into money.
@@ -114,7 +126,7 @@ export const TradeProposal = z.object({
   scenarios: z.array(SettlementScenario),
   /** The same payoff, sampled finely, for the curve and its crosshair. */
   payoffCurve: z.array(PayoffPoint),
-  payoutAsset: z.enum(["USDC", "WETH"]), // INVERSE_CALL settles in WETH
+  payoutAsset: PayoutAsset,
   figures: ProposalFigures,
   /**
    * Who picked this Order. The Trade Agent deals a Card; a Trader may overrule it.
@@ -186,7 +198,7 @@ export const Card = z.object({
   /** What the maker still has posted against this Order. */
   availableUsdc: Figure,
   expiry: Figure,
-  payoutAsset: z.enum(["USDC", "WETH"]),
+  payoutAsset: PayoutAsset,
 });
 export type Card = z.infer<typeof Card>;
 
@@ -257,7 +269,7 @@ export const Holding = z.object({
    * Null when the chain did not give enough to derive one -- never a guess.
    */
   currentValueUsdc: Figure.nullable(),
-  payoutAsset: z.enum(["USDC", "WETH"]),
+  payoutAsset: PayoutAsset,
   direction: z.enum(["UP", "DOWN"]),
 });
 export type Holding = z.infer<typeof Holding>;
