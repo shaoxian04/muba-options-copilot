@@ -24,6 +24,7 @@ import deckSolDown2 from "./fixtures/deck-sol-down-2.json" with { type: "json" }
 import deckSolUp1 from "./fixtures/deck-sol-up-1.json" with { type: "json" };
 import markets from "./fixtures/markets.json" with { type: "json" };
 import depthEth from "./fixtures/depth-eth.json" with { type: "json" };
+import depthEthMarked from "./fixtures/depth-eth-marked.json" with { type: "json" };
 import session from "./fixtures/session.json" with { type: "json" };
 import positionsEmpty from "./fixtures/positions-empty.json" with { type: "json" };
 import positionsAfterPractice from "./fixtures/positions-after-practice.json" with { type: "json" };
@@ -73,12 +74,14 @@ export const fixtures = {
   veto,
   practiceResult,
   positionsAfterPractice,
+  depthEth,
+  depthEthMarked,
 };
 
 /** Longest shot first, so index 0 is the leftmost Card in the row. */
 export const cards = deckDown1.cards;
 
-export type Scenario = "normal" | "veto" | "no-order" | "empty" | "compressed" | "over-budget";
+export type Scenario = "normal" | "veto" | "no-order" | "empty" | "compressed" | "over-budget" | "depth-marked";
 
 export interface Traffic {
   /** Every request the page made to the API, in order. */
@@ -175,7 +178,10 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         return json(route, markets, traffic);
 
       case "/depth":
-        return json(route, depthEth, traffic);
+        // The marked variant carries a held Position, a strike dimmed against the
+        // default horizon, and a nonzero excluded count -- three things the real
+        // fixture book does not happen to have, and `depth.spec.ts` asserts on.
+        return json(route, scenario === "depth-marked" ? depthEthMarked : depthEth, traffic);
 
       case "/session":
         return json(route, session, traffic);

@@ -1,0 +1,300 @@
+{
+  "asset": "ETH",
+  "assetName": "Ethereum",
+  "spotUsd": {
+    "value": 2445.49,
+    "display": "$2,445.49"
+  },
+  "axisMaxUsdc": {
+    "value": 500,
+    "display": "$500"
+  },
+  "windowLowUsd": {
+    "value": 2078.6665,
+    "display": "$2,078.67"
+  },
+  "windowHighUsd": {
+    "value": 2812.3134999999997,
+    "display": "$2,812.31"
+  },
+  "strikes": [
+    {
+      "strike": {
+        "value": 2360,
+        "display": "$2,360.00"
+      },
+      "call": {
+        "usdc": {
+          "value": 0,
+          "display": "$0"
+        },
+        "orders": {
+          "value": 0,
+          "display": "0"
+        }
+      },
+      "put": {
+        "usdc": {
+          "value": 500,
+          "display": "$500"
+        },
+        "orders": {
+          "value": 1,
+          "display": "1"
+        }
+      },
+      "held": {
+        "value": 3,
+        "display": "3"
+      },
+      "expiryDays": [
+        1
+      ]
+    },
+    {
+      "strike": {
+        "value": 2380,
+        "display": "$2,380.00"
+      },
+      "call": {
+        "usdc": {
+          "value": 0,
+          "display": "$0"
+        },
+        "orders": {
+          "value": 0,
+          "display": "0"
+        }
+      },
+      "put": {
+        "usdc": {
+          "value": 500,
+          "display": "$500"
+        },
+        "orders": {
+          "value": 1,
+          "display": "1"
+        }
+      },
+      "held": null,
+      "expiryDays": [
+        2
+      ]
+    },
+    {
+      "strike": {
+        "value": 2400,
+        "display": "$2,400.00"
+      },
+      "call": {
+        "usdc": {
+          "value": 0,
+          "display": "$0"
+        },
+        "orders": {
+          "value": 0,
+          "display": "0"
+        }
+      },
+      "put": {
+        "usdc": {
+          "value": 500,
+          "display": "$500"
+        },
+        "orders": {
+          "value": 1,
+          "display": "1"
+        }
+      },
+      "held": null,
+      "expiryDays": [
+        1
+      ]
+    },
+    {
+      "strike": {
+        "value": 2410,
+        "display": "$2,410.00"
+      },
+      "call": {
+        "usdc": {
+          "value": 0,
+          "display": "$0"
+        },
+        "orders": {
+          "value": 0,
+          "display": "0"
+        }
+      },
+      "put": {
+        "usdc": {
+          "value": 500,
+          "display": "$500"
+        },
+        "orders": {
+          "value": 1,
+          "display": "1"
+        }
+      },
+      "held": null,
+      "expiryDays": [
+        1
+      ]
+    },
+    {
+      "strike": {
+        "value": 2440,
+        "display": "$2,440.00"
+      },
+      "call": {
+        "usdc": {
+          "value": 0,
+          "display": "$0"
+        },
+        "orders": {
+          "value": 0,
+          "display": "0"
+        }
+      },
+      "put": {
+        "usdc": {
+          "value": 500,
+          "display": "$500"
+        },
+        "orders": {
+          "value": 1,
+          "display": "1"
+        }
+      },
+      "held": null,
+      "expiryDays": [
+        1
+      ]
+    },
+    {
+      "strike": {
+        "value": 2480,
+        "display": "$2,480.00"
+      },
+      "call": {
+        "usdc": {
+          "value": 500,
+          "display": "$500"
+        },
+        "orders": {
+          "value": 1,
+          "display": "1"
+        }
+      },
+      "put": {
+        "usdc": {
+          "value": 0,
+          "display": "$0"
+        },
+        "orders": {
+          "value": 0,
+          "display": "0"
+        }
+      },
+      "held": null,
+      "expiryDays": [
+        1
+      ]
+    },
+    {
+      "strike": {
+        "value": 2520,
+        "display": "$2,520.00"
+      },
+      "call": {
+        "usdc": {
+          "value": 500,
+          "display": "$500"
+        },
+        "orders": {
+          "value": 1,
+          "display": "1"
+        }
+      },
+      "put": {
+        "usdc": {
+          "value": 0,
+          "display": "$0"
+        },
+        "orders": {
+          "value": 0,
+          "display": "0"
+        }
+      },
+      "held": null,
+      "expiryDays": [
+        1
+      ]
+    },
+    {
+      "strike": {
+        "value": 2560,
+        "display": "$2,560.00"
+      },
+      "call": {
+        "usdc": {
+          "value": 500,
+          "display": "$500"
+        },
+        "orders": {
+          "value": 1,
+          "display": "1"
+        }
+      },
+      "put": {
+        "usdc": {
+          "value": 0,
+          "display": "$0"
+        },
+        "orders": {
+          "value": 0,
+          "display": "0"
+        }
+      },
+      "held": null,
+      "expiryDays": [
+        1
+      ]
+    }
+  ],
+  "excludedOrders": {
+    "value": 3,
+    "display": "3"
+  },
+  "excludedLabel": "3 outside range",
+  "stats": {
+    "spotUsd": {
+      "value": 2445.49,
+      "display": "$2,445.49"
+    },
+    "impliedMoveUsd": {
+      "value": 51.53086415318884,
+      "display": "$51.53"
+    },
+    "callDepthUsdc": {
+      "value": 1500,
+      "display": "$2k"
+    },
+    "putDepthUsdc": {
+      "value": 2500,
+      "display": "$3k"
+    },
+    "putCallRatio": {
+      "value": 1.6666666666666667,
+      "display": "1.67"
+    },
+    "strikeCount": {
+      "value": 8,
+      "display": "8"
+    },
+    "openPositions": {
+      "value": 0,
+      "display": "0"
+    }
+  }
+}

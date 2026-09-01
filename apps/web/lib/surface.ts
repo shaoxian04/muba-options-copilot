@@ -23,6 +23,7 @@ import {
   fill,
   getBoard,
   getDeck,
+  getDepth,
   getMarkets,
   getSession,
   practice,
@@ -30,6 +31,7 @@ import {
   type Board,
   type Card,
   type Deck,
+  type DepthView,
   type FillReceipt,
   type MarketRow,
   type ProposeResult,
@@ -88,6 +90,15 @@ export interface Surface {
   deck: Deck | null;
   deckError: string | null;
   loading: boolean;
+
+  /**
+   * Where makers will actually trade on this Underlying -- the Maker Depth chart's
+   * data. Fetched by `asset` and `horizonDays` only, deliberately: it is NOT re-fetched
+   * on a direction change, because the chart is unfiltered by direction (issue #28) and
+   * a direction-keyed effect would re-poll it for a question the chart does not answer.
+   */
+  depth: DepthView | null;
+  depthError: string | null;
 
   selectedRef: string | null;
   dealtRef: string | null;
@@ -182,6 +193,9 @@ export function useSurface(): Surface {
   const [deck, setDeck] = useState<Deck | null>(null);
   const [deckError, setDeckError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const [depth, setDepth] = useState<DepthView | null>(null);
+  const [depthError, setDepthError] = useState<string | null>(null);
 
   const [selectedRef, setSelectedRef] = useState<string | null>(null);
   const [dealtRef, setDealtRef] = useState<string | null>(null);
@@ -279,6 +293,33 @@ export function useSurface(): Surface {
     const timer = setInterval(() => void loadDeck(asset, direction, horizonDays), DECK_POLL_MS);
     return () => clearInterval(timer);
   }, [asset, direction, horizonDays, loadDeck]);
+
+  /**
+   * The Maker Depth chart's data.
+   *
+   * Keyed on `asset` and `horizonDays` alone -- NOT `direction`. The chart shows every
+   * expiry at once and is unfiltered by direction on purpose (issue #28): it orients a
+   * Trader rather than duplicating the Deck, and a chart that emptied or re-fetched the
+   * moment "Falls" became "Rises" would just be the Deck again, drawn as bars.
+   */
+  const loadDepth = useCallback(async (a: UnderlyingSymbol, h: number) => {
+    try {
+      const next = await getDepth({ asset: a, horizonDays: h });
+      setDepth(next);
+      setDepthError(null);
+    } catch (e) {
+      setDepthError(e instanceof Error ? e.message : "The Maker Depth chart could not be read.");
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadDepth(asset, horizonDays);
+  }, [asset, horizonDays, loadDepth]);
+
+  useEffect(() => {
+    const timer = setInterval(() => void loadDepth(asset, horizonDays), DECK_POLL_MS);
+    return () => clearInterval(timer);
+  }, [asset, horizonDays, loadDepth]);
 
   const clearSelection = useCallback(() => {
     setSelectedRef(null);
@@ -479,6 +520,8 @@ export function useSurface(): Surface {
     deck,
     deckError,
     loading,
+    depth,
+    depthError,
     selectedRef,
     dealtRef,
     selectedCard,

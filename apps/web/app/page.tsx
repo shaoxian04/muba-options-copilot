@@ -16,6 +16,7 @@ import { Chat, type Seed } from "../components/Chat";
 import { Chips } from "../components/Chips";
 import { CommitBar } from "../components/CommitBar";
 import { DeckRow } from "../components/DeckRow";
+import { DepthChart } from "../components/DepthChart";
 import { EmptyDeck, VetoScreen } from "../components/Halt";
 import { PayoffStrip } from "../components/PayoffStrip";
 import { Rail } from "../components/Rail";
@@ -38,6 +39,13 @@ export default function Page() {
   const maxLoss = proposal?.figures.maxLossUsdc ?? s.selectedCard?.maxLossUsdc ?? agreedMaxLoss(s.deck);
 
   const canCommit = Boolean(proposal) && !s.quoteMoved && !s.busy;
+
+  /**
+   * The chip's own label for the selected horizon ("2d"), so the statistics strip's
+   * "Expected move" cell can say which one without this file turning a number into
+   * text itself. Absent only when the Deck has not answered yet.
+   */
+  const horizonLabel = s.deck?.expiries.find((e) => e.horizonDays === s.horizonDays)?.label;
 
   /**
    * The seed prompts, naming whatever the rail has selected.
@@ -70,6 +78,14 @@ export default function Page() {
       <div className="rig">
         <Rail markets={s.markets} asset={s.asset} onPick={s.setAsset} />
         <Tape deck={s.deck} now={now} />
+
+        {/*
+          The statistics strip and the Maker Depth chart (issue #28). Unfiltered by
+          direction and by expiry on purpose -- see `DepthChart.tsx` -- so it sits here,
+          outside every branch below it, and keeps orienting a Trader through a VETO or
+          an empty Deck rather than disappearing with them.
+        */}
+        {s.depth ? <DepthChart depth={s.depth} horizonDays={s.horizonDays} horizonLabel={horizonLabel} /> : null}
 
         {s.result?.kind === "VETO" ? (
           <VetoScreen
