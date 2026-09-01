@@ -52,6 +52,10 @@ export const backendEndpoint = (): string => process.env.BACKEND_ENDPOINT ?? "ht
 export const openaiApiKey = (): string | undefined => process.env.OPENAI_API_KEY || undefined;
 export const groqApiKey = (): string | undefined => process.env.GROQ_API_KEY || undefined;
 
+/** Optional, same as the AI keys above -- the usage-log writer no-ops without these. */
+export const supabaseUrl = (): string | undefined => process.env.SUPABASE_URL || undefined;
+export const supabaseServiceRoleKey = (): string | undefined => process.env.SUPABASE_SERVICE_ROLE_KEY || undefined;
+
 export function anthropicApiKey(): string {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) {

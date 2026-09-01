@@ -9,13 +9,14 @@
     "ask": "tsx src/scripts/ask.ts",
     "dev": "tsx watch src/server.ts",
     "wallet": "tsx src/scripts/wallet.ts",
-    "test": "tsx --test src/forecast/*.test.ts"
+    "test": "cross-env SUPABASE_URL= SUPABASE_SERVICE_ROLE_KEY= tsx --test src/forecast/*.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
     "@copilot/shared": "*",
     "@fastify/cors": "^10.1.0",
     "@fastify/rate-limit": "^11.2.0",
+    "@supabase/supabase-js": "^2.45.4",
     "@thetanuts-finance/thetanuts-client": "^0.3.0",
     "dotenv": "^16.4.5",
     "ethers": "^6.13.4",
@@ -25,6 +26,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
+    "cross-env": "^7.0.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

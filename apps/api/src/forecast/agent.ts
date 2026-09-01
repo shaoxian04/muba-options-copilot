@@ -193,15 +193,28 @@ export async function realCreateWithFallback(
 
 export interface UsageLogEvent {
   provider: string;
+  callSite: string;
   latencyMs: number;
   inputTokens?: number;
   outputTokens?: number;
 }
 
+/**
+ * Console visibility (unchanged) plus a fire-and-forget write to the
+ * forecast_usage_log Supabase table (usageLog.ts) for aggregatable cost/usage
+ * visibility beyond grepping logs. Un-awaited on purpose -- a slow or failed DB
+ * write must never add latency to, or be able to fail, an actual forecast response.
+ * The dynamic import keeps this module free of a hard Supabase dependency at load
+ * time, matching how every other optional integration in this codebase degrades.
+ */
 function defaultLogUsage(event: UsageLogEvent): void {
   const tokens =
     event.inputTokens !== undefined ? ` inputTokens=${event.inputTokens} outputTokens=${event.outputTokens}` : "";
-  console.log(`[forecast-agent] provider=${event.provider} latencyMs=${event.latencyMs}${tokens}`);
+  console.log(`[forecast-agent] callSite=${event.callSite} provider=${event.provider} latencyMs=${event.latencyMs}${tokens}`);
+
+  void import("./usageLog.js")
+    .then(({ logUsageToSupabase }) => logUsageToSupabase(event))
+    .catch((e) => console.warn(`[forecast-agent] usage-log import failed: ${e?.message ?? e}`));
 }
 
 /**
@@ -214,11 +227,14 @@ function defaultLogUsage(event: UsageLogEvent): void {
  * Every call that reaches a provider is logged via `logUsage` (provider, latency,
  * token counts when the provider reports them) -- this is the only place any of that
  * is observable; nothing further downstream sees which tier answered a given request.
+ * `callSite` names the calling function (e.g. "predictPrice") so usage/cost is
+ * attributable per feature, not just per provider.
  */
 export async function callAgentForJson<T>(
   schema: ZodType<T, any, any>,
   system: string,
   user: string,
+  callSite: string,
   create: AgentCreateFn = realCreateWithFallback,
   logUsage: (event: UsageLogEvent) => void = defaultLogUsage
 ): Promise<T> {
@@ -233,6 +249,7 @@ export async function callAgentForJson<T>(
     });
     logUsage({
       provider: response.provider ?? "unknown",
+      callSite,
       latencyMs: Date.now() - startedAt,
       inputTokens: response.usage?.inputTokens,
       outputTokens: response.usage?.outputTokens,

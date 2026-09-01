@@ -30,6 +30,7 @@ export async function predictPrice(scenario: MarketScenario, create?: AgentCreat
       `24h change: ${marketData.change24h}%\n24h high: $${marketData.high24h}\n24h low: $${marketData.low24h}\n` +
       `24h volume: $${marketData.volume24h}\n` +
       `Headlines:\n${scenario.headlines.map((h) => `- ${h.text}`).join("\n")}`,
+    "predictPrice",
     create
   );
   assertNoForbiddenPhrase(model.rationale);
