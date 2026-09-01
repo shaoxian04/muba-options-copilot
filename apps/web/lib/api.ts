@@ -10,9 +10,15 @@
  * so the Deck a Trader is looking at and the Card they pick have to arrive under the
  * same id.
  */
-import type { Card, Deck, ExpiryOption, Figure, Holding, ProposeResult, UnderlyingSymbol } from "@copilot/shared";
+import type {
+  Card, Deck, DepthView, ExpiryOption, Figure, Holding,
+  MarketOverview, MarketRow, ProposeResult, UnderlyingSymbol,
+} from "@copilot/shared";
 
-export type { Card, Deck, ExpiryOption, Figure, Holding, ProposeResult, UnderlyingSymbol };
+export type {
+  Card, Deck, DepthView, ExpiryOption, Figure, Holding,
+  MarketOverview, MarketRow, ProposeResult, UnderlyingSymbol,
+};
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:3001";
 
@@ -116,6 +122,12 @@ export const getDeck = (q: {
   sizeUsdc: number;
 }): Promise<Deck> =>
   call<Deck>(`/deck?asset=${q.asset}&direction=${q.direction}&horizonDays=${q.horizonDays}&sizeUsdc=${q.sizeUsdc}`);
+
+/**
+ * Every market that is quoting. One request, not six -- the rail is the first thing on
+ * the surface and six round trips would make the app feel broken before a Trader acts.
+ */
+export const getMarkets = (): Promise<MarketOverview> => call<MarketOverview>("/markets");
 
 export const getSession = (): Promise<SessionState> => call<SessionState>("/session");
 

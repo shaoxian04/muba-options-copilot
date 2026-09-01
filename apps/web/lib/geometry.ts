@@ -113,3 +113,13 @@ export function riskBudgetBar(budget: number, spent: number, pending: number) {
  * with no fill at all reads as "broken", not as "unlikely".
  */
 export const fillHeight = (chance: number): string => `${Math.max(5, chance * 100)}%`;
+
+/**
+ * A proportion, as a CSS width.
+ *
+ * A coordinate and never text: nobody reads "63.4%" off the rail's split bar, they read
+ * which segment is longer. The server ships the proportion because dividing one figure
+ * by another is arithmetic on figures; turning that proportion into a length is this
+ * module's job, which is why it lives here rather than inline in the component.
+ */
+export const sharePercent = (share: number): string => `${Math.max(0, Math.min(1, share)) * 100}%`;

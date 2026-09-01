@@ -25,7 +25,7 @@ import { strikeDistance } from "./distance.js";
 import { depthAt, strikeOf } from "./depth.js";
 import { openInterestOrEmpty, type OpenInterest } from "./open-interest.js";
 import { rememberCard, type Session } from "../sessions.js";
-import { usd, percent, count, days as fmtDays, chanceBand, chanceWords } from "../format.js";
+import { usd, percent, count, compactUsd, days as fmtDays, chanceBand, chanceWords } from "../format.js";
 
 export interface DeckRequest {
   /**
@@ -219,7 +219,9 @@ function toCard(session: Session, order: OrderWithSignature, ctx: CardContext): 
       chanceLabel: chanceWords(chance),
       chanceBand: chanceBand(chance),
       availableUsdc: economics.availableUsdc,
-      depthUsdc: usd(depth.usdc, 0),
+      // Written the same way the depth chart writes it -- a tile saying "$10,000"
+      // beside a bar labelled "$10k" is one number presented as two.
+      depthUsdc: compactUsd(depth.usdc),
       depthOrders: count(depth.orders),
       // Nothing rather than a zero. A strike nobody holds should say nothing about who
       // holds it, not report an emptiness the Trader has to interpret.

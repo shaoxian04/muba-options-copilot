@@ -23,7 +23,7 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
 import { resetStub, state } from "./stub-client.js";
-import { NOW, makeOrder } from "./fixtures.js";
+import { NOW, DEFAULT_BOOK, makeOrder } from "./fixtures.js";
 
 vi.useFakeTimers({ toFake: ["Date"] });
 vi.setSystemTime(NOW);
@@ -49,6 +49,9 @@ const NAMES = [
   "deck-up-1",
   "deck-empty",
   "depth-eth",
+  "markets",
+  "deck-sol-down-1",
+  "deck-sol-up-1",
   "deck-compressed",
   "session",
   "positions-empty",
@@ -114,6 +117,26 @@ beforeAll(async () => {
   generated["deck-down-3"] = await get("/deck?asset=ETH&direction=DOWN&horizonDays=3&sizeUsdc=2");
   generated["deck-up-1"] = await get("/deck?asset=ETH&direction=UP&horizonDays=1&sizeUsdc=2");
   generated["depth-eth"] = await get("/depth?asset=ETH&horizonDays=1");
+  /*
+   * The rail is the one fixture that has to show all six markets, so it is generated
+   * against a book that actually has six -- the default fixture book is ETH and BTC, and
+   * a rail of four empty rows would demonstrate nothing about the thing being built.
+   * The depths are lopsided on purpose: a one-sided market is what the split bar exists
+   * to make visible without reading a number.
+   */
+  state.book = [
+    ...DEFAULT_BOOK,
+    makeOrder({ nonce: 50, id: 50, optionType: 0, strike: 104, perContract: 1.6, days: 1, symbol: "SOL", availableUsdc: 9000 }),
+    makeOrder({ nonce: 50, id: 51, optionType: 1, strike: 100, perContract: 0.7, days: 1, symbol: "SOL", availableUsdc: 7000 }),
+    makeOrder({ nonce: 51, id: 52, optionType: 0, strike: 700, perContract: 8, days: 1, symbol: "BNB", availableUsdc: 8000 }),
+    makeOrder({ nonce: 51, id: 53, optionType: 1, strike: 670, perContract: 6, days: 1, symbol: "BNB", availableUsdc: 8000 }),
+    // XRP quoting calls and nothing else -- the one-sided case, drawn as a full blue bar.
+    makeOrder({ nonce: 52, id: 54, optionType: 0, strike: 1.4, perContract: 0.02, days: 1, symbol: "XRP", availableUsdc: 6000 }),
+    makeOrder({ nonce: 53, id: 55, optionType: 1, strike: 7.1, perContract: 0.03, days: 1, symbol: "AVAX", availableUsdc: 5000 }),
+    makeOrder({ nonce: 54, id: 56, optionType: 0, strike: 79000, perContract: 540, days: 1, symbol: "BTC", availableUsdc: 12000 }),
+  ];
+  generated["markets"] = await get("/markets");
+  resetStub();
   generated["session"] = await get("/session");
   generated["positions-empty"] = await get("/positions");
 
@@ -141,6 +164,26 @@ beforeAll(async () => {
   state.book = [];
   generated["deck-empty"] = await get(DOWN_1, "empty-session");
   generated["no-order"] = (await post("/propose", intent, "empty-session")).json();
+
+  /*
+   * A cash-settled Underlying, so the browser suite exercises the path that did not
+   * exist when it was written. SOL matters specifically: its calls settle in USDC, not
+   * in the underlying, and it is identified by a price feed rather than by a token --
+   * both of which the ETH fixtures would let a regression slip past.
+   */
+  state.book = [
+    makeOrder({ nonce: 40, id: 40, optionType: 1, strike: 98, perContract: 0.42, days: 1, symbol: "SOL", iv: 0.78, availableUsdc: 10_000 }),
+    makeOrder({ nonce: 40, id: 41, optionType: 1, strike: 100, perContract: 0.71, days: 1, symbol: "SOL", iv: 0.74, availableUsdc: 10_000 }),
+    makeOrder({ nonce: 40, id: 42, optionType: 1, strike: 102, perContract: 1.27, days: 1, symbol: "SOL", iv: 0.68, availableUsdc: 10_000 }),
+    makeOrder({ nonce: 41, id: 43, optionType: 0, strike: 104, perContract: 1.59, days: 1, symbol: "SOL", iv: 0.69, availableUsdc: 10_000 }),
+    makeOrder({ nonce: 41, id: 44, optionType: 0, strike: 106, perContract: 0.89, days: 1, symbol: "SOL", iv: 0.71, availableUsdc: 10_000 }),
+    // A 2-day bucket that quotes puts and no calls, so the surface has a genuinely dead
+    // chip to render -- the shape the four cash-settled Underlyings actually have.
+    makeOrder({ nonce: 42, id: 45, optionType: 1, strike: 100, perContract: 1.1, days: 2, symbol: "SOL", iv: 0.72, availableUsdc: 10_000 }),
+  ];
+  generated["deck-sol-down-1"] = await get("/deck?asset=SOL&direction=DOWN&horizonDays=1&sizeUsdc=2", "sol-session");
+  generated["deck-sol-up-1"] = await get("/deck?asset=SOL&direction=UP&horizonDays=1&sizeUsdc=2", "sol-session");
+  resetStub();
 
   // --- a Deck whose chances have compressed, so the gradient stops carrying ---
   state.book = [

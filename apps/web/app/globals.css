@@ -6,10 +6,18 @@
   way:
 
   - The Implied Chance ramp (--r0..--r5) is a SEQUENTIAL SINGLE HUE. Red/green for gain
-    and loss was tested and rejected -- the pair separates by only dE 3.1 under
+    and loss was tested and rejected -- the pair separates by only dE 5.5 under
     deuteranopia against a threshold of 8. `tests/support/ramp.test.ts` holds this ramp to
-    same bar under both deuteranopia and protanopia, and to a contrast bar against the
+    the same bar under both deuteranopia and protanopia, and to a contrast bar against the
     text that sits on it, so the palette cannot be edited back into being unreadable.
+
+  - Call and put are BLUE and ORANGE (--call, --put), for the same reason and by the same
+    measurement. The rejected red/green pair separates by dE 5.5 under deuteranopia;
+    blue/orange separates by 67.0 under deuteranopia and 59.5 under protanopia, the
+    strongest of six candidate pairs measured with this repo's own colour module. Both
+    clear WCAG AA against the ground they are painted on, in both themes -- which is what
+    forced the light theme to a deeper pair than the dark one. `ramp.test.ts` reads these
+    tokens out of this file, so editing the palette runs the measurement.
 
   - Every colour is defined on bare `:root` first and only overridden inside the dark
     blocks, so a token can never exist in one theme and not the other.
@@ -29,6 +37,15 @@
   --hue: #2a78d6;
   --hue-soft: #dceafa;
   --hue-deep: #1c5cab;
+  /*
+    Call and put. Deeper than the dark theme's pair because they have to clear 4.5:1
+    against a pale ground as well as separate from each other: the dark theme's #3987e5
+    measures 3.06 here and would be a label a Trader with low vision cannot read.
+  */
+  --call: #1a5fb4;
+  --put: #9a5000;
+  --call-soft: #dbe7f7;
+  --put-soft: #f8e7d3;
   --r0: #e9edfd;
   --r1: #bdc9f0;
   --r2: #93a6da;
@@ -66,6 +83,10 @@
     --hue: #3987e5;
     --hue-soft: #14304f;
     --hue-deep: #86b6ef;
+    --call: #3987e5;
+    --put: #f0883e;
+    --call-soft: #12283f;
+    --put-soft: #3a2313;
     --r0: #cfd2d9;
     --r1: #a7b1c6;
     --r2: #8391ad;
@@ -97,6 +118,10 @@
   --hue: #3987e5;
   --hue-soft: #14304f;
   --hue-deep: #86b6ef;
+  --call: #3987e5;
+  --put: #f0883e;
+  --call-soft: #12283f;
+  --put-soft: #3a2313;
   --r0: #cfd2d9;
   --r1: #a7b1c6;
   --r2: #8391ad;
@@ -150,6 +175,16 @@ button[disabled] {
 .n {
   font-family: "IBM Plex Mono", ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
+}
+/*
+  Figures in a column, lining up. `tabular-nums` is the load-bearing half: without it a
+  rail of six prices jitters left and right as the last digit changes, and a Trader
+  reads movement into a market that has not moved.
+*/
+.num {
+  font-family: "Martian Mono", "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
 }
 .hero {
   font-family: "Martian Mono", "IBM Plex Mono", monospace;
@@ -254,6 +289,90 @@ button[disabled] {
 }
 
 /* ================= right: money ================= */
+/* ================= the ticker rail ================= */
+/*
+  Every market that is quoting, across the top. Lifted close to verbatim from
+  `prototype-deck-v2.html` variant E (`.rail-top`, `.trow`), which is the settled design.
+
+  The split bar is the only thing on this surface that carries information as colour and
+  nothing else, which is why `tests/support/ramp.test.ts` holds --call and --put to the
+  same dE 8 bar red/green was held to and failed. Each row also carries the same split as
+  a sentence in `.sr`, so removing colour entirely loses nothing.
+*/
+.rail-top {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--well);
+  /*
+    The rail scrolls INSIDE itself. Six rows at their minimum width are wider than a
+    phone, and without `min-width: 0` a flex item sizes to its content and pushes the
+    whole page sideways -- which `deck.spec.ts` measures and refuses.
+  */
+  overflow-x: auto;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+.trow {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 11px;
+  padding: 13px 20px 11px;
+  /*
+    So the row's `.sr` sentence is contained by it.
+    `.sr` is `position: absolute`, and absolute positioning resolves against the nearest
+    POSITIONED ancestor -- with none, it escapes the rail's `overflow-x` clip entirely
+    and drags the page's scrollWidth out to the far end of the rail. The phone viewport
+    then scrolls sideways, which `deck.spec.ts` measures and refuses.
+  */
+  position: relative;
+  border: 0;
+  border-right: 1px solid var(--line-2);
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.16s, border-color 0.16s;
+  min-width: 168px;
+}
+.trow:hover {
+  background: var(--surface);
+}
+.trow[aria-pressed="true"] {
+  background: var(--surface);
+  border-bottom-color: var(--ink);
+}
+.trow .mk {
+  grid-row: 1 / 3;
+  align-self: center;
+}
+.trow b {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  line-height: 1.15;
+}
+.trow > span.num {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.15;
+}
+.trow .sp {
+  grid-column: 1 / -1;
+  height: 3px;
+  border-radius: 2px;
+  display: flex;
+  overflow: hidden;
+  background: var(--line);
+  margin-top: 6px;
+}
+.trow .sp i {
+  display: block;
+  height: 100%;
+}
+
 .rig {
   display: flex;
   flex-direction: column;

@@ -338,6 +338,47 @@ export const Deck = z.object({
 export type Deck = z.infer<typeof Deck>;
 
 /**
+ * One Underlying as the ticker rail reads it.
+ *
+ * The split of Maker Depth into calls and puts is rendered as a two-segment bar, so a
+ * one-sided market is visible without reading a number -- which is most of the point.
+ * Several of these markets ARE one-sided.
+ */
+export const MarketRow = z.object({
+  symbol: UnderlyingSymbol,
+  /** What a Trader reads -- "Ethereum", not "ETH". */
+  name: z.string(),
+  /** Null when the protocol is quoting no price for this feed. The row stays; it says so. */
+  spotUsd: Figure.nullable(),
+  callDepthUsdc: Figure,
+  putDepthUsdc: Figure,
+  /**
+   * The call segment's share of total depth, 0-1.
+   *
+   * A proportion, not a width: the browser turns it into a percentage in `geometry.ts`,
+   * which is the module allowed to produce coordinates. It ships from here because
+   * `call / (call + put)` is arithmetic on two figures, and the surface must not do that
+   * -- including the divide-by-zero when a market has no depth at all.
+   */
+  callShare: z.number(),
+  /** How many Orders a Trader may buy right now, across both directions. */
+  buyable: Figure,
+});
+export type MarketRow = z.infer<typeof MarketRow>;
+
+/**
+ * Every market that is quoting, in one request.
+ *
+ * One request rather than six: the rail is the first thing on the surface and six
+ * round trips to paint it would make the app feel broken before a Trader has done
+ * anything.
+ */
+export const MarketOverview = z.object({
+  markets: z.array(MarketRow),
+});
+export type MarketOverview = z.infer<typeof MarketOverview>;
+
+/**
  * Maker Depth on one side of one strike.
  *
  * Maker Depth is how much cover makers are collectively willing to sell there, in USDC,

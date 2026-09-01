@@ -1,0 +1,209 @@
+{
+  "asset": "SOL",
+  "assetName": "Solana",
+  "direction": "DOWN",
+  "horizonDays": 1,
+  "sizeUsdc": 2,
+  "spotUsd": {
+    "value": 102.164,
+    "display": "$102.16"
+  },
+  "expiries": [
+    {
+      "horizonDays": 1,
+      "label": "1d",
+      "cards": 3,
+      "live": true
+    },
+    {
+      "horizonDays": 2,
+      "label": "2d",
+      "cards": 1,
+      "live": true
+    }
+  ],
+  "expiry": {
+    "value": 1768550400000,
+    "display": "16 Jan, 08:00 UTC"
+  },
+  "cards": [
+    {
+      "cardRef": "card-0",
+      "strike": {
+        "value": 98,
+        "display": "$98.00"
+      },
+      "distance": {
+        "needed": {
+          "value": 0.0407579969460867,
+          "display": "4.1%"
+        },
+        "alreadyPast": false,
+        "sentence": "must fall 4.1%"
+      },
+      "perContractUsd": {
+        "value": 0.42,
+        "display": "$0.42"
+      },
+      "contracts": {
+        "value": 4.761904,
+        "display": "4.761904"
+      },
+      "premiumUsdc": {
+        "value": 1.999999,
+        "display": "$2.00"
+      },
+      "maxLossUsdc": {
+        "value": 1.999999,
+        "display": "$2.00"
+      },
+      "breakevenPrice": {
+        "value": 97.58,
+        "display": "$97.58"
+      },
+      "impliedChance": {
+        "value": 0.13613110916465304,
+        "display": "14%"
+      },
+      "chanceLabel": "a long shot",
+      "chanceBand": 0,
+      "availableUsdc": {
+        "value": 10000,
+        "display": "$10,000.00"
+      },
+      "depthUsdc": {
+        "value": 10000,
+        "display": "$10k"
+      },
+      "depthOrders": {
+        "value": 1,
+        "display": "1"
+      },
+      "heldCount": null,
+      "expiry": {
+        "value": 1768550400000,
+        "display": "16 Jan, 08:00 UTC"
+      },
+      "payoutAsset": "USDC"
+    },
+    {
+      "cardRef": "card-1",
+      "strike": {
+        "value": 100,
+        "display": "$100.00"
+      },
+      "distance": {
+        "needed": {
+          "value": 0.021181629536823163,
+          "display": "2.1%"
+        },
+        "alreadyPast": false,
+        "sentence": "must fall 2.1%"
+      },
+      "perContractUsd": {
+        "value": 0.71,
+        "display": "$0.71"
+      },
+      "contracts": {
+        "value": 2.816901,
+        "display": "2.816901"
+      },
+      "premiumUsdc": {
+        "value": 1.999999,
+        "display": "$2.00"
+      },
+      "maxLossUsdc": {
+        "value": 1.999999,
+        "display": "$2.00"
+      },
+      "breakevenPrice": {
+        "value": 99.29,
+        "display": "$99.29"
+      },
+      "impliedChance": {
+        "value": 0.27833038526917003,
+        "display": "28%"
+      },
+      "chanceLabel": "unlikely",
+      "chanceBand": 1,
+      "availableUsdc": {
+        "value": 10000,
+        "display": "$10,000.00"
+      },
+      "depthUsdc": {
+        "value": 20000,
+        "display": "$20k"
+      },
+      "depthOrders": {
+        "value": 2,
+        "display": "2"
+      },
+      "heldCount": null,
+      "expiry": {
+        "value": 1768550400000,
+        "display": "16 Jan, 08:00 UTC"
+      },
+      "payoutAsset": "USDC"
+    },
+    {
+      "cardRef": "card-2",
+      "strike": {
+        "value": 102,
+        "display": "$102.00"
+      },
+      "distance": {
+        "needed": {
+          "value": 0.0016052621275596244,
+          "display": "0.2%"
+        },
+        "alreadyPast": false,
+        "sentence": "must fall 0.2%"
+      },
+      "perContractUsd": {
+        "value": 1.27,
+        "display": "$1.27"
+      },
+      "contracts": {
+        "value": 1.574803,
+        "display": "1.574803"
+      },
+      "premiumUsdc": {
+        "value": 1.999999,
+        "display": "$2.00"
+      },
+      "maxLossUsdc": {
+        "value": 1.999999,
+        "display": "$2.00"
+      },
+      "breakevenPrice": {
+        "value": 100.73,
+        "display": "$100.73"
+      },
+      "impliedChance": {
+        "value": 0.486757798107477,
+        "display": "49%"
+      },
+      "chanceLabel": "under even odds",
+      "chanceBand": 2,
+      "availableUsdc": {
+        "value": 10000,
+        "display": "$10,000.00"
+      },
+      "depthUsdc": {
+        "value": 10000,
+        "display": "$10k"
+      },
+      "depthOrders": {
+        "value": 1,
+        "display": "1"
+      },
+      "heldCount": null,
+      "expiry": {
+        "value": 1768550400000,
+        "display": "16 Jan, 08:00 UTC"
+      },
+      "payoutAsset": "USDC"
+    }
+  ],
+  "gradientLegible": true
+}

@@ -17,6 +17,7 @@ import { CommitBar } from "../components/CommitBar";
 import { DeckRow } from "../components/DeckRow";
 import { EmptyDeck, VetoScreen } from "../components/Halt";
 import { PayoffStrip } from "../components/PayoffStrip";
+import { Rail } from "../components/Rail";
 import { Tape } from "../components/Tape";
 import { agentGate, agreedMaxLoss, useNow, useSurface, type Direction } from "../lib/surface";
 
@@ -44,17 +45,26 @@ export default function Page() {
 
   const canCommit = Boolean(proposal) && !s.quoteMoved && !s.busy;
 
+  /**
+   * The seed prompts, naming whatever the rail has selected.
+   *
+   * They FOLLOW the picker; they do not drive it. Pressing one asks for a Deck on the
+   * Underlying already selected -- it never switches Underlying, because reading an
+   * asset out of a sentence is the Trade Agent's job and that service does not exist
+   * yet (ADR-0007). Until it does, the rail is the only thing that moves the selection.
+   */
   const seeds: Seed[] = [
     {
-      said: "I think ETH drops before Friday",
-      run: () => void s.deal("I think ETH drops before Friday", "DOWN"),
+      said: `I think ${s.asset} drops before Friday`,
+      run: () => void s.deal(`I think ${s.asset} drops before Friday`, "DOWN"),
     },
     { said: "What if it goes up instead?", run: () => void s.deal("What if it goes up instead?", "UP") },
     {
       said: "What is this, in one line?",
       run: () =>
         s.say(
-          "You pay a little now. If ETH finishes past the number on the card, you get paid the difference. If it does not, you lose what you paid and not a cent more."
+          `You pay a little now. If ${s.asset} finishes past the number on the card, you get paid the ` +
+            "difference. If it does not, you lose what you paid and not a cent more."
         ),
     },
   ];
@@ -64,6 +74,7 @@ export default function Page() {
       <Chat log={s.log} seeds={seeds} busy={s.busy} />
 
       <div className="rig">
+        <Rail markets={s.markets} asset={s.asset} onPick={s.setAsset} />
         <Tape deck={s.deck} horizonDays={s.horizonDays} onHorizon={s.setHorizon} now={now} />
 
         {s.result?.kind === "VETO" ? (

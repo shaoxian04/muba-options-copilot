@@ -19,6 +19,10 @@ import deckDown3 from "./fixtures/deck-down-3.json" with { type: "json" };
 import deckUp1 from "./fixtures/deck-up-1.json" with { type: "json" };
 import deckEmpty from "./fixtures/deck-empty.json" with { type: "json" };
 import deckCompressed from "./fixtures/deck-compressed.json" with { type: "json" };
+import deckSolDown1 from "./fixtures/deck-sol-down-1.json" with { type: "json" };
+import deckSolUp1 from "./fixtures/deck-sol-up-1.json" with { type: "json" };
+import markets from "./fixtures/markets.json" with { type: "json" };
+import depthEth from "./fixtures/depth-eth.json" with { type: "json" };
 import session from "./fixtures/session.json" with { type: "json" };
 import positionsEmpty from "./fixtures/positions-empty.json" with { type: "json" };
 import positionsAfterPractice from "./fixtures/positions-after-practice.json" with { type: "json" };
@@ -56,6 +60,8 @@ export const FIXTURE_NOW = Date.UTC(2026, 0, 15, 12, 0, 0);
 
 export const fixtures = {
   deckDown1,
+  deckSolDown1,
+  markets,
   deckUp1,
   deckCompressed,
   session,
@@ -95,9 +101,18 @@ const json = (route: Route, body: unknown, traffic: Traffic, status = 200) => {
 
 const authorised = (request: Request) => request.headers()["authorization"] === `Bearer ${TEST_API_TOKEN}`;
 
+/**
+ * The Deck for whatever was asked for.
+ *
+ * Keyed on `asset` first, because the surface asking for the wrong Underlying and being
+ * handed an ETH Deck anyway is precisely the failure the required parameter exists to
+ * prevent -- a stub that ignored it would let that bug through.
+ */
 const deckFor = (url: URL) => {
+  const asset = url.searchParams.get("asset");
   const direction = url.searchParams.get("direction");
   const days = url.searchParams.get("horizonDays");
+  if (asset === "SOL") return direction === "UP" ? deckSolUp1 : deckSolDown1;
   if (direction === "UP") return deckUp1;
   if (days === "2") return deckDown2;
   if (days === "3") return deckDown3;
@@ -149,6 +164,12 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         if (scenario === "compressed") return json(route, deckCompressed, traffic);
         return json(route, moved ? reprice(deckFor(url)) : deckFor(url), traffic);
       }
+
+      case "/markets":
+        return json(route, markets, traffic);
+
+      case "/depth":
+        return json(route, depthEth, traffic);
 
       case "/session":
         return json(route, session, traffic);

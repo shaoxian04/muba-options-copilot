@@ -23,6 +23,7 @@ import {
   fill,
   getBoard,
   getDeck,
+  getMarkets,
   getSession,
   practice,
   propose,
@@ -30,6 +31,7 @@ import {
   type Card,
   type Deck,
   type FillReceipt,
+  type MarketRow,
   type ProposeResult,
   type SessionState,
 } from "./api";
@@ -79,6 +81,8 @@ export type GateState = "idle" | "pass" | "wait" | "fail";
 
 export interface Surface {
   asset: UnderlyingSymbol;
+  /** Every market that is quoting, for the rail. Empty until the first answer lands. */
+  markets: MarketRow[];
   direction: Direction;
   horizonDays: number;
   deck: Deck | null;
@@ -161,6 +165,7 @@ export function agentGate(result: ProposeResult | null): Array<{ label: string; 
 
 export function useSurface(): Surface {
   const [asset, setAssetState] = useState<UnderlyingSymbol>(DEFAULT_ASSET);
+  const [markets, setMarkets] = useState<MarketRow[]>([]);
   const [direction, setDirectionState] = useState<Direction>("DOWN");
   const [horizonDays, setHorizonState] = useState<number>(1);
   const [deck, setDeck] = useState<Deck | null>(null);
@@ -229,6 +234,15 @@ export function useSurface(): Surface {
   useEffect(() => {
     void refreshMoney();
   }, [refreshMoney]);
+
+  // The rail, once. Spot moves and the Deck poll keeps the tape honest about that; the
+  // set of markets and their standing depth does not move minute to minute, and polling
+  // it would be six books re-read for a bar that would not visibly change.
+  useEffect(() => {
+    void getMarkets()
+      .then((m) => setMarkets(m.markets))
+      .catch(() => undefined);
+  }, []);
 
   // The tape is only honest if it keeps asking. Cheap: /deck is read-only and local.
   useEffect(() => {
@@ -420,6 +434,7 @@ export function useSurface(): Surface {
 
   return {
     asset,
+    markets,
     direction,
     horizonDays,
     deck,

@@ -25,6 +25,7 @@ import { UnknownUnderlying } from "./thetanuts/underlyings.js";
 import { proposeTrade, proposeChosenOrder, NoSuitableOrder, QuoteMoved } from "./thetanuts/propose.js";
 import { buildDeck } from "./thetanuts/deck.js";
 import { buildDepth } from "./thetanuts/depth-view.js";
+import { marketOverview } from "./thetanuts/markets.js";
 import { reviewIntent } from "./agents/review.js";
 import { practiceRoutes, practiceHoldings } from "./practice.js";
 import { realHoldings } from "./thetanuts/holdings.js";
@@ -134,9 +135,20 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.get("/health", async () => ({ ok: true, canSign: canSign() }));
 
   /**
-   * What the market looks like right now. Read-only, safe to poll.
-   * `impliedMovePct` is an observation derived from live premiums, not a Forecast --
-   * see ADR-0005 for why that distinction is enforced rather than stylistic.
+   * Every market that is quoting, for the ticker rail. Read-only, safe to poll.
+   *
+   * One request rather than six. The rail is the first thing on the surface and six
+   * round trips to paint it would make the app feel broken before a Trader has acted.
+   */
+  app.get("/markets", async () => marketOverview());
+
+  /**
+   * The ETH book in detail. Read-only, safe to poll.
+   *
+   * Kept alongside `/markets` because it answers a different question -- how deep and
+   * how soon, on one Underlying -- and because `npm run explore` and the README both
+   * name it. `impliedMovePct` is an observation derived from live premiums, not a
+   * Forecast (ADR-0005).
    */
   app.get("/book", async () => {
     // Same `spotPrice` the Deck and the board read, so the tape and a Card can never
