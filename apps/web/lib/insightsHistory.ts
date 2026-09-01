@@ -30,7 +30,11 @@ export function deriveHistory(log: InsightsLine[]): ConversationTurn[] {
         sentiment: r.news?.overallSentiment,
       }));
 
-    if (coins.length > 0) turns.push({ question: question.text ?? "", coins });
+    // A turn is only worth carrying if both halves survived: at least one coin that got
+    // a real answer, and a trader line that actually said something. An empty question
+    // would reach the prompt as a bare "Q:" -- noise, never a resolvable reference.
+    const asked = question.text?.trim();
+    if (coins.length > 0 && asked) turns.push({ question: asked, coins });
   }
 
   return turns.slice(-CONVERSATION_HISTORY_MAX_TURNS);

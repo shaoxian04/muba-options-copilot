@@ -13,6 +13,29 @@ const market = (price: number) => ({
   asOf: "2026-01-01T00:00:00.000Z",
 });
 
+const pricePrediction = (direction: "up" | "down" | "flat") => ({
+  symbol: "ETH",
+  horizon: "7 days",
+  direction,
+  predictedRange: { low: 2400, high: 2600 },
+  confidence: "medium" as const,
+  rationale: "Momentum is positive.",
+  groundedOn: market(2465),
+  disclaimer: "Not financial advice.",
+  generatedAt: "2026-01-01T00:00:00.000Z",
+});
+
+const newsAnalysis = (overallSentiment: "bullish" | "bearish" | "neutral") => ({
+  symbol: "ETH",
+  horizon: "7 days",
+  overallSentiment,
+  summary: "Coverage leans positive.",
+  headlines: [{ text: "ETH rallies", sentiment: overallSentiment, source: "simulated" as const }],
+  source: "simulated" as const,
+  disclaimer: "Not financial advice.",
+  generatedAt: "2026-01-01T00:00:00.000Z",
+});
+
 describe("deriveHistory", () => {
   it("pairs a trader question with the successful copilot response that follows it", () => {
     const log: InsightsLine[] = [
@@ -63,5 +86,91 @@ describe("deriveHistory", () => {
 
   it("returns an empty array for an empty log", () => {
     expect(deriveHistory([])).toEqual([]);
+  });
+
+  it("maps direction from the price prediction and sentiment from the news analysis", () => {
+    const log: InsightsLine[] = [
+      { who: "trader", text: "how's ETH looking this week?" },
+      {
+        who: "copilot",
+        results: {
+          ETH: {
+            symbol: "ETH",
+            answer: "ETH is at $2465 and the mood is positive.",
+            market: market(2465),
+            price: pricePrediction("up"),
+            news: newsAnalysis("bullish"),
+          },
+        },
+      },
+    ];
+    const history = deriveHistory(log);
+    expect(history).toEqual([
+      {
+        question: "how's ETH looking this week?",
+        coins: [
+          {
+            symbol: "ETH",
+            answer: "ETH is at $2465 and the mood is positive.",
+            price: 2465,
+            direction: "up",
+            sentiment: "bullish",
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("does not confuse the price block's direction with the news block's sentiment", () => {
+    // Same coin, opposite readings: a mapping that read `direction` off `news` or
+    // `sentiment` off `price` would produce undefined here rather than these values.
+    const log: InsightsLine[] = [
+      { who: "trader", text: "how's ETH looking?" },
+      {
+        who: "copilot",
+        results: {
+          ETH: {
+            symbol: "ETH",
+            answer: "Price is drifting down while coverage stays upbeat.",
+            market: market(2465),
+            price: pricePrediction("down"),
+            news: newsAnalysis("bullish"),
+          },
+        },
+      },
+    ];
+    const coin = deriveHistory(log)[0]?.coins[0];
+    expect(coin?.direction).toBe("down");
+    expect(coin?.sentiment).toBe("bullish");
+  });
+
+  it("carries direction and sentiment independently when only one block is present", () => {
+    const log: InsightsLine[] = [
+      { who: "trader", text: "any news on ETH?" },
+      {
+        who: "copilot",
+        results: {
+          ETH: { symbol: "ETH", answer: "Coverage is negative.", news: newsAnalysis("bearish") },
+        },
+      },
+    ];
+    const coin = deriveHistory(log)[0]?.coins[0];
+    expect(coin?.sentiment).toBe("bearish");
+    expect(coin?.direction).toBeUndefined();
+    expect(coin?.price).toBeUndefined();
+  });
+
+  it("skips a turn whose trader line carries no usable question text", () => {
+    const blank: InsightsLine[] = [
+      { who: "trader" },
+      { who: "copilot", results: { ETH: { symbol: "ETH", answer: "ETH is at $2465.", market: market(2465) } } },
+    ];
+    expect(deriveHistory(blank)).toEqual([]);
+
+    const whitespace: InsightsLine[] = [
+      { who: "trader", text: "   " },
+      { who: "copilot", results: { ETH: { symbol: "ETH", answer: "ETH is at $2465.", market: market(2465) } } },
+    ];
+    expect(deriveHistory(whitespace)).toEqual([]);
   });
 });

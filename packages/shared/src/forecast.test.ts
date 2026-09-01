@@ -207,3 +207,51 @@ test("ConversationTurn rejects an invalid direction value", () => {
   });
   assert.equal(result.success, false);
 });
+
+test("ConversationTurn rejects an over-long question", () => {
+  const result = ConversationTurn.safeParse({
+    question: "x".repeat(501),
+    coins: [{ symbol: "ETH", answer: "ETH is at $2465." }],
+  });
+  assert.equal(result.success, false);
+});
+
+test("ConversationTurn accepts a question exactly at the 500-character bound", () => {
+  const result = ConversationTurn.safeParse({
+    question: "x".repeat(500),
+    coins: [{ symbol: "ETH", answer: "ETH is at $2465." }],
+  });
+  assert.equal(result.success, true);
+});
+
+test("ConversationTurn rejects an over-long coin answer", () => {
+  const result = ConversationTurn.safeParse({
+    question: "what's ETH's price?",
+    coins: [{ symbol: "ETH", answer: "x".repeat(1001) }],
+  });
+  assert.equal(result.success, false);
+});
+
+test("ConversationTurn accepts a coin answer exactly at the 1000-character bound", () => {
+  const result = ConversationTurn.safeParse({
+    question: "what's ETH's price?",
+    coins: [{ symbol: "ETH", answer: "x".repeat(1000) }],
+  });
+  assert.equal(result.success, true);
+});
+
+test("ConversationTurn rejects a coins array of more than 10 entries", () => {
+  const result = ConversationTurn.safeParse({
+    question: "compare everything",
+    coins: Array.from({ length: 11 }, (_, i) => ({ symbol: `C${i}`, answer: "fine" })),
+  });
+  assert.equal(result.success, false);
+});
+
+test("ConversationTurn accepts a coins array of exactly 10 entries", () => {
+  const result = ConversationTurn.safeParse({
+    question: "compare everything",
+    coins: Array.from({ length: 10 }, (_, i) => ({ symbol: `C${i}`, answer: "fine" })),
+  });
+  assert.equal(result.success, true);
+});

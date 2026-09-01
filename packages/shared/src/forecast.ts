@@ -117,6 +117,20 @@ export type CoinAskResult = z.infer<typeof CoinAskResult>;
 export const CONVERSATION_HISTORY_MAX_TURNS = 5;
 
 /**
+ * Conversation history is client-supplied text replayed into LLM prompts by
+ * forecast/conversationHistory.ts, so it gets the same treatment `horizon` gets above:
+ * a length bound first, so an instruction-shaped payload never has the room to be one,
+ * and the delimited block as defense in depth second. A synthesized answer is already
+ * prompted to be 2-4 sentences and a real question is well under 200 characters, so
+ * these are generous headroom, not a working limit. An entry that busts a bound simply
+ * fails `ConversationTurn.safeParse` and gets dropped by parseAskBody's best-effort
+ * filtering -- history is a hint, never a required contract.
+ */
+export const CONVERSATION_ANSWER_MAX_LENGTH = 1000;
+export const CONVERSATION_QUESTION_MAX_LENGTH = 500;
+export const CONVERSATION_TURN_MAX_COINS = 10;
+
+/**
  * One coin's contribution to a stored conversation turn -- deliberately just the
  * already-short synthesized answer plus a couple of bare fields, never the full
  * market/news/price/risk-benefit blocks a CoinAskResult carries. See
@@ -124,7 +138,7 @@ export const CONVERSATION_HISTORY_MAX_TURNS = 5;
  */
 export const ConversationTurnCoin = z.object({
   symbol: z.string(),
-  answer: z.string(),
+  answer: z.string().max(CONVERSATION_ANSWER_MAX_LENGTH),
   price: z.number().optional(),
   direction: z.enum(["up", "down", "flat"]).optional(),
   sentiment: z.enum(["bullish", "bearish", "neutral"]).optional(),
@@ -134,7 +148,7 @@ export type ConversationTurnCoin = z.infer<typeof ConversationTurnCoin>;
 /** One prior successful question+answer exchange, sent by the client as lightweight
  *  conversation memory for /forecast/ask. */
 export const ConversationTurn = z.object({
-  question: z.string(),
-  coins: z.array(ConversationTurnCoin),
+  question: z.string().max(CONVERSATION_QUESTION_MAX_LENGTH),
+  coins: z.array(ConversationTurnCoin).max(CONVERSATION_TURN_MAX_COINS),
 });
 export type ConversationTurn = z.infer<typeof ConversationTurn>;
