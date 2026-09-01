@@ -1,4 +1,4 @@
-import { HORIZON_MAX_LENGTH } from "@copilot/shared";
+import { HORIZON_MAX_LENGTH, ConversationTurn, CONVERSATION_HISTORY_MAX_TURNS } from "@copilot/shared";
 import { UnknownSymbol, MarketDataUnavailable, MarketDataDivergence } from "./marketData.js";
 import { ForecastGenerationFailed } from "./agent.js";
 import { ForbiddenPhraseUsed } from "./guardrails.js";
@@ -22,10 +22,20 @@ export function parseForecastQuery(
   return { symbol, horizon };
 }
 
-export function parseAskBody(body: Record<string, unknown> | undefined): { question: string } | { error: string } {
+export function parseAskBody(
+  body: Record<string, unknown> | undefined
+): { question: string; history: ConversationTurn[] } | { error: string } {
   const question = typeof body?.question === "string" ? body.question.trim() : "";
   if (!question) return { error: "question is required" };
-  return { question };
+
+  const rawHistory = Array.isArray(body?.history) ? body.history : [];
+  const history = rawHistory
+    .map((entry) => ConversationTurn.safeParse(entry))
+    .filter((r): r is { success: true; data: ConversationTurn } => r.success)
+    .map((r) => r.data)
+    .slice(-CONVERSATION_HISTORY_MAX_TURNS);
+
+  return { question, history };
 }
 
 export function forecastErrorStatus(e: unknown): { status: number; error: string } {

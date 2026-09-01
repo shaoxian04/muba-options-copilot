@@ -116,6 +116,36 @@
 * {
   box-sizing: border-box;
 }
+
+/* ================= scrollbars ================= */
+/* Thin, rounded, and coloured off the same tokens as everything else -- the OS
+   default is a stark grey box with square arrow buttons that clashes with the rest of
+   this palette. Applied globally rather than to one selector, so any scrollable
+   region (this one today, another tomorrow) looks the same without having to
+   remember to opt it in each time. `var(--line)`/`var(--ink-3)` already flip with the
+   theme, so no separate light/dark rule is needed here. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-3);
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 html,
 body {
   height: 100%;
@@ -189,6 +219,14 @@ button[disabled] {
   background: var(--surface);
   border-right: 1px solid var(--line);
   min-width: 0;
+  /* `.chat` is itself a grid item in `.app`, and grid items have the same "grow to fit
+     content" default as flex items -- without this, long enough content in `.log`
+     grows `.chat` past its grid-allocated height instead of `.log` scrolling inside
+     it. `overflow: hidden` (matching `.rig`, its sibling column) is the enforcement:
+     it guarantees `.chat` itself never exceeds that height no matter what its content
+     wants, so `.log`'s own `overflow: auto` is the only place left for it to go. */
+  min-height: 0;
+  overflow: hidden;
 }
 .chat .hd {
   padding: 15px 18px;
@@ -204,6 +242,11 @@ button[disabled] {
 }
 .chat .log {
   flex: 1;
+  /* A flex child's height defaults to its content's natural height no matter what
+     `flex: 1` says, unless this is set -- without it, a long enough log grows the
+     whole `.chat` column instead of scrolling internally, pushing the input row
+     below the fold. */
+  min-height: 0;
   overflow: auto;
   padding: 18px;
   display: flex;
@@ -971,4 +1014,69 @@ button[disabled] {
 }
 .commit .receipt a {
   color: var(--hue-deep);
+}
+
+/* ================= chat panel: engine tabs ================= */
+/* Switches what the SAME chatbox is wired to -- never navigates, never remounts the
+   panel itself, so nothing about the surrounding layout changes when it's pressed. */
+.engine-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 18px 0;
+}
+.engine-tabs button {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.engine-tabs button:hover {
+  color: var(--ink);
+}
+.engine-tabs button[aria-selected="true"] {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+/* ================= chat panel: insights engine ================= */
+.chat .from-copilot .coin-answer {
+  margin: 0 0 8px;
+}
+.chat .from-copilot .coin-answer:last-child {
+  margin-bottom: 0;
+}
+.chat .from-copilot .disclaimer {
+  color: var(--ink-3);
+  font-size: 11px;
+  margin-top: 2px;
+}
+.chat .from-copilot .err {
+  color: var(--crit);
+}
+.ask-row {
+  display: flex;
+  gap: 8px;
+  margin: 6px 18px 18px;
+}
+.ask-row input {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--ink);
+  font: inherit;
+  min-width: 0;
+}
+.ask-row input:focus-visible {
+  outline: 2px solid var(--hue);
+  outline-offset: 1px;
+}
+.ask-row button {
+  background: var(--btn);
+  color: var(--btn-ink);
+  border-radius: 10px;
+  padding: 0 16px;
+  font-weight: 500;
 }
