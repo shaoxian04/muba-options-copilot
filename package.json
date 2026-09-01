@@ -13,6 +13,7 @@
     "dev": "npm run dev -w @copilot/api",
     "web": "npm run dev -w @copilot/web",
     "prototype": "node -e \"require('child_process').exec((process.platform==='win32'?'start \\\"\\\" ':'open ')+'apps/web/prototype-copilot.html')\"",
+    "prototype:v2": "node -e \"require('child_process').exec((process.platform==='win32'?'start \\\"\\\" ':'open ')+'apps/web/prototype-deck-v2.html')\"",
     "test": "npm run test:unit && npm run test:node && npm run test:e2e",
     "test:unit": "vitest run",
     "test:node": "npm run test -w @copilot/shared && npm run test -w @copilot/api",

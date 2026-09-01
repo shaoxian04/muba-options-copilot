@@ -136,12 +136,16 @@ it here with a one-line lesson.
 - **`apps/api/src/insurance/CONTEXT.md`** — Borrower, Loan, Cover, Liquidation Price, Lapse.
   **Read before any Liquidation Cover work.**
 - **`docs/adr/`** — the decisions and why they went that way. 0001 and 0004 are superseded;
-  0006–0008 are current. **Read before changing architecture, or when code looks deliberately
-  odd and you're tempted to "fix" it.**
+  0006–0010 are current — 0009 is why the surface may look like a game but never celebrates a
+  Fill, 0010 is why an Underlying is keyed by price feed and not by token. **Read before
+  changing architecture, or when code looks deliberately odd and you're tempted to "fix" it.**
 - **`README.md`** — API route table, repo layout, setup, security posture of the API process.
   **Read before running or wiring anything.**
-- **`apps/web/prototype-copilot.html`** — the settled interaction and visual design for the
-  trading surface. **Read before building any frontend.**
+- **`apps/web/prototype-copilot.html`** — the settled design for the single-asset ETH Deck as
+  built. Superseded for new work by the file below.
+- **`apps/web/prototype-deck-v2.html`** — the settled design for the multi-asset surface, on real
+  book data. Five variants; **`?variant=E` is the one chosen** — the others are kept only as the
+  comparison that chose it. **Read before building any frontend.**
 - **Issue #1 on the tracker** — the full spec for the Deck trading surface, including seams and
   test cases. **Read before starting frontend or `/deck` API work.**
 
