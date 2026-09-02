@@ -219,6 +219,14 @@ def test_the_three_weak_band_summaries_are_pairwise_distinct():
 
 
 @pytest.mark.parametrize("name", PROFILE_NAMES)
+def test_every_seed_strategys_band_field_matches_its_own_name(name):
+    # band is the card's server-authored first line (never parsed out of `name`
+    # in React) -- this pins the seed data so the two can't silently drift apart.
+    for strategy in load_profile(name):
+        assert strategy.band == _band_of(strategy)
+
+
+@pytest.mark.parametrize("name", PROFILE_NAMES)
 def test_every_bands_horizon_stays_inside_the_tapes_three_dealable_days(name):
     # apps/web/lib/surface.ts types Horizon as 1 | 2 | 3 and the Tape only
     # offers those three -- a Suggestion outside this range can't be dealt.

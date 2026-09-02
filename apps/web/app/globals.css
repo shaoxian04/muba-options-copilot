@@ -1156,11 +1156,27 @@ button[disabled] {
   padding-top: 10px;
   border-top: 1px solid var(--line-2);
 }
-.suggestion-card-name {
-  font-size: 13px;
+/* Three tight lines -- band, point, caveat -- replacing the old name+meta pair.
+   Font sizes and margins are kept small on purpose: three lines must not add up to
+   more than the two lines they replace, or the log above gets clipped. */
+.suggestion-card-band {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  margin: 0;
+  line-height: 1.3;
+}
+.suggestion-card-point {
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--ink);
+  margin: 1px 0;
+  line-height: 1.25;
+}
+.suggestion-card-caveat {
+  font-size: 10.5px;
+  color: var(--ink-3);
   margin: 0 0 4px;
+  line-height: 1.3;
 }
 .suggestion-card-blurb {
   font-size: 12px;

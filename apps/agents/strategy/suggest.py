@@ -25,6 +25,7 @@ class Suggestion:
     strategy_name: str  # analysis surface only, never crosses into a confirmation
     fired_at: pd.Timestamp  # the bar this fired on, analysis surface only
     summary: str  # analysis surface only: the card's non-numeric cover line (ADR-0005)
+    band: str  # analysis surface only: "weak"/"calm"/"", the card's first line
     then: Then  # the only field a confirmation flow may ever read from this type
 
 
@@ -77,6 +78,7 @@ def suggestions_for(
                     strategy_name=strategy.name,
                     fired_at=candles.index[-1],
                     summary=strategy.summary,
+                    band=strategy.band,
                     then=strategy.then,
                 )
             )

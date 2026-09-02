@@ -57,6 +57,7 @@ describe("GET /suggestion", () => {
       strategyName: "RSI oversold bounce",
       firedAt: "2026-09-01T00:00:00Z",
       coverSummary: "Buys a modest cover and holds it only briefly.",
+      marketBand: "calm",
       intent: { underlying: "ETH" as const, direction: "UP" as const, sizeUsdc: 2, horizonDays: 1 },
       asOf: "2026-09-01T00:05:00Z",
     };

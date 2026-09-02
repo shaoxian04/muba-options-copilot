@@ -28,6 +28,7 @@ import {
   type RiskProfileName,
   type SuggestionResponse,
 } from "../lib/api";
+import { agoShort } from "../lib/clock";
 import type { TradeIntent } from "../lib/surface";
 
 const CHOICES: { name: RiskProfileName; label: string; meaning: string }[] = [
@@ -345,13 +346,27 @@ function SuggestionBody({
   }
 
   const intent = data.intent;
-  const strategyName = data.strategyName ?? "A Suggestion";
-  const directionCopy = intent.direction === "DOWN" ? "ETH falling" : "ETH rising";
+  // strategyName is not displayed (the selected Risk Profile button above already
+  // names the profile) but still rides into decisionBody -> POST /decisions below,
+  // since the Decision log is where a strategy identifier actually matters.
+  const coin = intent.underlying;
+  const directionCopy = `${coin} ${intent.direction === "DOWN" ? "falling" : "rising"}`;
   const coverSummary = data.coverSummary ?? `Cover against ${directionCopy}.`;
+  const pointCopy =
+    intent.direction === "DOWN" ? `Protects ${coin} if the price drops` : `Protects ${coin} if the price rises`;
+  const bandCopy = data.marketBand === "weak" ? "weak market" : data.marketBand === "calm" ? "calm market" : null;
+  const firedAtMs = data.firedAt ? Date.parse(data.firedAt) : null;
+  const freshness = firedAtMs !== null && !Number.isNaN(firedAtMs) ? agoShort(firedAtMs, Date.now()) : null;
 
   return (
     <div className="suggestion-card-body suggestion-card-ready" aria-live="polite">
-      <p className="suggestion-card-name">{strategyName}</p>
+      {bandCopy ? <p className="suggestion-card-band">{bandCopy}</p> : null}
+      <p className="suggestion-card-point">{pointCopy}</p>
+      {freshness ? (
+        <p className="suggestion-card-caveat">
+          {coin} daily close, <time dateTime={data.firedAt ?? undefined}>{freshness}</time>
+        </p>
+      ) : null}
       <p className="suggestion-card-blurb">{coverSummary}</p>
       <p className={`suggestion-card-note${dealError ? " err" : ""}`}>
         {dealError ?? "No numbers yet. They show up if you continue."}

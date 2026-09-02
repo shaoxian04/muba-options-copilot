@@ -8,6 +8,7 @@ const validPayload = {
   strategyName: "RSI oversold bounce",
   firedAt: "2026-09-01T00:00:00+00:00",
   coverSummary: "Buys a modest cover and holds it only briefly.",
+  marketBand: "calm",
   intent: { underlying: "ETH", direction: "UP", sizeUsdc: 2, horizonDays: 1 },
   asOf: "2026-09-01T00:05:00+00:00",
 };
@@ -105,7 +106,7 @@ test("fetchSuggestion builds the URL from the endpoint and profile, trimming a t
 });
 
 test("fetchSuggestion accepts a null intent -- no strategy fired yet is a normal answer", async () => {
-  const noFiring = { profile: "balanced", strategyId: null, strategyName: null, firedAt: null, coverSummary: null, intent: null, asOf: validPayload.asOf };
+  const noFiring = { profile: "balanced", strategyId: null, strategyName: null, firedAt: null, coverSummary: null, marketBand: null, intent: null, asOf: validPayload.asOf };
   const result = await fetchSuggestion("balanced", deps({ fetch: async () => ({ ok: true, status: 200, json: async () => noFiring }) }));
   assert.equal(result.intent, null);
   assert.equal(result.strategyId, null);

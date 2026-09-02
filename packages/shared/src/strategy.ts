@@ -50,6 +50,13 @@ export function strategySchemas<TradeIntentSchema extends ZodTypeAny>(TradeInten
     // strategy's `summary`, never derived from a figure. Bounded like the
     // other display strings here.
     coverSummary: z.string().max(200).nullable(),
+    // "weak" or "calm" -- the market condition the fired band names, for the
+    // card's own first line rather than the frontend parsing it out of a
+    // strategy name. Bounded like coverSummary, though short in practice.
+    // `.optional()` (not just `.nullable()`) so an older agents service that
+    // never sends this key at all still parses -- the card degrades to no
+    // band line rather than the whole Suggestion becoming unavailable.
+    marketBand: z.string().max(20).nullable().optional(),
     intent: TradeIntent.nullable(),
     asOf: z.string().nullable(),
   });

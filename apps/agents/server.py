@@ -79,8 +79,9 @@ class Suggest(BaseModel):
     strategyId: str | None
     strategyName: str | None
     firedAt: str | None
-    
+
     coverSummary: str | None
+    marketBand: str | None
     intent: TradeIntent | None
     asOf: str
 
@@ -184,6 +185,7 @@ def suggest(
             strategyName=None,
             firedAt=None,
             coverSummary=None,
+            marketBand=None,
             intent=None,
             asOf=as_of,
         )
@@ -202,6 +204,7 @@ def suggest(
         strategyName=suggestion.strategy_name,
         firedAt=suggestion.fired_at.isoformat(),
         coverSummary=suggestion.summary or None,
+        marketBand=suggestion.band or None,
         intent=TradeIntent(**suggestion.then.model_dump()),
         asOf=as_of,
     )
