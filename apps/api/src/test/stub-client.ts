@@ -27,6 +27,8 @@ export const state = {
   spot: SPOT as number | null,
   canSign: false,
   positions: [] as unknown[],
+  /** The wallet's current on-chain USDC allowance to the OptionBook, in 6 decimals. */
+  allowance: 0n as bigint,
 };
 
 /** Anything that would have moved money. Asserted on, never expected to fire. */
@@ -36,6 +38,15 @@ export const spies = {
   fetchOrders: vi.fn(async () => state.book),
   getMarketData: vi.fn(async () => ({ prices: { ETH: state.spot } })),
   previewFillOrder: vi.fn(previewFillOrder),
+  getAllowance: vi.fn(async (_token: string, _owner: string, _spender: string) => state.allowance),
+  encodeApprove: vi.fn((token: string, spender: string, amount: bigint) => ({
+    to: token,
+    data: `0xapprove:${spender}:${amount}`,
+  })),
+  encodeFillOrder: vi.fn((order: OrderWithSignature, amount: bigint) => ({
+    to: chain.contracts.optionBook,
+    data: `0xfillorder:${order.makerAddress}:${amount}`,
+  })),
 };
 
 export function resetStub(): void {
@@ -43,6 +54,7 @@ export function resetStub(): void {
   state.spot = SPOT;
   state.canSign = false;
   state.positions = [];
+  state.allowance = 0n;
   for (const spy of Object.values(spies)) spy.mockClear();
 }
 
@@ -56,8 +68,13 @@ export function getClient(): any {
     optionBook: {
       previewFillOrder: spies.previewFillOrder,
       fillOrder: spies.fillOrder,
+      encodeFillOrder: spies.encodeFillOrder,
     },
-    erc20: { ensureAllowance: spies.ensureAllowance },
+    erc20: {
+      ensureAllowance: spies.ensureAllowance,
+      getAllowance: spies.getAllowance,
+      encodeApprove: spies.encodeApprove,
+    },
     utils: { calculatePayout },
   };
 }
