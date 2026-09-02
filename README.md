@@ -65,8 +65,10 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 | `GET /deck` | no | every Order buyable right now for one direction and one expiry, as Cards. `?direction=DOWN\|UP&horizonDays=1\|2\|3&sizeUsdc=n` |
 | `POST /propose` | **no** | TradeIntent in, `PROPOSAL \| VETO \| NO_ORDER` out. Prices a real order, signs nothing. Takes an optional `cardRef`. |
 | `POST /practice` | **no** | opens a simulated Position from a `proposalId`. No token, no Risk Budget, no signer in reach. |
-| `POST /fill/prepare` | no | reserves Risk Budget against a proposalId from `/propose` and returns the unsigned transaction(s) the Trader's own wallet must send (ADR-0009) |
-| `POST /fill/settle` | no | finalizes or releases that reservation once the wallet reports what happened |
+| `POST /auth/challenge` | no | issues a one-time message for the Trader's wallet to sign, proving ownership (ADR-0010) |
+| `POST /auth/verify` | no | verifies that signature and marks the session's wallet proven |
+| `POST /fill/prepare` | no | reserves Risk Budget against a proposalId from `/propose` and returns the unsigned transaction(s) the Trader's own **proven** wallet must send |
+| `POST /fill/settle` | no | looks up the transaction's real result on-chain and finalizes or releases the reservation accordingly (ADR-0010) |
 | `GET /positions` | no | the board: holdings for whichever wallet address the browser reports (falling back to the operator's configured wallet), plus this session's Practice Runs, each labelled |
 | `GET /forecast/news` | no | simulated-headline sentiment for `?symbol=&horizon=`. Opinion, quarantined from the trade flow (ADR-0005) |
 | `GET /forecast/price` | no | a price prediction grounded in real market data. Opinion, never a trade input |
@@ -76,7 +78,11 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 Confirm does — the Trader's own connected wallet signs and submits the actual transaction
 (ADR-0009), so the backend never holds a Trader's key. The chosen order is held server-side
 and only a `proposalId` goes out, so no caller can ask us to prepare a fill for an order we
-never priced.
+never priced. `/fill/prepare` also refuses a `walletAddress` the session has not proven it
+owns — that proof comes from `/auth/challenge` and `/auth/verify`, a signed message rather
+than a transaction. And `/fill/settle` no longer trusts the browser's own report of whether
+a fill worked: given a `txHash`, it looks up that transaction's real receipt on-chain and
+decides success or failure from that alone (ADR-0010).
 
 Every number a Trader reads crosses the wire as `{ value, display }` -- formatted once, on
 the server. The frontend renders `display` verbatim and never formats or recomputes; if it
@@ -150,6 +156,7 @@ The reasoning behind this project is written down, not assumed:
   - [0006](./docs/adr/0006-the-agent-selects-the-order-code-derives-every-number.md) — the agent picks the Order, code derives every number (supersedes 0001)
   - [0007](./docs/adr/0007-agents-are-a-python-service-behind-the-node-backend.md) — the agents are Python, behind the Node backend (supersedes half of 0004)
   - [0008](./docs/adr/0008-cover-is-bought-by-rfq-for-single-collateral-loans-only.md) — Cover is RFQ-only, single-collateral Loans only
+  - [0010](./docs/adr/0010-wallet-proof-sessions-and-chain-verified-settle.md) — sessions prove wallet ownership before a fill; the chain decides whether a fill succeeded
 
 ## Layout
 
