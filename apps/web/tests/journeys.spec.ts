@@ -382,6 +382,22 @@ test.describe("finishing, for real and for practice", () => {
     await expect(receipt.getByRole("link")).toHaveAttribute("href", /^https?:\/\//);
   });
 
+  test("still shows the receipt when reporting success back to the server fails", async ({ page }) => {
+    // The wallet has already broadcast and mined the transaction by the time the app
+    // tells the backend about it -- real money has moved, so a failure of THAT report
+    // must never be shown to the Trader as if their fill itself had failed.
+    await stubApi(page, "settle-fails");
+    await installFakeWallet(page);
+    await page.goto("/");
+    await connectWallet(page);
+    await deal(page);
+
+    await page.getByTestId("confirm").click();
+
+    await expect(page.getByTestId("receipt")).toBeVisible();
+    await expect(page.getByTestId("refusal")).toHaveCount(0);
+  });
+
   test("shows a failure and releases the reservation when the wallet's transaction fails on-chain", async ({
     page,
   }) => {

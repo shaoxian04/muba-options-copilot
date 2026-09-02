@@ -359,7 +359,11 @@ export function useSurface(): Surface {
       prepared = await prepareFill(p.proposalId, walletAddress);
       if (prepared.approveTx) await sendTx(prepared.approveTx);
       const txHash = await sendTx(prepared.fillTx);
-      await settleFill(p.proposalId, { succeeded: true, txHash });
+
+      // The wallet has already broadcast and mined this -- the Trader's money has
+      // moved. Everything from here is bookkeeping, so a failure to reach
+      // /fill/settle must never be caught below and reported as a failed fill.
+      await settleFill(p.proposalId, { succeeded: true, txHash }).catch(() => {});
 
       say(`Bought. ${p.proposal.figures.contracts.display} contracts at ${p.proposal.figures.strike.display}, paid ${p.proposal.figures.premiumUsdc.display}.`);
       clearSelection();

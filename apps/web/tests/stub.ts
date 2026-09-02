@@ -71,7 +71,7 @@ export const fixtures = {
 /** Longest shot first, so index 0 is the leftmost Card in the row. */
 export const cards = deckDown1.cards;
 
-export type Scenario = "normal" | "veto" | "no-order" | "empty" | "compressed" | "over-budget";
+export type Scenario = "normal" | "veto" | "no-order" | "empty" | "compressed" | "over-budget" | "settle-fails";
 
 export interface Traffic {
   /** Every request the page made to the API, in order. */
@@ -215,6 +215,12 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
       case "/fill/settle": {
         if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
         const { succeeded } = request.postDataJSON() as { succeeded: boolean };
+        // Simulates the settle call itself failing (a dropped connection, a transient
+        // 502) AFTER the wallet has already broadcast and mined the fill -- the money
+        // has moved regardless of whether this report of it reaches the backend.
+        if (scenario === "settle-fails" && succeeded) {
+          return json(route, { error: "Could not update the Risk Budget." }, traffic, 502);
+        }
         if (!succeeded) reservedUsdc = 0; // released; a success instead keeps it spent
         return json(route, { remainingUsdc: sessionSnapshot().remainingUsdc }, traffic);
       }
