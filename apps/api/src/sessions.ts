@@ -29,6 +29,13 @@ export interface Session {
   /** Cards dealt this session, keyed by the opaque ref the browser was given. */
   cards: Map<string, { order: OrderWithSignature; at: number }>;
   /**
+   * A reservation made by POST /fill/prepare, held until POST /fill/settle reports what
+   * happened. Signing takes real time -- possibly two separate wallet prompts -- so this
+   * gets its own, more generous TTL than a Deck quote's 60 seconds; if /fill/settle never
+   * comes (the Trader closed the tab mid-signature), `sweepPendingFills` releases it.
+   */
+  pendingFills: Map<string, { maxLossUsdc: number; at: number }>;
+  /**
    * Per-session key that turns an Order's identity into its cardRef. Random, so a ref
    * is unguessable and reveals nothing about the maker; per-session, so a ref dealt to
    * one Trader resolves to nothing in anyone else's Deck.
@@ -59,6 +66,7 @@ export function getSession(id = "default"): Session {
       spentUsdc: 0,
       proposals: new Map(),
       cards: new Map(),
+      pendingFills: new Map(),
       cardKey: randomBytes(32),
       practice: [],
     };
@@ -68,8 +76,11 @@ export function getSession(id = "default"): Session {
 }
 
 /** The session named by an unauthenticated `x-session-id` header -- see the note above. */
-export const sessionFor = (headers: Record<string, unknown>): Session =>
-  getSession(typeof headers["x-session-id"] === "string" ? (headers["x-session-id"] as string) : "default");
+export const sessionFor = (headers: Record<string, unknown>): Session => {
+  const s = getSession(typeof headers["x-session-id"] === "string" ? (headers["x-session-id"] as string) : "default");
+  sweepPendingFills(s);
+  return s;
+};
 
 export const remainingBudget = (s: Session): number => Math.max(0, s.riskBudgetUsdc - s.spentUsdc);
 
@@ -155,6 +166,41 @@ export function recallCard(s: Session, ref: string) {
     return undefined;
   }
   return found;
+}
+
+/** Long enough for a Trader to see two wallet prompts through; short enough not to leak budget forever if they never do. */
+const PENDING_FILL_TTL_MS = 5 * 60_000;
+
+/**
+ * Reserve budget for a prepared fill. Called synchronously, before any await, by the
+ * same reasoning the old single-call /fill handler documented: Node has no threads, so
+ * nothing can interleave between the remainingBudget check and this mutation.
+ */
+export function reservePendingFill(s: Session, proposalId: string, maxLossUsdc: number): void {
+  s.spentUsdc += maxLossUsdc;
+  s.pendingFills.set(proposalId, { maxLossUsdc, at: Date.now() });
+}
+
+/** The fill succeeded: keep the spend, stop tracking the reservation. */
+export function confirmPendingFill(s: Session, proposalId: string): boolean {
+  return s.pendingFills.delete(proposalId);
+}
+
+/** The fill did not happen -- rejected, failed on-chain, or abandoned -- give the budget back. */
+export function releasePendingFill(s: Session, proposalId: string): boolean {
+  const found = s.pendingFills.get(proposalId);
+  if (!found) return false;
+  s.spentUsdc -= found.maxLossUsdc;
+  s.pendingFills.delete(proposalId);
+  return true;
+}
+
+/** Release anything abandoned mid-signature. Deleting the current key during a for-of over the same Map is safe. */
+export function sweepPendingFills(s: Session): void {
+  const now = Date.now();
+  for (const [id, v] of s.pendingFills) {
+    if (now - v.at > PENDING_FILL_TTL_MS) releasePendingFill(s, id);
+  }
 }
 
 /** Compare against every candidate without letting the clock reveal how close a guess was. */
