@@ -38,6 +38,20 @@ export function resetSupabaseStub(): void {
   state.linkedWallets.clear();
   state.practicePositions = [];
   state.activity = [];
+  timestampCounter = 0;
+}
+
+/**
+ * A strictly increasing fake timestamp for rows inserted within the same test. Real
+ * Postgres timestamps have far finer resolution than `Date.now()`'s millisecond, so two
+ * inserts issued back to back in one test tick can otherwise land on the exact same
+ * `Date.now()` value -- which breaks "newest first" ordering tests that insert several
+ * rows in immediate succession.
+ */
+let timestampCounter = 0;
+function nextTimestamp(): string {
+  timestampCounter += 1;
+  return new Date(Date.now() + timestampCounter).toISOString();
 }
 
 /** Registers a fake token as belonging to a real (fake) user, for tests to sign in as. */
@@ -106,7 +120,7 @@ function tableFor(table: string) {
           figures: row.figures,
           asset: row.asset as string,
           direction: row.direction as string,
-          opened_at: new Date().toISOString(),
+          opened_at: nextTimestamp(),
         });
         return { error: null };
       }
@@ -116,7 +130,7 @@ function tableFor(table: string) {
           user_id: row.user_id as string,
           action_type: row.action_type as string,
           detail: row.detail,
-          created_at: new Date().toISOString(),
+          created_at: nextTimestamp(),
         });
         return { error: null };
       }
