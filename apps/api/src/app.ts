@@ -29,7 +29,7 @@ import { buildDeck } from "./thetanuts/deck.js";
 import { buildDepth } from "./thetanuts/depth-view.js";
 import { marketOverview } from "./thetanuts/markets.js";
 import { reviewIntent } from "./agents/review.js";
-import { practiceRoutes, practiceHoldings } from "./practice.js";
+import { practiceRoutes, practiceHoldings, type PracticePosition } from "./practice.js";
 import { rfqRoutes } from "./rfq.js";
 import { safeErrorResponse } from "./errors.js";
 import { realHoldings } from "./thetanuts/holdings.js";
@@ -37,7 +37,10 @@ import { prepareFillTx, UnsafeOrder } from "./thetanuts/prepareFill.js";
 import { verifyFillOnChain } from "./thetanuts/verifyFill.js";
 import { buildChallengeMessage, generateNonce, verifyChallengeSignature } from "./auth.js";
 import { requireAccount, optionalAccountId } from "./account.js";
-import { upsertLinkedWallet, logActivity } from "./accountStore.js";
+import {
+  upsertLinkedWallet, logActivity, getAccountSettings, saveAccountSettings,
+  getLinkedWallet, listPracticePositionsAsHoldings, recordPracticePosition,
+} from "./accountStore.js";
 import { usd } from "./format.js";
 import {
   sessionFor, remainingBudget, setRiskBudget,
@@ -215,6 +218,25 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.get("/session", async (req, reply) => {
     if (!requireToken(req, reply)) return;
     const s = sessionFor(req.headers);
+
+    const userId = await optionalAccountId(req);
+    if (userId) {
+      const settings = await getAccountSettings(userId);
+      // Seed the in-memory ceiling from the account's saved one. `setRiskBudget` refuses
+      // a ceiling below what's already been spent this session -- which can genuinely
+      // happen here (unlike at session creation) if /session is polled again after some
+      // spend, and the account's saved ceiling is now lower than that spend. Skip the
+      // seed rather than throwing: the ceiling in memory simply stays at its current,
+      // still-valid value for the rest of this session.
+      if (s.riskBudgetUsdc !== settings.riskBudgetUsdc) {
+        try {
+          setRiskBudget(s, settings.riskBudgetUsdc);
+        } catch {
+          // already spent more than the account's current setting -- leave s.riskBudgetUsdc as is
+        }
+      }
+    }
+
     const remaining = remainingBudget(s);
     return {
       riskBudgetUsdc: s.riskBudgetUsdc,
@@ -239,6 +261,13 @@ export async function buildApp(): Promise<FastifyInstance> {
     } catch (e: any) {
       return reply.code(400).send({ error: e.message });
     }
+
+    const userId = await optionalAccountId(req);
+    if (userId) {
+      void saveAccountSettings(userId, { riskBudgetUsdc });
+      void logActivity(userId, "budget_changed", { riskBudgetUsdc });
+    }
+
     return { riskBudgetUsdc: s.riskBudgetUsdc, remainingUsdc: remainingBudget(s) };
   });
 
@@ -525,11 +554,16 @@ export async function buildApp(): Promise<FastifyInstance> {
    * The board: everything the Trader holds, real and practised, each labelled.
    *
    * Reads holdings for whichever wallet the browser reports as connected (ADR-0011).
-   * With none given, it falls back to the operator's own configured wallet -- which is
-   * what keeps a wallet-less dev session and the CLI's single-wallet model working
-   * exactly as before. Gated on having an address, not on `canSign()` -- a non-custodial
-   * deployment never holds a signing key at all, and its board must still show whatever
-   * wallet the browser connected.
+   * With none given, falls back to the signed-in account's linked wallet, if any, then
+   * to the operator's own configured wallet -- which is what keeps a wallet-less dev
+   * session and the CLI's single-wallet model working exactly as before. Gated on
+   * having an address, not on `canSign()` -- a non-custodial deployment never holds a
+   * signing key at all, and its board must still show whatever wallet the browser
+   * connected.
+   *
+   * Practice Run holdings come from the account's persisted history when signed in
+   * (ADR-0013), or the in-memory session otherwise -- never both, so a Practice Run
+   * opened this session while signed in is not double-counted.
    */
   app.get("/positions", async (req, reply) => {
     if (!requireToken(req, reply)) return;
@@ -541,15 +575,20 @@ export async function buildApp(): Promise<FastifyInstance> {
     // used to read ETH's and value all six against it, which marked a BTC holding at
     // `max(0, ETH_spot - BTC_strike)` -- zero, however deep in the money it really was.
     const prices = await spotPrices().catch(() => ({}) as Record<string, number>);
-    const address = parsedQuery.data.address ?? walletAddress();
+    const userId = await optionalAccountId(req);
+    const linkedWallet = userId ? await getLinkedWallet(userId) : null;
+    const address = parsedQuery.data.address ?? linkedWallet?.address ?? walletAddress();
 
     const [real, resolvedAddress] = address ? await realHoldings(prices, address) : [[], null];
+    const practiceHoldingsList = userId
+      ? await listPracticePositionsAsHoldings(userId, prices)
+      : practiceHoldings(session, prices);
 
     return {
       address: resolvedAddress,
       // The headline price stays ETH's: it labels the tape, not any one holding.
       spotUsd: prices.ETH === undefined ? null : usd(prices.ETH),
-      holdings: [...real, ...practiceHoldings(session, prices)],
+      holdings: [...real, ...practiceHoldingsList],
     };
   });
 
@@ -620,7 +659,16 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
   });
 
-  await app.register(practiceRoutes);
+  await app.register(practiceRoutes, {
+    onOpened: (position: PracticePosition, req: unknown) => {
+      void (async () => {
+        const userId = await optionalAccountId(req);
+        if (!userId) return;
+        await recordPracticePosition(userId, position);
+        await logActivity(userId, "practice", { asset: position.asset, direction: position.direction });
+      })();
+    },
+  });
   await app.register(rfqRoutes);
 
   return app;
