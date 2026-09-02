@@ -276,44 +276,121 @@ describe("POST /fill/prepare", () => {
 });
 
 describe("POST /fill/settle", () => {
-  it("keeps the reservation on success", async () => {
+  it("keeps the reservation when the chain confirms the fill succeeded", async () => {
     const session = freshSession();
+    await proveWallet(app, session);
     const proposalId = await proposalIn(session);
     await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
+    state.receipt = { status: 1, to: chain.contracts.optionBook };
 
-    const res = await settle(session, { proposalId, succeeded: true, txHash: "0xTX" });
+    const res = await settle(session, { proposalId, txHash: "0xTX" });
 
     expect(res.statusCode).toBe(200);
+    expect(res.json().confirmed).toBe(true);
     expect(res.json().remainingUsdc).toBeCloseTo(3, 2);
     const s = await sessionState(session);
     expect(s.spentUsdc).toBeCloseTo(2, 2);
   });
 
-  it("releases the reservation on failure", async () => {
+  it("releases the reservation when the chain says the transaction reverted", async () => {
     const session = freshSession();
+    await proveWallet(app, session);
     const proposalId = await proposalIn(session);
     await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
+    state.receipt = { status: 0, to: chain.contracts.optionBook };
 
-    const res = await settle(session, { proposalId, succeeded: false });
+    const res = await settle(session, { proposalId, txHash: "0xTX" });
 
     expect(res.statusCode).toBe(200);
+    expect(res.json().confirmed).toBe(false);
     expect(res.json().remainingUsdc).toBe(5);
     const s = await sessionState(session);
     expect(s.spentUsdc).toBe(0);
   });
 
+  it("ignores a dishonest client and trusts the chain instead", async () => {
+    // The whole point: a client cannot report failure for a fill that actually
+    // succeeded on-chain, or success for one that did not. There is no field left in
+    // the request that could claim either outcome -- only the chain lookup decides.
+    const session = freshSession();
+    await proveWallet(app, session);
+    const proposalId = await proposalIn(session);
+    await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
+    state.receipt = { status: 1, to: chain.contracts.optionBook }; // really succeeded
+
+    const res = await settle(session, { proposalId, txHash: "0xTX" });
+
+    expect(res.json().confirmed).toBe(true);
+  });
+
+  it("releases the reservation with no chain check when no txHash is given", async () => {
+    const session = freshSession();
+    await proveWallet(app, session);
+    const proposalId = await proposalIn(session);
+    await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
+
+    const res = await settle(session, { proposalId });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().confirmed).toBe(false);
+    expect(res.json().remainingUsdc).toBe(5);
+    expect(spies.getTransactionReceipt).not.toHaveBeenCalled();
+  });
+
+  it("answers 'not yet visible' rather than releasing when the receipt cannot be found", async () => {
+    const session = freshSession();
+    await proveWallet(app, session);
+    const proposalId = await proposalIn(session);
+    await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
+    state.receipt = null;
+
+    const res = await settle(session, { proposalId, txHash: "0xTX" });
+
+    expect(res.statusCode).toBe(425);
+    const s = await sessionState(session);
+    expect(s.spentUsdc).toBeCloseTo(2, 2); // still reserved -- nothing was decided yet
+  });
+
+  it("sends a sanitized message and keeps the reservation intact when the RPC call itself fails", async () => {
+    const session = freshSession();
+    await proveWallet(app, session);
+    const proposalId = await proposalIn(session);
+    await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
+    spies.getTransactionReceipt.mockRejectedValueOnce(new Error("RPC https://base-mainnet.g.alchemy.com/v2/SECRETKEY timed out"));
+
+    const res = await settle(session, { proposalId, txHash: "0xTX" });
+
+    expect(res.statusCode).toBe(502);
+    expect(JSON.stringify(res.json())).not.toContain("SECRETKEY");
+    const s = await sessionState(session);
+    expect(s.spentUsdc).toBeCloseTo(2, 2);
+  });
+
   it("refuses to settle a proposal that was never prepared", async () => {
-    const res = await settle(freshSession(), { proposalId: "never-prepared", succeeded: true });
+    const res = await settle(freshSession(), { proposalId: "never-prepared" });
     expect(res.statusCode).toBe(410);
   });
 
-  it("is one-shot -- settling twice fails the second time", async () => {
+  it("is one-shot on the no-txHash path -- settling twice fails the second time", async () => {
     const session = freshSession();
+    await proveWallet(app, session);
     const proposalId = await proposalIn(session);
     await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
-    await settle(session, { proposalId, succeeded: true });
+    await settle(session, { proposalId });
 
-    const second = await settle(session, { proposalId, succeeded: true });
+    const second = await settle(session, { proposalId });
+    expect(second.statusCode).toBe(410);
+  });
+
+  it("is one-shot on the confirmed path -- settling twice fails the second time", async () => {
+    const session = freshSession();
+    await proveWallet(app, session);
+    const proposalId = await proposalIn(session);
+    await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
+    state.receipt = { status: 1, to: chain.contracts.optionBook };
+    await settle(session, { proposalId, txHash: "0xTX" });
+
+    const second = await settle(session, { proposalId, txHash: "0xTX" });
     expect(second.statusCode).toBe(410);
   });
 });

@@ -46,6 +46,6 @@ export async function verifyFillOnChain(txHash: string, deps: VerifyFillDeps = d
 
   if (!receipt) return { found: false, succeeded: false };
 
-  const toMatches = (receipt.to ?? "").toLowerCase() === chain.contracts.optionBook.toLowerCase();
+  const toMatches = (receipt.to ?? "").toLowerCase() === (chain.contracts.optionBook ?? "").toLowerCase();
   return { found: true, succeeded: receipt.status === 1 && toMatches };
 }

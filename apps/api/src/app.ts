@@ -29,6 +29,7 @@ import { practiceRoutes, practiceHoldings } from "./practice.js";
 import { safeErrorResponse } from "./errors.js";
 import { realHoldings } from "./thetanuts/holdings.js";
 import { prepareFillTx, UnsafeOrder } from "./thetanuts/prepareFill.js";
+import { verifyFillOnChain } from "./thetanuts/verifyFill.js";
 import { buildChallengeMessage, generateNonce, verifyChallengeSignature } from "./auth.js";
 import { usd } from "./format.js";
 import {
@@ -393,20 +394,41 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   /**
-   * Finalizes or releases a reservation `POST /fill/prepare` made, once the Trader's
-   * wallet has actually sent (or refused to send) the transaction(s).
+   * Finalizes or releases a reservation `POST /fill/prepare` made. When a transaction
+   * hash is given, the chain -- not the caller -- decides the outcome (ADR-0010): the
+   * backend looks up the real receipt through its own RPC connection. No hash means
+   * nothing was ever sent (the wallet declined to sign), so there is nothing to check
+   * and the reservation is simply released.
    */
   app.post("/fill/settle", async (req, reply) => {
     if (!requireToken(req, reply)) return;
     const parsed = FillSettleRequest.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "proposalId and succeeded are required" });
-    const { proposalId, succeeded } = parsed.data;
-
+    if (!parsed.success) return reply.code(400).send({ error: "proposalId is required" });
+    const { proposalId, txHash } = parsed.data;
     const s = sessionFor(req.headers);
-    const existed = succeeded ? confirmPendingFill(s, proposalId) : releasePendingFill(s, proposalId);
-    if (!existed) return reply.code(410).send({ error: "No prepared fill found for that proposal." });
 
-    return { remainingUsdc: remainingBudget(s) };
+    if (!txHash) {
+      const existed = releasePendingFill(s, proposalId);
+      if (!existed) return reply.code(410).send({ error: "No prepared fill found for that proposal." });
+      return { remainingUsdc: remainingBudget(s), confirmed: false };
+    }
+
+    try {
+      const verification = await verifyFillOnChain(txHash);
+      if (!verification.found) {
+        reply.code(425).send({ error: "That transaction is not visible yet. Try settling again shortly." });
+        return;
+      }
+      const existed = verification.succeeded ? confirmPendingFill(s, proposalId) : releasePendingFill(s, proposalId);
+      if (!existed) {
+        reply.code(410).send({ error: "No prepared fill found for that proposal." });
+        return;
+      }
+      return { remainingUsdc: remainingBudget(s), confirmed: verification.succeeded };
+    } catch (e) {
+      reply.code(502).send(safeErrorResponse(req.log, e, "Could not verify that transaction. Try again."));
+      return;
+    }
   });
 
   const PositionsQuery = z.object({
