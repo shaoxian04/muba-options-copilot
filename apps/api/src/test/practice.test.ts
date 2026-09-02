@@ -18,7 +18,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
-import { resetStub, spies, state } from "./stub-client.js";
+import { resetStub, spies, state, TRADER_ADDRESS } from "./stub-client.js";
 import { NOW, makePosition } from "./fixtures.js";
 
 vi.useFakeTimers({ toFake: ["Date"] });
@@ -105,9 +105,9 @@ describe("POST /practice", () => {
       // ...while the route that spends money still refuses without it.
       const fill = await gated.inject({
         method: "POST",
-        url: "/fill",
+        url: "/fill/prepare",
         headers: { "x-session-id": session },
-        payload: { proposalId },
+        payload: { proposalId, walletAddress: TRADER_ADDRESS },
       });
       expect(fill.statusCode).toBe(401);
     } finally {
@@ -164,22 +164,22 @@ describe("POST /practice", () => {
  * A boolean that switches a money route into a non-money route is precisely the kind of
  * thing that fails open under a typo or a merge. There is no such boolean.
  */
-describe("/fill has no practice flag", () => {
-  it("still tries to spend when handed one", async () => {
+describe("/fill/prepare has no practice flag", () => {
+  it("still prepares a real fill when handed one", async () => {
     state.canSign = true;
     const session = freshSession();
     const proposalId = await proposalIn(session);
 
     const res = await app.inject({
       method: "POST",
-      url: "/fill",
+      url: "/fill/prepare",
       headers: { "x-session-id": session },
-      payload: { proposalId, practice: true, dryRun: true, simulate: true },
+      payload: { proposalId, walletAddress: TRADER_ADDRESS, practice: true, dryRun: true, simulate: true },
     });
 
-    // It filled for real, which is the correct and only behaviour of this route.
+    // It prepared a real fill, which is the correct and only behaviour of this route.
     expect(res.statusCode).toBe(200);
-    expect(spies.fillOrder).toHaveBeenCalledTimes(1);
+    expect(spies.encodeFillOrder).toHaveBeenCalledTimes(1);
   });
 
   it("opens no practice holding when handed one", async () => {
@@ -187,9 +187,9 @@ describe("/fill has no practice flag", () => {
     const session = freshSession();
     await app.inject({
       method: "POST",
-      url: "/fill",
+      url: "/fill/prepare",
       headers: { "x-session-id": session },
-      payload: { proposalId: await proposalIn(session), practice: true },
+      payload: { proposalId: await proposalIn(session), walletAddress: TRADER_ADDRESS, practice: true },
     });
 
     const board = (await positions(session)).json();

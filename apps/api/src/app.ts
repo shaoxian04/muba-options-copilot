@@ -19,7 +19,7 @@ import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
 import { ProposeRequest, type ProposeResult } from "@copilot/shared";
-import { canSign } from "./thetanuts/client.js";
+import { canSign, walletAddress, chain } from "./thetanuts/client.js";
 import { buyableOrders, impliedVol, daysToExpiry, orderIdentity, PUT } from "./thetanuts/orders.js";
 import { spotPrice } from "./thetanuts/market.js";
 import { proposeTrade, proposeChosenOrder, NoSuitableOrder, QuoteMoved } from "./thetanuts/propose.js";
@@ -28,12 +28,15 @@ import { reviewIntent } from "./agents/review.js";
 import { practiceRoutes, practiceHoldings } from "./practice.js";
 import { safeErrorResponse } from "./errors.js";
 import { realHoldings } from "./thetanuts/holdings.js";
+import { prepareFillTx, UnsafeOrder } from "./thetanuts/prepareFill.js";
 import { usd } from "./format.js";
-import { executeFill, RiskBudgetExceeded, UnsafeOrder } from "./thetanuts/execute.js";
 import {
   sessionFor, remainingBudget, setRiskBudget,
-  rememberProposal, recallProposal, rememberCard, recallCard, ProposalIdBody, type Session,
+  rememberProposal, recallProposal, rememberCard, recallCard,
+  reservePendingFill, confirmPendingFill, releasePendingFill,
+  type Session,
 } from "./sessions.js";
+import { FillPrepareRequest, FillSettleRequest, type PreparedFill } from "@copilot/shared";
 import { buildScenario } from "./forecast/scenario.js";
 import { analyzeNews } from "./forecast/news.js";
 import { predictPrice } from "./forecast/price.js";
@@ -283,65 +286,102 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   /**
-   * The only route that spends money. Takes a proposal id, never a raw order --
-   * so a caller cannot hand us an order we never priced or vetted.
+   * The Trader's own wallet signs the fill (ADR-0009). This route never signs or
+   * submits anything -- it re-checks the Risk Budget, reserves the spend, and returns
+   * the unsigned transaction(s) the connected wallet must send. `POST /fill/settle`
+   * finalizes or releases that reservation once the wallet reports what happened.
    */
-  app.post("/fill", async (req, reply) => {
+  app.post("/fill/prepare", async (req, reply): Promise<PreparedFill | undefined> => {
     if (!requireToken(req, reply)) return;
-    const parsedBody = ProposalIdBody.safeParse(req.body);
-    if (!parsedBody.success) return reply.code(400).send({ error: "proposalId required" });
-    const { proposalId } = parsedBody.data;
-    if (!canSign()) return reply.code(503).send({ error: "No signer configured. Set THETANUTS_PRIVATE_KEY." });
+    const parsed = FillPrepareRequest.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400).send({ error: "proposalId and a valid walletAddress are required", issues: parsed.error.issues });
+      return;
+    }
+    const { proposalId, walletAddress: trader } = parsed.data;
 
     const s = sessionFor(req.headers);
     const found = recallProposal(s, proposalId);
-    if (!found)
-      return reply.code(410).send({ error: "That quote has expired. Prices move -- ask for a fresh one." });
+    if (!found) {
+      reply.code(410).send({ error: "That quote has expired. Prices move -- ask for a fresh one." });
+      return;
+    }
 
-    // Reserve the spend and consume the proposal SYNCHRONOUSLY, before the await below.
-    // Node has no threads, so nothing can interleave between this check and this mutation --
-    // that's what makes it atomic. Doing this after the await (the old code) left a window
-    // where two concurrent /fill calls could both pass the budget check before either one's
-    // spend was recorded.
     const remaining = remainingBudget(s);
-    if (found.proposal.maxLossUsdc > remaining)
-      return reply.code(403).send({
+    if (found.proposal.maxLossUsdc > remaining) {
+      reply.code(403).send({
         error: `This trade risks $${found.proposal.maxLossUsdc.toFixed(2)} but only $${remaining.toFixed(2)} of the Risk Budget remains.`,
       });
+      return;
+    }
+
+    // Reserve and consume the proposal SYNCHRONOUSLY, before the await below -- same
+    // reasoning the old single-call /fill handler documented: nothing can interleave
+    // between this check and this mutation, which is what makes it atomic.
     s.proposals.delete(proposalId);
-    s.spentUsdc += found.proposal.maxLossUsdc;
+    reservePendingFill(s, proposalId, found.proposal.maxLossUsdc);
 
     try {
-      const result = await executeFill(found.proposal, found.order, remainingBudget(s) + found.proposal.maxLossUsdc);
-      return { ...result, remainingUsdc: remainingBudget(s) };
+      const prepared = await prepareFillTx(found.proposal, found.order, trader);
+      return {
+        approveTx: prepared.approveTx,
+        fillTx: prepared.fillTx,
+        optionAddress: prepared.optionAddress,
+        explorerTxUrlBase: `${chain.explorerUrl}/tx/`,
+        remainingUsdc: remainingBudget(s),
+      };
     } catch (e: any) {
-      s.spentUsdc -= found.proposal.maxLossUsdc; // the fill never happened -- release the reservation
-      if (e instanceof RiskBudgetExceeded) return reply.code(403).send({ error: e.message });
-      if (e instanceof UnsafeOrder) return reply.code(403).send({ error: e.message });
-      // Raw ethers/RPC error text can carry the provider API key embedded in
-      // THETANUTS_RPC_URL -- never forward e.message to the caller. See errors.ts.
-      return reply.code(502).send(safeErrorResponse(req.log, e, "Fill failed. Try again, or ask for a fresh quote if this keeps happening."));
+      releasePendingFill(s, proposalId); // preparing failed -- give the reservation back
+      if (e instanceof UnsafeOrder) {
+        reply.code(403).send({ error: e.message });
+        return;
+      }
+      reply.code(502).send(safeErrorResponse(req.log, e, "Could not prepare that fill. Try again."));
+      return;
     }
+  });
+
+  /**
+   * Finalizes or releases a reservation `POST /fill/prepare` made, once the Trader's
+   * wallet has actually sent (or refused to send) the transaction(s).
+   */
+  app.post("/fill/settle", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const parsed = FillSettleRequest.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "proposalId and succeeded are required" });
+    const { proposalId, succeeded } = parsed.data;
+
+    const s = sessionFor(req.headers);
+    const existed = succeeded ? confirmPendingFill(s, proposalId) : releasePendingFill(s, proposalId);
+    if (!existed) return reply.code(410).send({ error: "No prepared fill found for that proposal." });
+
+    return { remainingUsdc: remainingBudget(s) };
+  });
+
+  const PositionsQuery = z.object({
+    address: z.string().regex(/^0x[a-fA-F0-9]{40}$/, "must be a 0x-prefixed 20-byte address").optional(),
   });
 
   /**
    * The board: everything the Trader holds, real and practised, each labelled.
    *
-   * Real Positions come from the chain on every request -- there is no `positions`
-   * table and no balance cache, ever (ADR-0003). If this feels slow, the fix is a
-   * loading state, not a cache.
-   *
-   * It does not refuse without a wallet. A Trader who has only practised still has a
-   * board, and an empty page would teach them nothing.
+   * Reads holdings for whichever wallet the browser reports as connected (ADR-0009).
+   * With none given, it falls back to the operator's own configured wallet -- which is
+   * what keeps a wallet-less dev session and the CLI's single-wallet model working
+   * exactly as before.
    */
   app.get("/positions", async (req, reply) => {
     if (!requireToken(req, reply)) return;
+    const parsedQuery = PositionsQuery.safeParse(req.query);
+    if (!parsedQuery.success) return reply.code(400).send({ error: parsedQuery.error.issues[0]?.message });
+
     const session = sessionFor(req.headers);
     const spot = await spotPrice().catch(() => null);
+    const address = parsedQuery.data.address ?? walletAddress();
 
-    const [real, address] = canSign() ? await realHoldings(spot) : [[], null];
+    const [real, resolvedAddress] = address ? await realHoldings(spot, address) : [[], null];
 
-    return { address, spotUsd: spot === null ? null : usd(spot), holdings: [...real, ...practiceHoldings(session, spot)] };
+    return { address: resolvedAddress, spotUsd: spot === null ? null : usd(spot), holdings: [...real, ...practiceHoldings(session, spot)] };
   });
 
   /**

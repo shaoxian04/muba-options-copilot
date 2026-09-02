@@ -12,22 +12,23 @@
  * rather than a guess, but treat the units as unverified until someone holds one.
  */
 import type { Holding } from "@copilot/shared";
-import { getClient, walletAddress } from "./client.js";
+import { getClient } from "./client.js";
 import { fromPrice, USDC_DECIMALS, CONTRACT_DECIMALS } from "./units.js";
 import { CALL } from "./orders.js";
 import { usd, contracts as fmtContracts, moment } from "../format.js";
 
 /**
- * The Trader's real Positions, and the address they belong to.
+ * The Trader's real Positions for one address, and the address they belong to.
  *
  * Buyer-side only. The Copilot never sells (ADR-0002), so a seller-side Position did
  * not come from here -- and rendering one on this board would put a Max Loss beside it
  * that is not true. It is omitted, not mislabelled.
+ *
+ * Takes the address explicitly (ADR-0009) rather than reading the operator's configured
+ * wallet itself -- callers decide whose holdings to show; this module only knows how to
+ * fetch them once told.
  */
-export async function realHoldings(spot: number | null): Promise<[Holding[], string | null]> {
-  const address = walletAddress();
-  if (!address) return [[], null];
-
+export async function realHoldings(spot: number | null, address: string): Promise<[Holding[], string | null]> {
   try {
     const api = getClient().api as any;
     const positions: any[] = (await api.getUserPositionsFromIndexer?.(address)) ?? [];

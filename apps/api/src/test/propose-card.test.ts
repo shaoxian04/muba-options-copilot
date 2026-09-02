@@ -17,7 +17,7 @@ vi.mock("../thetanuts/client.js", async () => await import("./stub-client.js"));
 
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
-import { resetStub, state } from "./stub-client.js";
+import { resetStub, state, TRADER_ADDRESS } from "./stub-client.js";
 import { NOW, DEFAULT_BOOK, makeOrder } from "./fixtures.js";
 
 vi.useFakeTimers({ toFake: ["Date"] });
@@ -297,20 +297,19 @@ describe("POST /propose without a cardRef", () => {
 });
 
 describe("a proposal made from a Card", () => {
-  it("can be filled by its proposalId like any other", async () => {
+  it("can be prepared for a fill by its proposalId like any other", async () => {
     const session = freshSession();
     const { cards } = await deck(session);
     const { proposalId } = (await propose(session, { ...INTENT, cardRef: cards[0].cardRef })).json();
 
-    state.canSign = true;
     const res = await app.inject({
       method: "POST",
-      url: "/fill",
+      url: "/fill/prepare",
       headers: { "x-session-id": session },
-      payload: { proposalId },
+      payload: { proposalId, walletAddress: TRADER_ADDRESS },
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json().txHash).toBe("0xTXHASH");
+    expect(res.json().fillTx.data).toBeTruthy();
   });
 });
