@@ -1882,3 +1882,74 @@ button[disabled] {
   padding: 0 16px;
   font-weight: 500;
 }
+
+/* ---------------------------------------------------------------------------
+   Liquidation Cover (/cover).
+   A different context from the trading surface and it should read as one: no
+   Deck, no rail, no call/put palette. Sober by construction -- ADR-0009 says
+   this product never celebrates, and a page about being liquidated is the last
+   place to start.
+   --------------------------------------------------------------------------- */
+.cvr { max-width: 60rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+.cvr h1 { font-size: 1.5rem; letter-spacing: -0.01em; margin: 0 0 0.35rem; }
+.cvr .sub { color: var(--ink-2); margin: 0 0 1.75rem; max-width: 44rem; line-height: 1.5; }
+
+.cvr form { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: flex-end; margin-bottom: 1.75rem; }
+.cvr .fld { display: flex; flex-direction: column; gap: 0.35rem; flex: 1 1 26rem; }
+.cvr label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); }
+.cvr input {
+  font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 0.6rem 0.7rem; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface); color: var(--ink);
+}
+.cvr input:focus-visible { outline: 2px solid var(--hue); outline-offset: 1px; }
+.cvr button {
+  font: inherit; font-weight: 600; padding: 0.62rem 1.1rem; border: 0; border-radius: 8px;
+  background: var(--btn); color: var(--btn-ink); cursor: pointer;
+}
+.cvr button:disabled { opacity: 0.45; cursor: progress; }
+.cvr button:focus-visible { outline: 2px solid var(--hue); outline-offset: 2px; }
+
+/* The Lapse. The loudest thing on a Cover, by ADR-0008 -- said with size and a rule,
+   never with colour alone, so it survives being read by someone who cannot see it. */
+.cvr .lapse {
+  border: 1px solid var(--line); border-left: 4px solid var(--ink);
+  background: var(--surface); border-radius: 10px; padding: 1.1rem 1.25rem; margin-bottom: 1rem;
+}
+.cvr .lapse .k { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); }
+.cvr .lapse .v { font-size: 1.75rem; font-weight: 650; letter-spacing: -0.02em; margin: 0.15rem 0 0.4rem; }
+.cvr .lapse p { margin: 0; color: var(--ink-2); line-height: 1.5; max-width: 46rem; }
+
+.cvr .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 1rem; }
+.cvr section.panel {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 1.1rem 1.25rem;
+}
+.cvr section.panel h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); margin: 0 0 0.85rem; }
+.cvr dl { display: grid; grid-template-columns: 1fr auto; gap: 0.55rem 1rem; margin: 0; }
+.cvr dt { color: var(--ink-2); }
+.cvr dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weight: 550; }
+.cvr dd .qual { display: block; font-weight: 400; font-size: 0.85rem; color: var(--ink-3); }
+
+/* NOTE ON NAMING: every class below is unique to this page, never a word the trading
+   surface already uses. `.refusal` and `.note` both exist unprefixed above -- `.refusal`
+   is a red flex row on the Deck -- and reusing either meant this page silently inherited
+   `display:flex` and a crit colour. A `.cvr `-prefixed rule ADDS specificity; it does not
+   stop the bare rule applying.
+
+   A refusal is an ANSWER, so it is laid out like one -- a heading and a paragraph,
+   not a toast. It is the most likely thing a Borrower sees: of the 40 largest aWETH
+   holders on Base, 30 of them cannot be quoted. */
+.cvr .declined {
+  border: 1px solid var(--line); border-left: 4px solid var(--warn);
+  background: var(--surface); border-radius: 10px; padding: 1.1rem 1.25rem;
+}
+.cvr .declined h2 { font-size: 1rem; margin: 0 0 0.4rem; }
+.cvr .declined p { margin: 0; color: var(--ink-2); line-height: 1.55; max-width: 46rem; }
+
+.cvr .warn {
+  border: 1px solid var(--line); border-left: 4px solid var(--warn);
+  background: var(--surface); border-radius: 10px; padding: 0.85rem 1.1rem; margin-top: 1rem;
+  color: var(--ink-2); line-height: 1.5;
+}
+.cvr .disclaimer { margin-top: 1.25rem; color: var(--ink-3); line-height: 1.5; max-width: 46rem; }
+.cvr .err { color: var(--crit); margin-top: 1rem; }

@@ -13,11 +13,13 @@
 import type {
   Card, ConversationTurn, CoinAskResult, Deck, DepthView, ExpiryOption, Figure, Holding,
   MarketOverview, MarketRow, ProposeResult, RfqTenorDays, UnderlyingSymbol,
+  CoverQuote, CoverQuoteResult, CoverRefusal,
 } from "@copilot/shared";
 
 export type {
   Card, ConversationTurn, CoinAskResult, Deck, DepthView, ExpiryOption, Figure, Holding,
   MarketOverview, MarketRow, ProposeResult, RfqTenorDays, UnderlyingSymbol,
+  CoverQuote, CoverQuoteResult, CoverRefusal,
 };
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:3001";
@@ -234,3 +236,17 @@ export const requestRfq = (body: {
   horizonDays: RfqTenorDays;
   sizeUsdc: number;
 }): Promise<never> => call<never>("/rfq", { method: "POST", body: JSON.stringify(body) });
+
+/**
+ * A Borrower's Loan, and the Cover it would need. Read-only: it requests nothing from a
+ * maker and signs nothing.
+ *
+ * A REFUSED result arrives as a normal 200 and is returned, not thrown -- being told
+ * "this Loan holds two assets and here is why that matters" is an answer, not a failure,
+ * and throwing it would push a true sentence into an error boundary.
+ */
+export const getCoverQuote = (q: {
+  address: string;
+  signal?: AbortSignal;
+}): Promise<CoverQuoteResult> =>
+  call<CoverQuoteResult>(`/cover/quote?address=${encodeURIComponent(q.address)}`, { signal: q.signal });
