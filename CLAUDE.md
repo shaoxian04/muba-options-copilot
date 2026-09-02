@@ -100,10 +100,13 @@ These are needed on every task. Violating one silently breaks the product's cent
   frontend renders `display` verbatim — a `toFixed` in React undoes ADR-0006 invisibly. Two
   files may do arithmetic, each saying why: `lib/clock.ts` (durations, which no response can
   carry) and `lib/geometry.ts` (coordinates, never read as text). A test enforces the rest.
-- **Nothing that names an Order crosses to the browser.** Not a maker address, not a nonce,
-  not a signature — and not a string built out of them. `TradeProposal` carried
-  `orderId: "<maker>:<nonce>"` until issue #14 walked the surface and found it; the Order is
-  named by an opaque `cardRef` instead.
+- **The browser never receives calldata for an Order it has not already priced through
+  `/propose`.** (Narrowed by ADR-0009 from an absolute "no Order data crosses to the browser,"
+  to let `POST /fill/prepare` hand the Trader's own wallet the real transaction it must sign —
+  unavoidable once signing moves client-side.) The `cardRef` indirection still holds
+  everywhere else: `/deck` and `/propose` never expose a maker address, a nonce, or a
+  signature outside of the one route that prepares a fill for a proposal the browser was
+  already shown priced.
 - **A cardRef selects; it never supplies a value.** The Order is re-fetched off the live book
   and every number re-derived, so an override passes every check an agent-chosen Card does.
 - **Practice can never spend.** `/practice` is a separate route, not a flag, and its module
@@ -139,7 +142,7 @@ it here with a one-line lesson.
 - **`apps/api/src/insurance/CONTEXT.md`** — Borrower, Loan, Cover, Liquidation Price, Lapse.
   **Read before any Liquidation Cover work.**
 - **`docs/adr/`** — the decisions and why they went that way. 0001 and 0004 are superseded;
-  0006–0008 are current. **Read before changing architecture, or when code looks deliberately
+  0006–0009 are current. **Read before changing architecture, or when code looks deliberately
   odd and you're tempted to "fix" it.**
 - **`README.md`** — API route table, repo layout, setup, security posture of the API process.
   **Read before running or wiring anything.**

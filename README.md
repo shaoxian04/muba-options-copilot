@@ -65,15 +65,18 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 | `GET /deck` | no | every Order buyable right now for one direction and one expiry, as Cards. `?direction=DOWN\|UP&horizonDays=1\|2\|3&sizeUsdc=n` |
 | `POST /propose` | **no** | TradeIntent in, `PROPOSAL \| VETO \| NO_ORDER` out. Prices a real order, signs nothing. Takes an optional `cardRef`. |
 | `POST /practice` | **no** | opens a simulated Position from a `proposalId`. No token, no Risk Budget, no signer in reach. |
-| `POST /fill` | **yes** | takes a proposalId from `/propose` and buys it |
-| `GET /positions` | no | the board: real holdings read from the chain plus this session's Practice Runs, each labelled |
+| `POST /fill/prepare` | no | reserves Risk Budget against a proposalId from `/propose` and returns the unsigned transaction(s) the Trader's own wallet must send (ADR-0009) |
+| `POST /fill/settle` | no | finalizes or releases that reservation once the wallet reports what happened |
+| `GET /positions` | no | the board: holdings for whichever wallet address the browser reports (falling back to the operator's configured wallet), plus this session's Practice Runs, each labelled |
 | `GET /forecast/news` | no | simulated-headline sentiment for `?symbol=&horizon=`. Opinion, quarantined from the trade flow (ADR-0005) |
 | `GET /forecast/price` | no | a price prediction grounded in real market data. Opinion, never a trade input |
 | `GET /forecast/risk-benefit` | no | the risk/benefit reading, with a runtime guardrail against Max Loss phrasing |
 
-`/propose` is what fills the confirmation card; `/fill` is what the button does. The chosen
-order is held server-side and only a `proposalId` goes out, so no caller can ask us to fill
-an order we never priced.
+`/propose` is what fills the confirmation card; `/fill/prepare` then `/fill/settle` are what
+Confirm does — the Trader's own connected wallet signs and submits the actual transaction
+(ADR-0009), so the backend never holds a Trader's key. The chosen order is held server-side
+and only a `proposalId` goes out, so no caller can ask us to prepare a fill for an order we
+never priced.
 
 Every number a Trader reads crosses the wire as `{ value, display }` -- formatted once, on
 the server. The frontend renders `display` verbatim and never formats or recomputes; if it
@@ -157,6 +160,7 @@ apps/web              the trading surface. Next.js, UI only -- no SDK, no key, n
   components/         Tape, DeckRow, PayoffStrip, CommitBar, Board, Halt, Chat
   lib/api.ts          the only way this app talks to anything
   lib/surface.ts      the whole surface as one state machine
+  lib/wallet.ts       the only place this app touches a browser wallet (ADR-0009)
   lib/clock.ts        the ONE place a number becomes text in the browser. Durations only
   lib/geometry.ts     coordinates and widths. Never text
   tests/              Playwright + axe, stubbed from fixtures the real API generated
@@ -171,7 +175,8 @@ apps/api
     implied-chance.ts the market's own probability of finishing in the money. Pure
     deck.ts           a Deck of Cards, for one direction and one expiry
     propose.ts        selects an Order, then calls pricing.ts. Derives nothing itself
-    execute.ts        the only module that spends money
+    prepareFill.ts    builds unsigned fill calldata for the Trader's own wallet (ADR-0009)
+    execute.ts        the operator's own custodial CLI path. Never called from the browser
   src/agents/
     review.ts         the Review Agent, stubbed. It may only veto, never authorise
   src/forecast/       the opinion surface. Imports nothing on the money path, ADR-0005
