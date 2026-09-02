@@ -12,13 +12,13 @@
  */
 import type {
   Card, ConversationTurn, CoinAskResult, DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding,
-  MarketOverview, MarketRow, ProposeResult, RfqTenorDays, RiskProfileName,
+  MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, RiskProfileName,
   RiskProfileResponse, SuggestionResponse, UnderlyingSymbol,
 } from "@copilot/shared";
 
 export type {
   Card, ConversationTurn, CoinAskResult, DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding,
-  MarketOverview, MarketRow, ProposeResult, RfqTenorDays, RiskProfileName,
+  MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, RiskProfileName,
   RiskProfileResponse, SuggestionResponse, UnderlyingSymbol,
 };
 
@@ -157,9 +157,10 @@ export const getDepth = (q: {
     { signal: q.signal }
   );
 
-export const getSession = (): Promise<SessionState> => call<SessionState>("/session");
+export const getSession = (): Promise<SessionState> => call<SessionState>("/session", { headers: authHeaders() });
 
-export const getBoard = (): Promise<Board> => call<Board>("/positions");
+export const getBoard = (address: string | null): Promise<Board> =>
+  call<Board>(`/positions${address ? `?address=${address}` : ""}`, { headers: authHeaders() });
 
 /**
  * Ask for a trade.
@@ -185,11 +186,39 @@ export const propose = (body: {
     headers: authHeaders(),
   });
 
-/** Spends real USDC. Only ever called from the Trader's own press on Confirm. */
-export const fill = (proposalId: string): Promise<FillReceipt> =>
-  call<FillReceipt>("/fill", {
+/** Step one of proving this wallet is who it says it is (ADR-0012). Signs nothing yet. */
+export const requestAuthChallenge = (walletAddress: string): Promise<{ message: string }> =>
+  call<{ message: string }>("/auth/challenge", {
     method: "POST",
-    body: JSON.stringify({ proposalId }),
+    body: JSON.stringify({ walletAddress }),
+    headers: authHeaders(),
+  });
+
+/** Step two: hands over the signature /auth/challenge's message produced. */
+export const verifyAuthChallenge = (signature: string): Promise<{ walletAddress: string }> =>
+  call<{ walletAddress: string }>("/auth/verify", {
+    method: "POST",
+    body: JSON.stringify({ signature }),
+    headers: authHeaders(),
+  });
+
+/** Asks the backend to build the unsigned transaction(s) this fill needs. Signs nothing. */
+export const prepareFill = (proposalId: string, walletAddress: string): Promise<PreparedFill> =>
+  call<PreparedFill>("/fill/prepare", {
+    method: "POST",
+    body: JSON.stringify({ proposalId, walletAddress }),
+    headers: authHeaders(),
+  });
+
+/**
+ * Reports what happened, so the Risk Budget reservation can be finalized or released.
+ * `txHash` present means the backend checks the chain itself and decides (ADR-0012);
+ * absent means nothing was ever sent, and the reservation is simply released.
+ */
+export const settleFill = (proposalId: string, txHash?: string): Promise<{ remainingUsdc: number; confirmed: boolean }> =>
+  call<{ remainingUsdc: number; confirmed: boolean }>("/fill/settle", {
+    method: "POST",
+    body: JSON.stringify({ proposalId, txHash }),
     headers: authHeaders(),
   });
 

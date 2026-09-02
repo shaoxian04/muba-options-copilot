@@ -618,3 +618,6 @@ export { RiskProfileName, RiskProfileResponse, DecisionStatsResponse };
 export const { SuggestionResponse, DecisionRequest } = strategySchemas(TradeIntent);
 export type SuggestionResponse = z.infer<typeof SuggestionResponse>;
 export type DecisionRequest = z.infer<typeof DecisionRequest>;
+
+export * from "./fill.js";
+export * from "./auth.js";

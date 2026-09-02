@@ -40,7 +40,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
-import { resetStub, state } from "./stub-client.js";
+import { resetStub, state, chain, TRADER_ADDRESS, proveWallet } from "./stub-client.js";
 import { NOW, DEFAULT_BOOK, makeOrder } from "./fixtures.js";
 import { getRiskProfile, setRiskProfile } from "../supabase/riskProfiles.js";
 import { fetchSuggestion } from "../strategy/suggest.js";
@@ -86,6 +86,9 @@ const NAMES = [
   "propose-agent",
   "propose-by-card",
   "practice",
+  "auth-challenge",
+  "fill-prepare",
+  "fill-settle",
   "veto",
   "no-order",
   "refusal",
@@ -200,6 +203,28 @@ beforeAll(async () => {
   const forPractice = (await post("/propose", intent)).json() as { proposalId: string };
   generated["practice"] = (await post("/practice", { proposalId: forPractice.proposalId })).json();
   generated["positions-after-practice"] = await get("/positions");
+
+  // Proving wallet ownership -- the sign-in challenge (ADR-0012). The nonce is a fresh
+  // random value every run (that is the point of it), so it is normalized to a fixed
+  // placeholder here rather than through the shared `stabilise` below, which only
+  // replaces a whole matching field value, not a value embedded inside a sentence.
+  const challenge = (await post("/auth/challenge", { walletAddress: TRADER_ADDRESS })).json() as { message: string };
+  generated["auth-challenge"] = {
+    message: challenge.message.replace(/Nonce: [0-9a-f]{32}/, "Nonce: stable-nonce-for-fixtures"),
+  };
+  await proveWallet(app, SESSION);
+
+  // A prepared fill, and settling it -- the non-custodial, chain-verified contract
+  // (ADR-0011, ADR-0012).
+  const forFill = (await post("/propose", intent)).json() as { proposalId: string };
+  generated["fill-prepare"] = (
+    await post("/fill/prepare", { proposalId: forFill.proposalId, walletAddress: TRADER_ADDRESS })
+  ).json();
+  state.receipt = { status: 1, to: chain.contracts.optionBook };
+  generated["fill-settle"] = (
+    await post("/fill/settle", { proposalId: forFill.proposalId, txHash: "0xFIXTURETX" })
+  ).json();
+  state.receipt = null;
 
   // --- the halt states ------------------------------------------------------
   process.env.COPILOT_REVIEW_FIXTURE = "veto";

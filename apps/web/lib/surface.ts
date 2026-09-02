@@ -20,24 +20,29 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ExpiryOption, Figure, RfqTenorDays, UnderlyingSymbol } from "@copilot/shared";
 import {
   ApiRefusal,
-  fill,
   getBoard,
   getDeck,
   getDepth,
   getMarkets,
   getSession,
   practice,
+  prepareFill,
   propose,
+  requestAuthChallenge,
   requestRfq,
+  settleFill,
+  verifyAuthChallenge,
   type Board,
   type Card,
   type Deck,
   type DepthView,
   type FillReceipt,
   type MarketRow,
+  type PreparedFill,
   type ProposeResult,
   type SessionState,
 } from "./api";
+import { connectWallet as connectInjectedWallet, connectedAddress, sendTx, signMessage } from "./wallet";
 import { clampSizeUsdc, rfqSizeCapUsdc } from "./geometry";
 
 /** Trades of 1-2 USDC are normal and expected for this product. */
@@ -257,6 +262,14 @@ export interface Surface {
   busy: boolean;
   log: ChatLine[];
 
+  walletAddress: string | null;
+  walletConnecting: boolean;
+  walletVerified: boolean;
+  walletVerifying: boolean;
+  walletError: string | null;
+  connectWallet: () => Promise<void>;
+  verifyWallet: () => Promise<void>;
+
   setAsset: (a: UnderlyingSymbol) => void;
   setDirection: (d: Direction) => void;
   setHorizon: (h: number) => void;
@@ -291,6 +304,30 @@ export interface Surface {
 }
 
 const proposalOf = (r: ProposeResult | null) => (r && r.kind === "PROPOSAL" ? r : null);
+
+/**
+ * /fill/settle answers 425 when the chain hasn't shown it the transaction yet -- a
+ * short-lived gap, not a failure. A few quick retries covers ordinary propagation lag
+ * without asking the Trader to do anything.
+ */
+async function settleWithRetry(
+  proposalId: string,
+  txHash: string | undefined,
+  attempts = 3
+): Promise<{ remainingUsdc: number; confirmed: boolean }> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await settleFill(proposalId, txHash);
+    } catch (e) {
+      if (e instanceof ApiRefusal && e.status === 425 && i < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error("unreachable");
+}
 
 /**
  * The Max Loss to show before the Trader has picked anything.
@@ -434,6 +471,12 @@ export function useSurface(): Surface {
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<ChatLine[]>([]);
 
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [walletConnecting, setWalletConnecting] = useState(false);
+  const [walletVerified, setWalletVerified] = useState(false);
+  const [walletVerifying, setWalletVerifying] = useState(false);
+  const [walletError, setWalletError] = useState<string | null>(null);
+
   const say = useCallback((text: string) => setLog((l) => [...l, { who: "copilot", text }]), []);
   const heard = useCallback((text: string) => setLog((l) => [...l, { who: "trader", text }]), []);
 
@@ -445,11 +488,52 @@ export function useSurface(): Surface {
    * update the rows in place rather than re-arming a loading message over them.
    */
   const refreshMoney = useCallback(async () => {
-    const [s, b] = await Promise.all([getSession().catch(() => null), getBoard().catch(() => null)]);
+    const [s, b] = await Promise.all([getSession().catch(() => null), getBoard(walletAddress).catch(() => null)]);
     if (s) setSession(s);
     if (b) setBoard(b);
     setBoardLoading(false);
+  }, [walletAddress]);
+
+  // First paint: pick up a wallet the browser already authorised, without prompting.
+  useEffect(() => {
+    void connectedAddress().then(setWalletAddress);
   }, []);
+
+  /**
+   * Proves the connected wallet is who it says it is (ADR-0012) -- a text signature,
+   * never a transaction. Separate from `connectWallet` so a Trader whose wallet was
+   * already authorised before this page loaded (`connectedAddress()`, which never
+   * prompts) has a way to complete verification with one press, rather than a dead end.
+   */
+  const verifyWalletFor = useCallback(async (address: string) => {
+    setWalletVerifying(true);
+    setWalletError(null);
+    try {
+      const { message } = await requestAuthChallenge(address);
+      const signature = await signMessage(message);
+      await verifyAuthChallenge(signature);
+      setWalletVerified(true);
+    } catch (e) {
+      setWalletError(e instanceof Error ? e.message : "Could not verify this wallet.");
+    } finally {
+      setWalletVerifying(false);
+    }
+  }, []);
+
+  const connectWallet = useCallback(async () => {
+    setWalletConnecting(true);
+    setWalletError(null);
+    setWalletVerified(false);
+    try {
+      const address = await connectInjectedWallet();
+      setWalletAddress(address);
+      await verifyWalletFor(address);
+    } catch (e) {
+      setWalletError(e instanceof Error ? e.message : "Could not connect a wallet.");
+    } finally {
+      setWalletConnecting(false);
+    }
+  }, [verifyWalletFor]);
 
   /**
    * The current proposal, against the Deck as it stands now.
@@ -933,7 +1017,8 @@ export function useSurface(): Surface {
   );
 
   /**
-   * Spends real USDC. Reached only from the Trader's own press, inside the
+   * Spends real USDC, signed by the Trader's own connected AND verified wallet
+   * (ADR-0011, ADR-0012). Reached only from the Trader's own press, inside the
    * confirmation. The proposal stays on screen after this succeeds -- issue #30 wants
    * the receipt shown alongside the trade it belongs to, not a Trader who has just
    * spent money looking at a form that has already reset itself. `closeConfirm` is
@@ -942,20 +1027,45 @@ export function useSurface(): Surface {
   const confirm = useCallback(async () => {
     const p = proposalOf(result);
     if (!p || quoteMoved) return;
+    if (!walletAddress || !walletVerified) {
+      setRefusal("Connect and verify your wallet first — Confirm needs a signature from your own wallet.");
+      return;
+    }
     setBusy(true);
     setRefusal(null);
+    let prepared: PreparedFill | null = null;
     try {
-      const done = await fill(p.proposalId);
+      prepared = await prepareFill(p.proposalId, walletAddress);
+      if (prepared.approveTx) await sendTx(prepared.approveTx);
+      const txHash = await sendTx(prepared.fillTx);
+
+      // The wallet has already broadcast and mined this -- the Trader's money has
+      // moved. Everything from here is bookkeeping, so a failure to reach
+      // /fill/settle must never be caught below and reported as a failed fill.
+      await settleWithRetry(p.proposalId, txHash).catch(() => {});
+
       say(`Bought. ${p.proposal.figures.contracts.display} contracts at ${p.proposal.figures.strike.display}, paid ${p.proposal.figures.premiumUsdc.display}.`);
-      setReceipt(done);
+      // The proposal and Card stay on screen -- issue #30's ConfirmModal shows the
+      // receipt alongside the trade it belongs to, and `closeConfirm` is what clears
+      // the selection, on the Trader's own dismissal, not this success path.
+      setReceipt({ txHash, optionAddress: prepared.optionAddress, explorerUrl: `${prepared.explorerTxUrlBase}${txHash}` });
       await refreshMoney();
     } catch (e) {
+      // Only settle(false) if prepare actually succeeded -- there is nothing to release
+      // if the reservation was never made. /fill/prepare reserves the Risk Budget
+      // synchronously on the server the moment it runs, so the display has to catch up
+      // here too -- not just on the success path -- or a Trader sees a budget that
+      // still looks untouched while a reservation sits released behind it.
+      if (prepared) {
+        await settleWithRetry(p.proposalId, undefined).catch(() => {});
+        await refreshMoney();
+      }
       if (e instanceof ApiRefusal) setRefusal(e.message);
-      else throw e;
+      else setRefusal(e instanceof Error ? e.message : "The wallet could not complete this fill.");
     } finally {
       setBusy(false);
     }
-  }, [result, quoteMoved, say, refreshMoney]);
+  }, [result, quoteMoved, walletAddress, walletVerified, say, refreshMoney]);
 
   /** Opens a simulated Position. A different function, on a different route. */
   const runPractice = useCallback(async () => {
@@ -1019,6 +1129,13 @@ export function useSurface(): Surface {
     receipt,
     busy,
     log,
+    walletAddress,
+    walletConnecting,
+    walletVerified,
+    walletVerifying,
+    walletError,
+    connectWallet,
+    verifyWallet: () => (walletAddress ? verifyWalletFor(walletAddress) : Promise.resolve()),
     setAsset,
     setDirection,
     setHorizon,

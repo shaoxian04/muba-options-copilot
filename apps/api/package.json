@@ -9,7 +9,7 @@
     "ask": "tsx src/scripts/ask.ts",
     "dev": "tsx watch src/server.ts",
     "wallet": "tsx src/scripts/wallet.ts",
-    "test": "tsx --test src/forecast/*.test.ts src/strategy/*.test.ts src/supabase/*.test.ts"
+    "test": "cross-env SUPABASE_URL= SUPABASE_SERVICE_ROLE_KEY= tsx --test src/forecast/*.test.ts src/strategy/*.test.ts src/supabase/*.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
@@ -26,6 +26,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
+    "cross-env": "^7.0.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

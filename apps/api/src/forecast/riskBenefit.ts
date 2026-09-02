@@ -27,6 +27,7 @@ export async function assessRiskBenefit(scenario: MarketScenario, create?: Agent
       `Current price: $${marketData.price}\n24h change: ${marketData.change24h}%\n` +
       `24h high: $${marketData.high24h}\n24h low: $${marketData.low24h}\n` +
       `Headlines:\n${scenario.headlines.map((h) => `- ${h.text}`).join("\n")}`,
+    "assessRiskBenefit",
     create
   );
 
