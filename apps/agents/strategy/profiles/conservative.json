@@ -1,0 +1,42 @@
+[
+  {
+    "id": "profile-conservative-weak-v1",
+    "owner_id": "seed",
+    "name": "Conservative — weak market",
+    "enabled": true,
+    "notes": "RSI(14) under 40 is only mildly weak, but a cautious holder wants cover before the fall is obvious -- so this fires early, buys the most, and holds it the longest of the six bands.",
+    "when": [
+      {
+        "left": { "source": "INDICATOR", "kind": "RSI", "period": 14 },
+        "operator": "<",
+        "right": { "source": "CONSTANT", "value": 40 }
+      }
+    ],
+    "then": {
+      "underlying": "ETH",
+      "direction": "DOWN",
+      "sizeUsdc": 2,
+      "horizonDays": 7
+    }
+  },
+  {
+    "id": "profile-conservative-calm-v1",
+    "owner_id": "seed",
+    "name": "Conservative — calm market",
+    "enabled": true,
+    "notes": "RSI(14) over 40 is not weak, but a cautious holder still wants a smaller, shorter cover in place rather than none at all. An RSI reading of exactly 40 matches neither band -- a known, accepted gap, not a bug.",
+    "when": [
+      {
+        "left": { "source": "INDICATOR", "kind": "RSI", "period": 14 },
+        "operator": ">",
+        "right": { "source": "CONSTANT", "value": 40 }
+      }
+    ],
+    "then": {
+      "underlying": "ETH",
+      "direction": "DOWN",
+      "sizeUsdc": 1,
+      "horizonDays": 5
+    }
+  }
+]
