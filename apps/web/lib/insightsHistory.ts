@@ -10,6 +10,12 @@ export interface InsightsLine {
   who: "trader" | "copilot";
   text?: string;
   results?: Record<string, CoinAskResult>;
+  /**
+   * Set only when this exchange came from dropping a Deck card (Chat.tsx) — carries
+   * the card's own real strike and direction so the render can compare them against
+   * the AI's predicted range for the matching coin. Absent for a typed question.
+   */
+  cardContext?: { underlying: string; strikeValue: number; strikeDisplay: string; direction: "UP" | "DOWN" };
 }
 
 export function deriveHistory(log: InsightsLine[]): ConversationTurn[] {

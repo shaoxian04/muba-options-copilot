@@ -300,37 +300,6 @@ button[disabled] {
   color: var(--ink-2);
   max-width: 94%;
 }
-.chat .seeds {
-  padding: 10px 18px 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.chat .seeds button {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 11px 12px;
-  min-height: 44px;
-  font-size: 13px;
-  color: var(--ink-2);
-  background: var(--surface);
-  transition: border-color 0.14s, color 0.14s, transform 0.14s;
-}
-.chat .seeds button:hover {
-  border-color: var(--ink-2);
-  color: var(--ink);
-  transform: translateX(2px);
-}
-.chat .box {
-  margin: 6px 18px 18px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  padding: 10px 12px;
-  color: var(--ink-2);
-  font-size: 13px;
-}
-
 /* ================= right: money ================= */
 /* ================= the ticker rail ================= */
 /*
@@ -1847,6 +1816,12 @@ button[disabled] {
 }
 .chat .from-copilot .coin-answer:last-child {
   margin-bottom: 0;
+}
+.chat .from-copilot .coin-detail {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 .chat .from-copilot .disclaimer {
   color: var(--ink-3);
