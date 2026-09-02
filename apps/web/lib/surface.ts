@@ -321,6 +321,53 @@ export function agentGate(result: ProposeResult | null): Array<{ label: string; 
   ];
 }
 
+/**
+ * One in-flight request at a time per polled resource, and only the freshest answer
+ * ever reaches state. Backs `loadDeck` and `loadDepth` below.
+ *
+ * At the RPC latencies this book is read at -- seconds, not milliseconds -- a single
+ * `/deck` or `/depth` read can outlive several ticks of its own poll. Without this, each
+ * tick would start its own fetch, several would sit in flight together, and whichever
+ * happened to resolve LAST would win even if it was the oldest of the bunch: the
+ * surface could walk backward to a stale price under a Trader's eyes.
+ *
+ * `spinner` is reused as the signal for which of the two problems a call is trying to
+ * solve, rather than inventing a second flag: every DELIBERATE call already opts into
+ * it -- first paint, and every asset/direction/horizon change -- so a call is
+ * deliberate if and only if a Trader is waiting on it. That kind aborts whatever answer
+ * is still in flight and starts fresh, because the Trader asked for something else and
+ * the old read's answer, however it resolves, must never reach state. A background
+ * poll tick omits `spinner`; if a read is already running when one of those fires, it
+ * skips itself rather than piling a duplicate read on top of it.
+ *
+ * Plain functions taking the refs explicitly, not a custom hook returning them bundled
+ * -- a hook's return value is a fresh object every render, and putting that in a
+ * `useCallback` dependency array would give `loadDeck`/`loadDepth` a new identity on
+ * every render too, re-arming their `useEffect`s (and the interval inside one of them)
+ * on every render along with it.
+ */
+export function beginLatestOnly(
+  abortRef: React.MutableRefObject<AbortController | null>,
+  seqRef: React.MutableRefObject<number>,
+  spinner: boolean
+): { signal: AbortSignal; seq: number } | null {
+  if (!spinner && abortRef.current) return null;
+  abortRef.current?.abort();
+  const controller = new AbortController();
+  abortRef.current = controller;
+  return { signal: controller.signal, seq: ++seqRef.current };
+}
+
+/** True when `seq` is still the latest call issued -- false when a newer one has since started. */
+export function isLatest(seqRef: React.MutableRefObject<number>, seq: number): boolean {
+  return seq === seqRef.current;
+}
+
+/** Clears the in-flight marker, but only if this call is still the latest -- an aborted, superseded call must not clear the newer controller that superseded it. */
+export function endLatestOnly(abortRef: React.MutableRefObject<AbortController | null>, seqRef: React.MutableRefObject<number>, seq: number): void {
+  if (isLatest(seqRef, seq)) abortRef.current = null;
+}
+
 export function useSurface(): Surface {
   const [asset, setAssetState] = useState<UnderlyingSymbol>(DEFAULT_ASSET);
   const [markets, setMarkets] = useState<MarketRow[]>([]);
@@ -412,11 +459,26 @@ export function useSurface(): Surface {
   /** The same capture, for the RFQ dialog (issue #31) -- see `openerElRef` above. */
   const rfqOpenerElRef = useRef<HTMLElement | null>(null);
 
+  /** See `beginLatestOnly` above for what these two guard against. */
+  const deckAbortRef = useRef<AbortController | null>(null);
+  const deckSeqRef = useRef(0);
+
   const loadDeck = useCallback(
     async (a: UnderlyingSymbol, d: Direction, h: number, { spinner = false } = {}): Promise<Deck | null> => {
+      const started = beginLatestOnly(deckAbortRef, deckSeqRef, spinner);
+      // A background poll tick, and a read is already in flight -- skip this tick
+      // rather than starting a duplicate alongside it.
+      if (!started) return null;
+      const { signal, seq } = started;
+
       if (spinner) setLoading(true);
       try {
-        const next = await getDeck({ asset: a, direction: d, horizonDays: h, sizeUsdc: STAKE_USDC });
+        const next = await getDeck({ asset: a, direction: d, horizonDays: h, sizeUsdc: STAKE_USDC, signal });
+        // Superseded while in flight: a newer call already started, so this answer is
+        // stale even though it arrived without error. Applying it would walk the Deck
+        // backward to a price or a set of strikes the Trader already navigated past.
+        if (!isLatest(deckSeqRef, seq)) return null;
+
         setDeck(next);
         setDeckError(null);
 
@@ -446,10 +508,15 @@ export function useSurface(): Surface {
         }
         return next;
       } catch (e) {
+        // Cancelled by a newer call superseding this one -- not a real failure, and
+        // not this call's place to say so; the newer call speaks for the Deck now.
+        if (signal.aborted) return null;
+        if (!isLatest(deckSeqRef, seq)) return null;
         setDeckError(e instanceof Error ? e.message : "The Deck could not be read.");
         return null;
       } finally {
-        if (spinner) setLoading(false);
+        endLatestOnly(deckAbortRef, deckSeqRef, seq);
+        if (isLatest(deckSeqRef, seq) && spinner) setLoading(false);
       }
     },
     []
@@ -494,18 +561,30 @@ export function useSurface(): Surface {
    * `{ spinner }` mirrors `loadDeck` exactly, for the same reason (issue #32): the first
    * paint and an asset/horizon switch are requests a Trader is waiting on and get
    * `depthLoading`; the background poll below does not, or the chart would flash an
-   * "Updating…" note every six seconds for a value that rarely moves.
+   * "Updating…" note every six seconds for a value that rarely moves. It ALSO doubles
+   * as the "latest wins" signal `beginLatestOnly` reads -- see that function's comment.
    */
+  const depthAbortRef = useRef<AbortController | null>(null);
+  const depthSeqRef = useRef(0);
+
   const loadDepth = useCallback(async (a: UnderlyingSymbol, h: number, { spinner = false } = {}) => {
+    const started = beginLatestOnly(depthAbortRef, depthSeqRef, spinner);
+    if (!started) return;
+    const { signal, seq } = started;
+
     if (spinner) setDepthLoading(true);
     try {
-      const next = await getDepth({ asset: a, horizonDays: h });
+      const next = await getDepth({ asset: a, horizonDays: h, signal });
+      if (!isLatest(depthSeqRef, seq)) return;
       setDepth(next);
       setDepthError(null);
     } catch (e) {
+      if (signal.aborted) return;
+      if (!isLatest(depthSeqRef, seq)) return;
       setDepthError(e instanceof Error ? e.message : "The Maker Depth chart could not be read.");
     } finally {
-      if (spinner) setDepthLoading(false);
+      endLatestOnly(depthAbortRef, depthSeqRef, seq);
+      if (isLatest(depthSeqRef, seq) && spinner) setDepthLoading(false);
     }
   }, []);
 
