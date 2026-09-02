@@ -94,3 +94,33 @@ test("fetchIndicators refuses a payload that does not match the zod schema", asy
     IndicatorsUnavailable
   );
 });
+
+test("fetchIndicators carries the zod error on details for a schema-drift failure", async () => {
+  const drifted = { ...validPayload, candleSource: "kraken" };
+  await assert.rejects(
+    () => fetchIndicators("ETH", deps({ fetch: async () => ({ ok: true, status: 200, json: async () => drifted }) })),
+    (e: unknown) => e instanceof IndicatorsUnavailable && typeof e.details === "string" && e.details.length > 0 && e.details.includes("candleSource")
+  );
+});
+
+test("fetchIndicators keeps the zod detail out of the public message", async () => {
+  const drifted = { ...validPayload, candleSource: "kraken" };
+  await assert.rejects(
+    () => fetchIndicators("ETH", deps({ fetch: async () => ({ ok: true, status: 200, json: async () => drifted }) })),
+    (e: unknown) => e instanceof IndicatorsUnavailable && !e.message.includes("candleSource") && !!e.details?.includes("candleSource")
+  );
+});
+
+test("fetchIndicators leaves details undefined for a network/unreachable failure", async () => {
+  await assert.rejects(
+    () => fetchIndicators("ETH", deps({ fetch: async () => { throw new Error("ECONNREFUSED"); } })),
+    (e: unknown) => e instanceof IndicatorsUnavailable && e.details === undefined
+  );
+});
+
+test("fetchIndicators leaves details undefined for an upstream 404", async () => {
+  await assert.rejects(
+    () => fetchIndicators("DOGE", deps({ fetch: async () => ({ ok: false, status: 404, json: async () => ({}) }) })),
+    (e: unknown) => e instanceof IndicatorsUnavailable && e.details === undefined
+  );
+});

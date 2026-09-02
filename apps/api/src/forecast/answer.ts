@@ -45,7 +45,8 @@ function describeIndicators(i: Indicators): string {
 
   const head =
     `Technical indicators, COMPUTED from daily ${i.candleSource} candles as of ${i.asOf} -- ` +
-    `arithmetic on real price history, not a forecast or an opinion. Latest daily close $${i.close.toFixed(2)}.`;
+    `arithmetic on real price history, not a forecast or an opinion. Latest daily close $${i.close.toFixed(2)}. ` +
+    `Only RSI, SMA and EMA are computed; no other indicator is available.`;
 
   return values.length > 0
     ? `${head} ${values.join(", ")}.`
