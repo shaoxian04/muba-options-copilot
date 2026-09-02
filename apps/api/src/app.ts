@@ -29,14 +29,19 @@ import { practiceRoutes, practiceHoldings } from "./practice.js";
 import { safeErrorResponse } from "./errors.js";
 import { realHoldings } from "./thetanuts/holdings.js";
 import { prepareFillTx, UnsafeOrder } from "./thetanuts/prepareFill.js";
+import { buildChallengeMessage, generateNonce, verifyChallengeSignature } from "./auth.js";
 import { usd } from "./format.js";
 import {
   sessionFor, remainingBudget, setRiskBudget,
   rememberProposal, recallProposal, rememberCard, recallCard,
   reservePendingFill, confirmPendingFill, releasePendingFill,
+  beginAuthChallenge, takeAuthChallenge, markWalletVerified,
   type Session,
 } from "./sessions.js";
-import { FillPrepareRequest, FillSettleRequest, type PreparedFill } from "@copilot/shared";
+import {
+  AuthChallengeRequest, AuthVerifyRequest,
+  FillPrepareRequest, FillSettleRequest, type PreparedFill,
+} from "@copilot/shared";
 import { buildScenario } from "./forecast/scenario.js";
 import { analyzeNews } from "./forecast/news.js";
 import { predictPrice } from "./forecast/price.js";
@@ -286,6 +291,47 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   /**
+   * Step one of proving a session is backed by the wallet it claims (ADR-0010). Pure
+   * local cryptography -- no RPC call, no cost -- but still session-scoped and
+   * token-gated like every other route that establishes what a session may do.
+   */
+  app.post("/auth/challenge", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const parsed = AuthChallengeRequest.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "walletAddress is required" });
+
+    const s = sessionFor(req.headers);
+    const nonce = generateNonce();
+    beginAuthChallenge(s, parsed.data.walletAddress, nonce);
+    return { message: buildChallengeMessage(parsed.data.walletAddress, nonce) };
+  });
+
+  /**
+   * Step two: the Trader's wallet has signed the exact message /auth/challenge handed
+   * back. Verifying it here is what lets /fill/prepare later trust a walletAddress this
+   * session claims, instead of taking it on faith.
+   */
+  app.post("/auth/verify", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const parsed = AuthVerifyRequest.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "signature is required" });
+
+    const s = sessionFor(req.headers);
+    const pending = takeAuthChallenge(s);
+    if (!pending) {
+      reply.code(410).send({ error: "No challenge to verify, or it expired. Request a new one." });
+      return;
+    }
+    const message = buildChallengeMessage(pending.walletAddress, pending.nonce);
+    if (!verifyChallengeSignature(message, parsed.data.signature, pending.walletAddress)) {
+      reply.code(401).send({ error: "Signature does not match that wallet." });
+      return;
+    }
+    markWalletVerified(s, pending.walletAddress);
+    return { walletAddress: pending.walletAddress };
+  });
+
+  /**
    * The Trader's own wallet signs the fill (ADR-0009). This route never signs or
    * submits anything -- it re-checks the Risk Budget, reserves the spend, and returns
    * the unsigned transaction(s) the connected wallet must send. `POST /fill/settle`
@@ -301,6 +347,11 @@ export async function buildApp(): Promise<FastifyInstance> {
     const { proposalId, walletAddress: trader } = parsed.data;
 
     const s = sessionFor(req.headers);
+    if (!s.verifiedWallet || s.verifiedWallet.toLowerCase() !== trader.toLowerCase()) {
+      reply.code(401).send({ error: "Verify this wallet before confirming a fill." });
+      return;
+    }
+
     const found = recallProposal(s, proposalId);
     if (!found) {
       reply.code(410).send({ error: "That quote has expired. Prices move -- ask for a fresh one." });

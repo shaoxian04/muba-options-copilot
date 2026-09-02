@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
-import { resetStub, state, TRADER_ADDRESS } from "./stub-client.js";
+import { resetStub, state, TRADER_ADDRESS, proveWallet } from "./stub-client.js";
 import { NOW, makeOrder } from "./fixtures.js";
 
 vi.useFakeTimers({ toFake: ["Date"] });
@@ -134,6 +134,7 @@ beforeAll(async () => {
   generated["positions-after-practice"] = await get("/positions");
 
   // A prepared fill, and settling it -- the non-custodial contract (ADR-0009).
+  await proveWallet(app, SESSION);
   const forFill = (await post("/propose", intent)).json() as { proposalId: string };
   generated["fill-prepare"] = (
     await post("/fill/prepare", { proposalId: forFill.proposalId, walletAddress: TRADER_ADDRESS })

@@ -11,6 +11,8 @@
  * throw would be caught by the route and reported as an ordinary failure.
  */
 import { vi } from "vitest";
+import { Wallet } from "ethers";
+import type { FastifyInstance } from "fastify";
 import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
 import { DEFAULT_BOOK, SPOT, previewFillOrder, calculatePayout } from "./fixtures.js";
 
@@ -29,6 +31,8 @@ export const state = {
   positions: [] as unknown[],
   /** The wallet's current on-chain USDC allowance to the OptionBook, in 6 decimals. */
   allowance: 0n as bigint,
+  /** What the stubbed provider says a transaction's receipt is. null = "not found yet". */
+  receipt: null as null | { status: number | null; to: string | null },
 };
 
 /** Anything that would have moved money. Asserted on, never expected to fire. */
@@ -51,6 +55,7 @@ export const spies = {
     to: chain.contracts.optionBook,
     data: `0x12345678${amount.toString(16).padStart(64, "0")}`,
   })),
+  getTransactionReceipt: vi.fn(async (_txHash: string) => state.receipt),
 };
 
 export function resetStub(): void {
@@ -59,6 +64,7 @@ export function resetStub(): void {
   state.canSign = false;
   state.positions = [];
   state.allowance = 0n;
+  state.receipt = null;
   for (const spy of Object.values(spies)) spy.mockClear();
 }
 
@@ -80,10 +86,39 @@ export function getClient(): any {
       encodeApprove: spies.encodeApprove,
     },
     utils: { calculatePayout },
+    provider: { getTransactionReceipt: spies.getTransactionReceipt },
   };
 }
 
 export const canSign = (): boolean => state.canSign;
 
-export const TRADER_ADDRESS = "0x1111111111111111111111111111111111111111";
+/**
+ * A REAL wallet (a fixed, well-known test key -- never a funded one) so tests can both
+ * claim this address AND produce a signature that actually verifies against it, driving
+ * /auth/challenge + /auth/verify for real rather than mocking the crypto.
+ */
+export const TRADER_WALLET = new Wallet("0x" + "1".repeat(64));
+export const TRADER_ADDRESS = TRADER_WALLET.address;
 export const walletAddress = (): string | null => (state.canSign ? TRADER_ADDRESS : null);
+
+/** Drives the challenge/verify round trip so a test's session may then use /fill/prepare. */
+export async function proveWallet(
+  app: FastifyInstance,
+  session: string,
+  address: string = TRADER_ADDRESS
+): Promise<void> {
+  const challenge = await app.inject({
+    method: "POST",
+    url: "/auth/challenge",
+    headers: { "x-session-id": session },
+    payload: { walletAddress: address },
+  });
+  const { message } = challenge.json() as { message: string };
+  const signature = await TRADER_WALLET.signMessage(message);
+  await app.inject({
+    method: "POST",
+    url: "/auth/verify",
+    headers: { "x-session-id": session },
+    payload: { signature },
+  });
+}

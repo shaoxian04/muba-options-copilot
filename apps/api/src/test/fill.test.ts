@@ -10,8 +10,9 @@ vi.mock("../thetanuts/prepareFill.js", async () => {
 });
 
 import type { FastifyInstance } from "fastify";
+import { Wallet } from "ethers";
 import { buildApp } from "../app.js";
-import { resetStub, spies, state, TRADER_ADDRESS } from "./stub-client.js";
+import { resetStub, spies, state, chain, TRADER_ADDRESS, TRADER_WALLET, proveWallet } from "./stub-client.js";
 import { prepareFillTx, UnsafeOrder } from "../thetanuts/prepareFill.js";
 import { NOW } from "./fixtures.js";
 
@@ -49,9 +50,116 @@ const settle = (session: string, body: Record<string, unknown>) =>
 const sessionState = (session: string) =>
   app.inject({ method: "GET", url: "/session", headers: { "x-session-id": session } }).then((r) => r.json());
 
+describe("POST /auth/challenge and /auth/verify", () => {
+  it("verifies a real signature and marks the session's wallet proven", async () => {
+    const session = freshSession();
+    const challenge = await app.inject({
+      method: "POST",
+      url: "/auth/challenge",
+      headers: { "x-session-id": session },
+      payload: { walletAddress: TRADER_ADDRESS },
+    });
+    expect(challenge.statusCode).toBe(200);
+    const { message } = challenge.json();
+    expect(message).toContain(TRADER_ADDRESS);
+
+    const signature = await TRADER_WALLET.signMessage(message);
+    const verify = await app.inject({
+      method: "POST",
+      url: "/auth/verify",
+      headers: { "x-session-id": session },
+      payload: { signature },
+    });
+
+    expect(verify.statusCode).toBe(200);
+    expect(verify.json().walletAddress).toBe(TRADER_ADDRESS);
+  });
+
+  it("refuses a signature from a wallet other than the one challenged", async () => {
+    const session = freshSession();
+    const challenge = await app.inject({
+      method: "POST",
+      url: "/auth/challenge",
+      headers: { "x-session-id": session },
+      payload: { walletAddress: TRADER_ADDRESS },
+    });
+    const { message } = challenge.json();
+    const impostor = Wallet.createRandom();
+    const signature = await impostor.signMessage(message);
+
+    const verify = await app.inject({
+      method: "POST",
+      url: "/auth/verify",
+      headers: { "x-session-id": session },
+      payload: { signature },
+    });
+
+    expect(verify.statusCode).toBe(401);
+  });
+
+  it("refuses to verify with no challenge outstanding", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/verify",
+      headers: { "x-session-id": freshSession() },
+      payload: { signature: "0xdead" },
+    });
+    expect(res.statusCode).toBe(410);
+  });
+
+  it("requires the API token when one is configured", async () => {
+    process.env.COPILOT_API_TOKEN = "a-secret-nobody-sent";
+    try {
+      const gated = await buildApp();
+      const res = await gated.inject({
+        method: "POST",
+        url: "/auth/challenge",
+        headers: { "x-session-id": freshSession() },
+        payload: { walletAddress: TRADER_ADDRESS },
+      });
+      expect(res.statusCode).toBe(401);
+    } finally {
+      delete process.env.COPILOT_API_TOKEN;
+    }
+  });
+});
+
+describe("POST /fill/prepare requires a proven wallet", () => {
+  it("refuses a walletAddress the session has not verified", async () => {
+    const session = freshSession();
+    const proposalId = await proposalIn(session);
+
+    const res = await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("refuses a DIFFERENT address than the one this session proved", async () => {
+    const session = freshSession();
+    await proveWallet(app, session);
+    const proposalId = await proposalIn(session);
+    const someoneElse = "0x9999999999999999999999999999999999999999";
+
+    const res = await prepare(session, { proposalId, walletAddress: someoneElse });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("succeeds once the session has proven that exact wallet", async () => {
+    const session = freshSession();
+    await proveWallet(app, session);
+    const proposalId = await proposalIn(session);
+
+    const res = await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
+
+    expect(res.statusCode).toBe(200);
+  });
+});
+
 describe("POST /fill/prepare", () => {
   it("returns unsigned calldata and reserves the Risk Budget", async () => {
     const session = freshSession();
+    await proveWallet(app, session);
     const proposalId = await proposalIn(session);
 
     const res = await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
@@ -68,6 +176,7 @@ describe("POST /fill/prepare", () => {
 
   it("never calls the signing methods -- only the encode/preview/allowance ones", async () => {
     const session = freshSession();
+    await proveWallet(app, session);
     await prepare(session, { proposalId: await proposalIn(session), walletAddress: TRADER_ADDRESS });
 
     expect(spies.fillOrder).not.toHaveBeenCalled();
@@ -76,7 +185,9 @@ describe("POST /fill/prepare", () => {
   });
 
   it("refuses a proposal it does not recognise", async () => {
-    const res = await prepare(freshSession(), {
+    const session = freshSession();
+    await proveWallet(app, session);
+    const res = await prepare(session, {
       proposalId: "00000000-0000-0000-0000-000000000000",
       walletAddress: TRADER_ADDRESS,
     });
@@ -91,6 +202,7 @@ describe("POST /fill/prepare", () => {
 
   it("refuses a fill that would exceed the Risk Budget", async () => {
     const session = freshSession();
+    await proveWallet(app, session);
     // Price the $2 trade under the default $5 budget first, THEN lower the budget --
     // lowering it up front would make /propose itself refuse before a proposal exists.
     const proposalId = await proposalIn(session);
@@ -132,6 +244,7 @@ describe("POST /fill/prepare", () => {
 
   it("releases the reservation and refuses when the order fails a safety check", async () => {
     const session = freshSession();
+    await proveWallet(app, session);
     const proposalId = await proposalIn(session);
     // A live order that passes /propose's own buy-only filter can never fail this
     // re-check through the ordinary HTTP flow -- prepareFillTx's own unit tests already
@@ -149,6 +262,7 @@ describe("POST /fill/prepare", () => {
 
   it("releases the reservation and sends a sanitized message when the SDK call fails", async () => {
     const session = freshSession();
+    await proveWallet(app, session);
     const proposalId = await proposalIn(session);
     spies.getAllowance.mockRejectedValueOnce(new Error("RPC https://base-mainnet.g.alchemy.com/v2/SECRETKEY timed out"));
 

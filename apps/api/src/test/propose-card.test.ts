@@ -17,7 +17,7 @@ vi.mock("../thetanuts/client.js", async () => await import("./stub-client.js"));
 
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
-import { resetStub, state, TRADER_ADDRESS } from "./stub-client.js";
+import { resetStub, state, TRADER_ADDRESS, proveWallet } from "./stub-client.js";
 import { NOW, DEFAULT_BOOK, makeOrder } from "./fixtures.js";
 
 vi.useFakeTimers({ toFake: ["Date"] });
@@ -299,6 +299,7 @@ describe("POST /propose without a cardRef", () => {
 describe("a proposal made from a Card", () => {
   it("can be prepared for a fill by its proposalId like any other", async () => {
     const session = freshSession();
+    await proveWallet(app, session);
     const { cards } = await deck(session);
     const { proposalId } = (await propose(session, { ...INTENT, cardRef: cards[0].cardRef })).json();
 

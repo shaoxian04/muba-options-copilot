@@ -18,7 +18,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
-import { resetStub, spies, state, TRADER_ADDRESS } from "./stub-client.js";
+import { resetStub, spies, state, TRADER_ADDRESS, proveWallet } from "./stub-client.js";
 import { NOW, makePosition } from "./fixtures.js";
 
 vi.useFakeTimers({ toFake: ["Date"] });
@@ -168,6 +168,7 @@ describe("/fill/prepare has no practice flag", () => {
   it("still prepares a real fill when handed one", async () => {
     state.canSign = true;
     const session = freshSession();
+    await proveWallet(app, session);
     const proposalId = await proposalIn(session);
 
     const res = await app.inject({
@@ -185,6 +186,7 @@ describe("/fill/prepare has no practice flag", () => {
   it("opens no practice holding when handed one", async () => {
     state.canSign = true;
     const session = freshSession();
+    await proveWallet(app, session);
     await app.inject({
       method: "POST",
       url: "/fill/prepare",
