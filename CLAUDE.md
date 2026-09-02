@@ -132,6 +132,10 @@ These are needed on every task. Violating one silently breaks the product's cent
 - **The chain decides whether a fill succeeded, not the caller.** `POST /fill/settle`
   looks up the real transaction receipt itself (ADR-0012) whenever a `txHash` is given;
   a client's own claim of success or failure is never taken at face value.
+- **An account, not just a wallet, is required to reach Confirm.** `POST
+  /auth/challenge`, `POST /auth/verify`, and `POST /fill/prepare` all refuse without a
+  valid `x-account-token` (ADR-0013) -- enforced server-side, never only by the UI.
+  Deck browsing and Practice Run need neither an account nor a wallet.
 - **A cardRef selects; it never supplies a value.** The Order is re-fetched off the live book
   and every number re-derived, so an override passes every check an agent-chosen Card does.
 - **Practice can never spend.** `/practice` is a separate route, not a flag, and its module
@@ -167,11 +171,13 @@ it here with a one-line lesson.
 - **`apps/api/src/insurance/CONTEXT.md`** — Borrower, Loan, Cover, Liquidation Price, Lapse.
   **Read before any Liquidation Cover work.**
 - **`docs/adr/`** — the decisions and why they went that way. 0001 and 0004 are superseded;
-  0006–0012 are current — 0009 is why the surface may look like a game but never celebrates a
+  0006–0013 are current — 0009 is why the surface may look like a game but never celebrates a
   Fill, 0010 is why an Underlying is keyed by price feed and not by token, 0011 is why a
   Trader's own wallet signs a fill instead of the backend, 0012 is why a session must prove
-  wallet ownership and the chain alone decides whether a fill succeeded. **Read before
-  changing architecture, or when code looks deliberately odd and you're tempted to "fix" it.**
+  wallet ownership and the chain alone decides whether a fill succeeded, 0013 is why an
+  account (Supabase Auth) is required before wallet-connect or Confirm, though Deck
+  browsing and Practice Run stay open to anyone. **Read before changing architecture, or
+  when code looks deliberately odd and you're tempted to "fix" it.**
 - **`README.md`** — API route table, repo layout, setup, security posture of the API process.
   **Read before running or wiring anything.**
 - **`apps/web/prototype-copilot.html`** — the settled design for the single-asset ETH Deck as

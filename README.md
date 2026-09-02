@@ -71,7 +71,10 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 | `POST /auth/verify` | no | verifies that signature and marks the session's wallet proven |
 | `POST /fill/prepare` | no | reserves Risk Budget against a proposalId from `/propose` and returns the unsigned transaction(s) the Trader's own **proven** wallet must send |
 | `POST /fill/settle` | no | looks up the transaction's real result on-chain and finalizes or releases the reservation accordingly (ADR-0012) |
-| `GET /positions` | no | the board: holdings for whichever wallet address the browser reports (falling back to the operator's configured wallet), plus this session's Practice Runs, each labelled |
+| `GET /positions` | no | the board: holdings for whichever wallet address the browser reports (falling back to the operator's configured wallet, or the account's own linked wallet when signed in), plus this session's Practice Runs, each labelled |
+| `GET /account` | no | the signed-in account's saved settings and linked wallet, if any (ADR-0013) |
+| `POST /account/settings` | no | save a partial Risk Budget / default-asset / default-direction update |
+| `GET /account/activity` | no | a page of the account's own activity log |
 | `GET /forecast/news` | no | simulated-headline sentiment for `?symbol=&horizon=`. Opinion, quarantined from the trade flow (ADR-0005) |
 | `GET /forecast/price` | no | a price prediction grounded in real market data. Opinion, never a trade input |
 | `GET /forecast/risk-benefit` | no | the risk/benefit reading, with a runtime guardrail against Max Loss phrasing |
@@ -85,6 +88,14 @@ owns — that proof comes from `/auth/challenge` and `/auth/verify`, a signed me
 than a transaction. And `/fill/settle` no longer trusts the browser's own report of whether
 a fill worked: given a `txHash`, it looks up that transaction's real receipt on-chain and
 decides success or failure from that alone (ADR-0012).
+
+`/auth/challenge`, `/auth/verify`, and `/fill/prepare` also require a signed-in account
+now, on top of everything above -- a valid `x-account-token` (a Supabase Auth session,
+verified server-side), refused with 401 otherwise (ADR-0013). Deck browsing and Practice
+Run need neither an account nor a wallet. A successful `/auth/verify` call, when signed in,
+also links that wallet to the account (one wallet per account, overwritten on relink); the
+Risk Budget ceiling, Practice Run history, and an activity log persist per account through
+`GET /account`, `POST /account/settings`, and `GET /account/activity`.
 
 Every number a Trader reads crosses the wire as `{ value, display }` -- formatted once, on
 the server. The frontend renders `display` verbatim and never formats or recomputes; if it
@@ -160,6 +171,7 @@ The reasoning behind this project is written down, not assumed:
   - [0008](./docs/adr/0008-cover-is-bought-by-rfq-for-single-collateral-loans-only.md) — Cover is RFQ-only, single-collateral Loans only
   - [0011](./docs/adr/0011-non-custodial-fill-for-multi-tenant-wallets.md) — each Trader signs their own fill; the backend prepares, never signs
   - [0012](./docs/adr/0012-wallet-proof-sessions-and-chain-verified-settle.md) — sessions prove wallet ownership before a fill; the chain decides whether a fill succeeded
+  - [0013](./docs/adr/0013-sign-in-required-before-wallet-connect.md) — a real account is required before wallet-connect or Confirm; Deck browsing and Practice Run stay open
 
 ## Layout
 
