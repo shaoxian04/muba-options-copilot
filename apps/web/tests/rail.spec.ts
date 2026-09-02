@@ -140,29 +140,20 @@ test.describe("the ticker rail", () => {
 });
 
 test.describe("the Copilot follows the picker", () => {
-  test("names the selected Underlying in its seed prompts", async ({ page }) => {
-    await stubApi(page);
-    await page.goto("/");
-    await expect(page.getByRole("button", { name: /I think ETH drops/ })).toBeVisible();
-
-    await page.getByTestId("rail-SOL").click();
-    await expect(page.getByRole("button", { name: /I think SOL drops/ })).toBeVisible();
-    await expect(page.getByRole("button", { name: /I think ETH drops/ })).toHaveCount(0);
-  });
-
-  test("does not move the selection when an asset is named in the chat", async ({ page }) => {
+  test("typing in the chat never moves the asset selection", async ({ page }) => {
     await stubApi(page);
     await page.goto("/");
     await page.getByTestId("rail-SOL").click();
     await expect(page.getByTestId("rail-SOL")).toHaveAttribute("aria-pressed", "true");
 
-    // The seed says "SOL" now, but pressing it must ask about the SELECTED Underlying
-    // rather than parse its own sentence. Reading an asset out of language is the Trade
-    // Agent's job and that service does not exist (ADR-0007); a regex here would be the
-    // surface originating a selection.
-    await page.getByRole("button", { name: /I think SOL drops/ }).click();
+    // Free text is only logged and answered with a fixed reply (ADR-0007) -- reading an
+    // asset out of a sentence is the Trade Agent's job and that service does not exist,
+    // so naming a different asset here must never originate a selection.
+    await page.getByRole("textbox", { name: "Say something to the Copilot" }).fill("I think BTC drops before Friday");
+    await page.getByRole("button", { name: "Send" }).click();
+
     await expect(page.getByTestId("rail-SOL")).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByTestId("rail-ETH")).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByTestId("rail-BTC")).toHaveAttribute("aria-pressed", "false");
   });
 });
 

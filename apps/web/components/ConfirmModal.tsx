@@ -32,6 +32,7 @@ import { clampSizeUsdc, expectedMoveIndex, riskBudgetBar, sizeCapUsdc } from "..
 import { SIZE_MIN_USDC, SIZE_PRESETS_USDC, SIZE_STEP_USDC, type Direction, type GateState } from "../lib/surface";
 import type { FillReceipt, SessionState } from "../lib/api";
 import { Mark } from "./Rail";
+import { PayoffStrip } from "./PayoffStrip";
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -187,6 +188,8 @@ export function ConfirmModal({
                 {countdown(proposal.figures.expiry.value, now)}
               </em>
             </p>
+
+            <PayoffStrip proposal={proposal} spot={spot} />
 
             <div className="ctl">
               <div className="ctlhead">

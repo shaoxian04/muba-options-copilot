@@ -259,7 +259,6 @@ export interface Surface {
   setAsset: (a: UnderlyingSymbol) => void;
   setDirection: (d: Direction) => void;
   setHorizon: (h: number) => void;
-  deal: (line?: string, switchTo?: Direction) => Promise<void>;
   /** Clicking a Card. Opens the confirmation (issue #30) as well as pricing the pick. */
   pick: (cardRef: string) => Promise<void>;
   /**
@@ -286,6 +285,7 @@ export interface Surface {
   closeRfq: () => void;
 
   say: (text: string) => void;
+  submitTradeMessage: (text: string) => void;
   reset: () => void;
 }
 
@@ -478,6 +478,21 @@ export function useSurface(): Surface {
 
   const say = useCallback((text: string) => setLog((l) => [...l, { who: "copilot", text }]), []);
   const heard = useCallback((text: string) => setLog((l) => [...l, { who: "trader", text }]), []);
+
+  /**
+   * The Trade tab's chat input. There is no free-text-to-trade backend yet (ADR-0007)
+   * -- the Trade Agent that would read this line has no HTTP surface -- so this only
+   * logs what was typed and answers with a fixed, honest reply. It never calls
+   * `propose`, never derives a number, and never opens a Card: picking one directly
+   * off the Deck is still the only way to price and buy something.
+   */
+  const submitTradeMessage = useCallback(
+    (text: string) => {
+      heard(text);
+      say("I can't read free text yet — pick straight off the Deck on the right.");
+    },
+    [heard, say]
+  );
 
   /**
    * The board, and the Risk Budget it sits beside, together -- but only the board has
@@ -905,36 +920,6 @@ export function useSurface(): Surface {
     [asset, horizonDays]
   );
 
-  const deal = useCallback(
-    async (line?: string, switchTo?: Direction) => {
-      if (line) heard(line);
-
-      let row = deck;
-      const asking = switchTo ?? direction;
-      if (switchTo && switchTo !== direction) {
-        clearSelection();
-        expiryChosen.current = false;
-        setDirectionState(switchTo);
-        row = await loadDeck(asset, switchTo, horizonDays, { spinner: true });
-      }
-
-      setSizeUsdcState(STAKE_USDC);
-      const answer = await ask(undefined, asking, STAKE_USDC);
-      if (answer?.kind === "PROPOSAL") {
-        const f = answer.proposal.figures;
-        const card = row?.cards.find((c) => c.cardRef === answer.cardRef);
-        say(
-          `Dealt the ${f.strike.display} — ${card ? `${card.impliedChance.display} chance, ${card.chanceLabel}, ` : ""}` +
-            `${f.contracts.display} contracts for ${f.premiumUsdc.display}. Ends ${f.expiry.display}. ` +
-            `Flick to another if you disagree with me.`
-        );
-      } else if (answer?.kind === "NO_ORDER") {
-        say(answer.message);
-      }
-    },
-    [ask, asset, clearSelection, deck, direction, heard, horizonDays, loadDeck, say]
-  );
-
   /**
    * Clicking a Card (issue #30). Prices it at the default stake and opens the
    * confirmation -- the only Confirm in the product now lives there, so this is the
@@ -1097,7 +1082,6 @@ export function useSurface(): Surface {
     setAsset,
     setDirection,
     setHorizon,
-    deal,
     pick,
     setSize,
     confirm,
@@ -1110,6 +1094,7 @@ export function useSurface(): Surface {
     submitRfq,
     closeRfq,
     say,
+    submitTradeMessage,
     reset,
   };
 }
