@@ -11,12 +11,12 @@
  * same id.
  */
 import type {
-  Card, Deck, DepthView, ExpiryOption, Figure, Holding,
+  Card, ConversationTurn, CoinAskResult, Deck, DepthView, ExpiryOption, Figure, Holding,
   MarketOverview, MarketRow, ProposeResult, RfqTenorDays, UnderlyingSymbol,
 } from "@copilot/shared";
 
 export type {
-  Card, Deck, DepthView, ExpiryOption, Figure, Holding,
+  Card, ConversationTurn, CoinAskResult, Deck, DepthView, ExpiryOption, Figure, Holding,
   MarketOverview, MarketRow, ProposeResult, RfqTenorDays, UnderlyingSymbol,
 };
 
@@ -185,6 +185,25 @@ export const fill = (proposalId: string): Promise<FillReceipt> =>
   call<FillReceipt>("/fill", {
     method: "POST",
     body: JSON.stringify({ proposalId }),
+    headers: authHeaders(),
+  });
+
+/**
+ * Ask the Insights surface a free-text question about any coin(s) -- price, news, a
+ * forward-looking view, risk/benefit, or a comparison across several. Read-only: signs
+ * nothing and cannot reach `/fill`. One entry per coin the question named; a coin that
+ * failed carries only an `error`, and one coin failing never blocks the others.
+ *
+ * `history` carries the last few successful exchanges so a follow-up ("what about SOL
+ * too?") can be resolved against what was actually asked before.
+ */
+export const askForecast = (
+  question: string,
+  history: ConversationTurn[] = []
+): Promise<Record<string, CoinAskResult>> =>
+  call<Record<string, CoinAskResult>>("/forecast/ask", {
+    method: "POST",
+    body: JSON.stringify({ question, history }),
     headers: authHeaders(),
   });
 

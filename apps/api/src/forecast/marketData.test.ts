@@ -2,12 +2,106 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   fetchMarketData,
+  fetchWithRetry,
   UnknownSymbol,
   MarketDataUnavailable,
   MarketDataDivergence,
   type MarketDataDeps,
   type CoinGeckoMarket,
+  type RetryDeps,
 } from "./marketData.js";
+
+const noopSleep = async () => {};
+
+test("fetchWithRetry returns immediately on a successful response, without sleeping", async () => {
+  let fetchCalls = 0;
+  let sleepCalls = 0;
+  const deps: RetryDeps = {
+    fetch: async () => { fetchCalls++; return { ok: true, status: 200, json: async () => ({}) }; },
+    sleep: async () => { sleepCalls++; },
+  };
+
+  const res = await fetchWithRetry("https://example.com", deps);
+
+  assert.equal(res.status, 200);
+  assert.equal(fetchCalls, 1);
+  assert.equal(sleepCalls, 0);
+});
+
+test("fetchWithRetry retries a 429 and succeeds on the second attempt", async () => {
+  let fetchCalls = 0;
+  const sleeps: number[] = [];
+  const deps: RetryDeps = {
+    fetch: async () => {
+      fetchCalls++;
+      if (fetchCalls === 1) return { ok: false, status: 429, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    },
+    sleep: async (ms) => { sleeps.push(ms); },
+  };
+
+  const res = await fetchWithRetry("https://example.com", deps);
+
+  assert.equal(res.status, 200);
+  assert.equal(fetchCalls, 2);
+  assert.deepEqual(sleeps, [300]);
+});
+
+test("fetchWithRetry does not retry a non-retryable status like 404", async () => {
+  let fetchCalls = 0;
+  let sleepCalls = 0;
+  const deps: RetryDeps = {
+    fetch: async () => { fetchCalls++; return { ok: false, status: 404, json: async () => ({}) }; },
+    sleep: async () => { sleepCalls++; },
+  };
+
+  const res = await fetchWithRetry("https://example.com", deps);
+
+  assert.equal(res.status, 404);
+  assert.equal(fetchCalls, 1);
+  assert.equal(sleepCalls, 0);
+});
+
+test("fetchWithRetry retries a thrown network error and recovers", async () => {
+  let fetchCalls = 0;
+  const deps: RetryDeps = {
+    fetch: async () => {
+      fetchCalls++;
+      if (fetchCalls === 1) throw new Error("fetch failed");
+      return { ok: true, status: 200, json: async () => ({}) };
+    },
+    sleep: noopSleep,
+  };
+
+  const res = await fetchWithRetry("https://example.com", deps);
+
+  assert.equal(res.status, 200);
+  assert.equal(fetchCalls, 2);
+});
+
+test("fetchWithRetry exhausts retries and throws when every attempt is a retryable bad status", async () => {
+  let fetchCalls = 0;
+  const sleeps: number[] = [];
+  const deps: RetryDeps = {
+    fetch: async () => { fetchCalls++; return { ok: false, status: 503, json: async () => ({}) }; },
+    sleep: async (ms) => { sleeps.push(ms); },
+  };
+
+  await assert.rejects(() => fetchWithRetry("https://example.com", deps), /503/);
+  assert.equal(fetchCalls, 3);
+  assert.deepEqual(sleeps, [300, 900]);
+});
+
+test("fetchWithRetry exhausts retries and throws the last network error when every attempt throws", async () => {
+  let fetchCalls = 0;
+  const deps: RetryDeps = {
+    fetch: async () => { fetchCalls++; throw new Error("ECONNRESET"); },
+    sleep: noopSleep,
+  };
+
+  await assert.rejects(() => fetchWithRetry("https://example.com", deps), /ECONNRESET/);
+  assert.equal(fetchCalls, 3);
+});
 
 const cgRow = (overrides: Partial<CoinGeckoMarket> = {}): CoinGeckoMarket => ({
   id: "ethereum",

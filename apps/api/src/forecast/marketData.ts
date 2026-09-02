@@ -38,8 +38,52 @@ export interface MarketDataDeps {
   resolveViaCoinGeckoSearch: (query: string) => Promise<{ id: string; symbol: string } | undefined>;
 }
 
+type FetchResponseLike = { ok: boolean; status: number; json: () => Promise<any> };
+type FetchLike = (url: string) => Promise<FetchResponseLike>;
+
+export interface RetryDeps {
+  fetch: FetchLike;
+  sleep: (ms: number) => Promise<void>;
+}
+
+const defaultRetryDeps: RetryDeps = {
+  fetch: (url) => fetch(url),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
+
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const RETRY_DELAYS_MS = [300, 900];
+
+/**
+ * Retries a GET up to twice (3 attempts total) on a network error or a retryable HTTP
+ * status (429, 5xx) -- CoinGecko's free tier rate-limits hard, and a transient blip
+ * used to surface immediately as a hard failure with nothing to absorb it (observed
+ * live: a bare "fetch failed" killing a whole /forecast request). A non-retryable
+ * response (404, 400, ...) is returned unretried on the first attempt, since retrying
+ * a client error just wastes the delay.
+ */
+export async function fetchWithRetry(url: string, deps: RetryDeps = defaultRetryDeps): Promise<FetchResponseLike> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      const res = await deps.fetch(url);
+      if (res.ok || !RETRYABLE_STATUS.has(res.status)) return res;
+      lastError = new Error(`HTTP ${res.status}`);
+    } catch (e) {
+      lastError = e;
+    }
+    if (attempt < RETRY_DELAYS_MS.length) await deps.sleep(RETRY_DELAYS_MS[attempt]);
+  }
+  throw lastError;
+}
+
 async function realFetchCoinGeckoMarket(coingeckoId: string): Promise<CoinGeckoMarket> {
-  const res = await fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${coingeckoId}`);
+  let res: FetchResponseLike;
+  try {
+    res = await fetchWithRetry(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${coingeckoId}`);
+  } catch (e: any) {
+    throw new MarketDataUnavailable(`CoinGecko markets request failed after retries: ${e?.message ?? e}`);
+  }
   if (!res.ok) throw new MarketDataUnavailable(`CoinGecko markets request failed: ${res.status}`);
   const [row] = (await res.json()) as CoinGeckoMarket[];
   if (!row) throw new MarketDataUnavailable(`CoinGecko returned no data for id "${coingeckoId}"`);
@@ -47,7 +91,12 @@ async function realFetchCoinGeckoMarket(coingeckoId: string): Promise<CoinGeckoM
 }
 
 async function realResolveViaCoinGeckoSearch(query: string): Promise<{ id: string; symbol: string } | undefined> {
-  const res = await fetch(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(query)}`);
+  let res: FetchResponseLike;
+  try {
+    res = await fetchWithRetry(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(query)}`);
+  } catch (e: any) {
+    throw new MarketDataUnavailable(`CoinGecko search request failed after retries: ${e?.message ?? e}`);
+  }
   if (!res.ok) throw new MarketDataUnavailable(`CoinGecko search request failed: ${res.status}`);
   const data = (await res.json()) as { coins: Array<{ id: string; symbol: string }> };
   return data.coins[0];

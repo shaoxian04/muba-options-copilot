@@ -13,6 +13,7 @@
  * seam 1). Process concerns -- binding, the port, the startup warnings -- live in
  * `server.ts`, so importing this module can never accidentally open a socket.
  */
+import { timingSafeEqual } from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
@@ -30,18 +31,21 @@ import { marketOverview } from "./thetanuts/markets.js";
 import { reviewIntent } from "./agents/review.js";
 import { practiceRoutes, practiceHoldings } from "./practice.js";
 import { rfqRoutes } from "./rfq.js";
+import { safeErrorResponse } from "./errors.js";
 import { realHoldings } from "./thetanuts/holdings.js";
 import { usd } from "./format.js";
 import { executeFill, RiskBudgetExceeded, UnsafeOrder } from "./thetanuts/execute.js";
 import {
   sessionFor, remainingBudget, setRiskBudget,
-  rememberProposal, recallProposal, rememberCard, recallCard, type Session,
+  rememberProposal, recallProposal, rememberCard, recallCard, ProposalIdBody, type Session,
 } from "./sessions.js";
 import { buildScenario } from "./forecast/scenario.js";
 import { analyzeNews } from "./forecast/news.js";
 import { predictPrice } from "./forecast/price.js";
 import { assessRiskBenefit } from "./forecast/riskBenefit.js";
-import { parseForecastQuery, forecastErrorStatus } from "./forecast/http.js";
+import { parseForecastQuery, parseAskBody, forecastErrorStatus } from "./forecast/http.js";
+import { answerQuestion } from "./forecast/ask.js";
+import { fetchIndicators, IndicatorsUnavailable } from "./forecast/indicators.js";
 
 /**
  * This process holds a funded key and exposes routes that spend money or cost real API
@@ -108,12 +112,21 @@ const DepthQuery = z.object({
   horizonDays: z.coerce.number().int().min(1).max(MAX_HORIZON_DAYS).optional(),
 });
 
-/** Guards the routes that move money or cost real API credits. No token configured means loopback-only trust. */
+/**
+ * Guards the routes that move money or cost real API credits. No token configured means
+ * loopback-only trust.
+ *
+ * Constant-time comparison, so response timing does not leak how much of the token was
+ * right -- the same reasoning as `recallProposal`'s proposal-id lookup in sessions.ts.
+ */
 function requireToken(req: any, reply: any): boolean {
   const token = apiToken();
   if (!token) return true;
   const header = String(req.headers["authorization"] ?? "");
-  if (header === `Bearer ${token}`) return true;
+  const expected = `Bearer ${token}`;
+  const a = Buffer.from(header);
+  const b = Buffer.from(expected);
+  if (a.length === b.length && timingSafeEqual(a, b)) return true;
   reply.code(401).send({ error: "Unauthorized" });
   return false;
 }
@@ -136,6 +149,13 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(cors, { origin: allowedOrigins(), credentials: false });
   await app.register(rateLimit, { global: false });
+
+  // Every response declares its content type as final -- stops a browser from
+  // sniffing a JSON error body as something executable.
+  app.addHook("onSend", async (_req, reply, payload) => {
+    reply.header("X-Content-Type-Options", "nosniff");
+    return payload;
+  });
 
   app.get("/health", async () => ({ ok: true, canSign: canSign() }));
 
@@ -181,7 +201,8 @@ export async function buildApp(): Promise<FastifyInstance> {
    * bar would be a number the server never vouched for, sitting directly beside a Max
    * Loss (ADR-0006).
    */
-  app.get("/session", async (req) => {
+  app.get("/session", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
     const s = sessionFor(req.headers);
     const remaining = remainingBudget(s);
     return {
@@ -197,6 +218,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   app.post("/session/budget", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
     const { riskBudgetUsdc } = (req.body ?? {}) as { riskBudgetUsdc?: number };
     if (typeof riskBudgetUsdc !== "number" || riskBudgetUsdc <= 0)
       return reply.code(400).send({ error: "riskBudgetUsdc must be a positive number" });
@@ -326,7 +348,11 @@ export async function buildApp(): Promise<FastifyInstance> {
         return;
       }
       if (e instanceof NoSuitableOrder) return { kind: "NO_ORDER", message: e.message };
-      throw e;
+      // Anything else may be a raw ethers/RPC error -- THETANUTS_RPC_URL carries the
+      // provider API key as a URL path segment, and that key must never reach a
+      // response body. See errors.ts.
+      reply.code(502).send(safeErrorResponse(req.log, e, "Could not price that trade. Try again."));
+      return;
     }
   });
 
@@ -336,8 +362,9 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.post("/fill", async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const { proposalId } = (req.body ?? {}) as { proposalId?: string };
-    if (!proposalId) return reply.code(400).send({ error: "proposalId required" });
+    const parsedBody = ProposalIdBody.safeParse(req.body);
+    if (!parsedBody.success) return reply.code(400).send({ error: "proposalId required" });
+    const { proposalId } = parsedBody.data;
     if (!canSign()) return reply.code(503).send({ error: "No signer configured. Set THETANUTS_PRIVATE_KEY." });
 
     const s = sessionFor(req.headers);
@@ -345,15 +372,29 @@ export async function buildApp(): Promise<FastifyInstance> {
     if (!found)
       return reply.code(410).send({ error: "That quote has expired. Prices move -- ask for a fresh one." });
 
+    // Reserve the spend and consume the proposal SYNCHRONOUSLY, before the await below.
+    // Node has no threads, so nothing can interleave between this check and this mutation --
+    // that's what makes it atomic. Doing this after the await (the old code) left a window
+    // where two concurrent /fill calls could both pass the budget check before either one's
+    // spend was recorded.
+    const remaining = remainingBudget(s);
+    if (found.proposal.maxLossUsdc > remaining)
+      return reply.code(403).send({
+        error: `This trade risks $${found.proposal.maxLossUsdc.toFixed(2)} but only $${remaining.toFixed(2)} of the Risk Budget remains.`,
+      });
+    s.proposals.delete(proposalId);
+    s.spentUsdc += found.proposal.maxLossUsdc;
+
     try {
-      const result = await executeFill(found.proposal, found.order, remainingBudget(s));
-      s.spentUsdc += found.proposal.maxLossUsdc;
-      s.proposals.delete(proposalId);
+      const result = await executeFill(found.proposal, found.order, remainingBudget(s) + found.proposal.maxLossUsdc);
       return { ...result, remainingUsdc: remainingBudget(s) };
     } catch (e: any) {
+      s.spentUsdc -= found.proposal.maxLossUsdc; // the fill never happened -- release the reservation
       if (e instanceof RiskBudgetExceeded) return reply.code(403).send({ error: e.message });
       if (e instanceof UnsafeOrder) return reply.code(403).send({ error: e.message });
-      return reply.code(502).send({ error: e?.message ?? "Fill failed" });
+      // Raw ethers/RPC error text can carry the provider API key embedded in
+      // THETANUTS_RPC_URL -- never forward e.message to the caller. See errors.ts.
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Fill failed. Try again, or ask for a fresh quote if this keeps happening."));
     }
   });
 
@@ -367,7 +408,8 @@ export async function buildApp(): Promise<FastifyInstance> {
    * It does not refuse without a wallet. A Trader who has only practised still has a
    * board, and an empty page would teach them nothing.
    */
-  app.get("/positions", async (req) => {
+  app.get("/positions", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
     const session = sessionFor(req.headers);
     // EVERY Underlying's spot, because the board can hold Positions on any of them. It
     // used to read ETH's and value all six against it, which marked a BTC holding at
@@ -406,6 +448,50 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.get("/forecast/news", { config: COST_ROUTE_LIMIT }, forecast(analyzeNews));
   app.get("/forecast/price", { config: COST_ROUTE_LIMIT }, forecast(predictPrice));
   app.get("/forecast/risk-benefit", { config: COST_ROUTE_LIMIT }, forecast(assessRiskBenefit));
+
+  /**
+   * Indicators for one coin, from the Python agents service. The odd one out among the
+   * /forecast/* routes: no AI call, no horizon, and its numbers are arithmetic over
+   * public candles rather than opinion -- so it carries no disclaimer. Rate-limited
+   * anyway, since it makes an outbound exchange request.
+   *
+   * 503 when the service is down, per ADR-0007. The other Forecast routes keep working.
+   */
+  app.get("/forecast/indicators", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const symbol = typeof (req.query as any)?.symbol === "string" ? (req.query as any).symbol.trim() : "";
+    if (!symbol) return reply.code(400).send({ error: "symbol query parameter is required" });
+    try {
+      return await fetchIndicators(symbol);
+    } catch (e) {
+      if (e instanceof IndicatorsUnavailable) {
+        if (e.details) req.log.error({ err: e, details: e.details }, "Indicators shape drift");
+        return reply.code(e.status === 404 ? 404 : 503).send({ error: e.message });
+      }
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not fetch indicators."));
+    }
+  });
+
+  /**
+   * Free-text entry point: extracts which coin(s), horizon, and analyses a question is
+   * asking for, then runs only the existing analyses each coin's own part of the
+   * question actually calls for, once per coin, and finishes with one synthesized
+   * answer grounded in whatever real data was gathered -- including, for a comparison
+   * question, what was gathered for every other coin too. One coin failing does not
+   * fail the others -- see CoinAskResult. Token-gated and rate-limited like every other
+   * /forecast/* route; a single question can trigger several real AI calls per coin.
+   */
+  app.post("/forecast/ask", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const parsed = parseAskBody((req.body ?? {}) as Record<string, unknown>);
+    if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
+    try {
+      return await answerQuestion(parsed.question, { history: parsed.history });
+    } catch (e) {
+      const { status, error } = forecastErrorStatus(e);
+      return reply.code(status).send({ error });
+    }
+  });
 
   await app.register(practiceRoutes);
   await app.register(rfqRoutes);

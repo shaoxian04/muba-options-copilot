@@ -17,7 +17,7 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { Holding, TradeProposal } from "@copilot/shared";
-import { sessionFor, recallProposal, remainingBudget, type Session } from "./sessions.js";
+import { sessionFor, recallProposal, remainingBudget, ProposalIdBody, type Session } from "./sessions.js";
 import { usd, moment } from "./format.js";
 
 /**
@@ -122,8 +122,9 @@ function intrinsicValue(p: PracticePosition, spot: number): number {
  */
 export async function practiceRoutes(app: FastifyInstance): Promise<void> {
   app.post("/practice", async (req, reply) => {
-    const { proposalId } = (req.body ?? {}) as { proposalId?: string };
-    if (!proposalId) return reply.code(400).send({ error: "proposalId required" });
+    const parsedBody = ProposalIdBody.safeParse(req.body);
+    if (!parsedBody.success) return reply.code(400).send({ error: "proposalId required" });
+    const { proposalId } = parsedBody.data;
 
     const session = sessionFor(req.headers);
     const found = recallProposal(session, proposalId);

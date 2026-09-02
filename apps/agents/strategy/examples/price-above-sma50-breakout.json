@@ -1,0 +1,20 @@
+{
+  "id": "price-above-sma50-breakout-eth-v1",
+  "owner_id": "demo-owner",
+  "name": "Price breaks above SMA(50)",
+  "enabled": true,
+  "notes": "Breakout setup: the daily close crossing above its own 50-day simple moving average is read as the end of a downtrend or consolidation. This is the analysis surface -- this prose never reaches `then`.",
+  "when": [
+    {
+      "left": { "source": "PRICE" },
+      "operator": "crosses_above",
+      "right": { "source": "INDICATOR", "kind": "SMA", "period": 50 }
+    }
+  ],
+  "then": {
+    "underlying": "ETH",
+    "direction": "UP",
+    "sizeUsdc": 2,
+    "horizonDays": 3
+  }
+}
