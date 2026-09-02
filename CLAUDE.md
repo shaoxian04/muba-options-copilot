@@ -25,7 +25,15 @@ separate Python service (`apps/agents`, `npm run agents`) that is up and serving
 Agent's indicator half over loopback HTTP (`GET /indicators`, consumed by the Node backend) —
 the Trade and Strategy Agents still have no HTTP surface for proposals or suggestions, the
 Review Agent is stubbed as always-agreeing, and the surface's only way to ask for a proposal is
-still the seed prompts on the left. Cover has a glossary and an ADR but no code.
+still the seed prompts on the left.
+
+**Liquidation Cover reads but does not yet buy.** `apps/api/src/insurance/` holds `loan.ts`
+(Aave V3 on Base, single-collateral only), `liquidation.ts` (the arithmetic, pure and unit
+tested) and `http.ts` (`GET /cover/quote`), with the surface at `/cover`. It computes the
+Liquidation Price, the Target Strike and the full hedge for any address, and refuses in
+words otherwise. The RFQ money path -- request, wait out `offerEndTimestamp`, settle on a
+second human confirmation -- is NOT built, and `POST /rfq` is still the honest 501 of issue
+#31. See ADR-0011 and ADR-0012 for the decisions taken while building the read half.
 
 **The book is multi-asset** (issues #23-#27): six Underlyings — BTC, ETH, SOL, BNB, XRP,
 AVAX — keyed by Chainlink **price feed**, never by underlying token (four of them are

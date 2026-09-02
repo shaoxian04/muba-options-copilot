@@ -69,6 +69,7 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 | `POST /practice` | **no** | opens a simulated Position from a `proposalId`. No token, no Risk Budget, no signer in reach. |
 | `POST /fill` | **yes** | takes a proposalId from `/propose` and buys it |
 | `GET /positions` | no | the board: real holdings read from the chain plus this session's Practice Runs, each labelled |
+| `GET /cover/quote` | no | a Borrower's Aave V3 Loan on Base, and the put that would protect it: Liquidation Price, Target Strike, the full hedge. `?address=0x...`. Reads any address, requests nothing from a maker, signs nothing. Refuses -- with the reason in words -- for multi-collateral Loans, unsupported collateral, no debt, or a price its two sources disagree on |
 | `GET /forecast/news` | no | simulated-headline sentiment for `?symbol=&horizon=`. Opinion, quarantined from the trade flow (ADR-0005) |
 | `GET /forecast/price` | no | a price prediction grounded in real market data. Opinion, never a trade input |
 | `GET /forecast/risk-benefit` | no | the risk/benefit reading, with a runtime guardrail against Max Loss phrasing |
