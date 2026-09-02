@@ -16,6 +16,7 @@
     "agents": "node -e \"const path=require('path');const dir=path.resolve('apps/agents');const py=process.platform==='win32'?path.join(dir,'.venv/Scripts/python.exe'):path.join(dir,'.venv/bin/python');require('child_process').spawn(py,['server.py'],{cwd:dir,stdio:'inherit'}).on('exit',c=>process.exit(c??1));\"",
     "prototype": "node -e \"require('child_process').exec((process.platform==='win32'?'start \\\"\\\" ':'open ')+'apps/web/prototype-copilot.html')\"",
     "prototype:v2": "node -e \"require('child_process').exec((process.platform==='win32'?'start \\\"\\\" ':'open ')+'apps/web/prototype-deck-v2.html')\"",
+    "prototype:cover": "node -e \"require('child_process').exec((process.platform==='win32'?'start \\\"\\\" ':'open ')+'apps/web/prototype-cover.html')\"",
     "test": "npm run test:unit && npm run test:node && npm run test:e2e",
     "test:unit": "vitest run",
     "test:node": "npm run test -w @copilot/shared && npm run test -w @copilot/api",

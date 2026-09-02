@@ -16,6 +16,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 
 vi.mock("../thetanuts/client.js", async () => await import("./stub-client.js"));
+vi.mock("../insurance/loan.js", async () => await import("./stub-loan.js"));
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -23,7 +24,8 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
 import { resetStub, state } from "./stub-client.js";
-import { NOW, DEFAULT_BOOK, makeOrder } from "./fixtures.js";
+import { resetStub as resetLoanStub, state as loanState } from "./stub-loan.js";
+import { NOW, DEFAULT_BOOK, makeOrder, SPOT, PRICES } from "./fixtures.js";
 
 vi.useFakeTimers({ toFake: ["Date"] });
 vi.setSystemTime(NOW);
@@ -63,6 +65,18 @@ const NAMES = [
   "veto",
   "no-order",
   "refusal",
+  // --- Liquidation Cover surface -----------------------------------------------
+  // Four QUOTE fixtures: the states the Cover surface has to render.
+  "cover-healthy",
+  "cover-tight",
+  "cover-cbbtc",
+  "cover-far-strike",
+  // Five REFUSED fixtures: every refusal path the surface must handle gracefully.
+  "cover-refused-multi-collateral",
+  "cover-refused-no-debt",
+  "cover-refused-already-liquidatable",
+  "cover-refused-unsupported-collateral",
+  "cover-refused-no-collateral",
 ] as const;
 
 /**
@@ -205,6 +219,189 @@ beforeAll(async () => {
   await post("/session/budget", { riskBudgetUsdc: 1 }, "broke-session");
   const refused = await post("/propose", intent, "broke-session");
   generated["refusal"] = { status: refused.statusCode, body: refused.json() };
+
+  // --- Liquidation Cover surface --------------------------------------------
+  //
+  // GET /cover/quote drives `readLoan` (stubbed) then `assess()` (real), then the
+  // route's own formatters. Every number in these fixtures is a real server output --
+  // only the RPC read is replaced, matching the ticket's "highest point at which the
+  // chain can be removed while keeping everything worth testing".
+  //
+  // `totalCollateralUsd` is set to `collateralAmount * aavePrice` exactly so the
+  // MULTI_COLLATERAL identity check inside `assess()` always passes on QUOTE fixtures.
+  // `aavePrice === thetanutsPrice` for the same reason: the PRICE_DIVERGENCE check is
+  // the very first gate, and a 0% spread clears it without any rounding risk.
+
+  // WETH, healthy loan -- health factor ~1.22. A calm position, nothing to warn about.
+  loanState.next = {
+    ok: true,
+    loan: {
+      collateral: "WETH",
+      underlying: "ETH",
+      collateralAmount: 1.5,
+      totalCollateralUsd: 1.5 * SPOT,   // 3668.235 -- exact, passes the collateral identity
+      totalDebtUsd: 2500,
+      liquidationThreshold: 0.83,
+      healthFactor: (1.5 * SPOT * 0.83) / 2500,  // ≈ 1.218
+      aavePrice: SPOT,
+      thetanutsPrice: SPOT,
+    },
+  };
+  generated["cover-healthy"] = await get("/cover/quote?address=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+  resetLoanStub();
+
+  // WETH, tight loan -- health factor ~1.09. The strike lands just above spot (+1.2%),
+  // so the "distance" figure reads as a small positive move rather than a fall.
+  // This is also the case that motivates the signed distance: a positive distance means
+  // "must rise to be struck", which a borrower needs to understand.
+  loanState.next = {
+    ok: true,
+    loan: {
+      collateral: "WETH",
+      underlying: "ETH",
+      collateralAmount: 1.5,
+      totalCollateralUsd: 1.5 * SPOT,
+      totalDebtUsd: 2800,
+      liquidationThreshold: 0.83,
+      healthFactor: (1.5 * SPOT * 0.83) / 2800,  // ≈ 1.087
+      aavePrice: SPOT,
+      thetanutsPrice: SPOT,
+    },
+  };
+  generated["cover-tight"] = await get("/cover/quote?address=0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+  resetLoanStub();
+
+  // cbBTC collateral -- exercises the BTC price path and cbBTC's 8-decimal tokenAmount
+  // formatter, which differs from WETH's 6-decimal one. Health factor ~1.52.
+  loanState.next = {
+    ok: true,
+    loan: {
+      collateral: "cbBTC",
+      underlying: "BTC",
+      collateralAmount: 0.05,
+      totalCollateralUsd: 0.05 * PRICES.BTC,   // 3894.107
+      totalDebtUsd: 2000,
+      liquidationThreshold: 0.78,
+      healthFactor: (0.05 * PRICES.BTC * 0.78) / 2000,  // ≈ 1.519
+      aavePrice: PRICES.BTC,
+      thetanutsPrice: PRICES.BTC,
+    },
+  };
+  generated["cover-cbbtc"] = await get("/cover/quote?address=0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
+  resetLoanStub();
+
+  // WETH, large health factor (~5.07) -- strike lands 78% below spot, which trips the
+  // far-strike warning in `assess()`. The warning threshold is `strikeDistanceFromSpot < -0.4`:
+  //   liquidationPrice = 800 / (2.0 * 0.83) = 481.93
+  //   targetStrike     = 481.93 * 1.1      = 530.12
+  //   distance         = 530.12 / 2445.49 - 1 = -0.783 < -0.4  ✓
+  loanState.next = {
+    ok: true,
+    loan: {
+      collateral: "WETH",
+      underlying: "ETH",
+      collateralAmount: 2.0,
+      totalCollateralUsd: 2.0 * SPOT,   // 4890.98
+      totalDebtUsd: 800,
+      liquidationThreshold: 0.83,
+      healthFactor: (2.0 * SPOT * 0.83) / 800,  // ≈ 5.074
+      aavePrice: SPOT,
+      thetanutsPrice: SPOT,
+    },
+  };
+  generated["cover-far-strike"] = await get("/cover/quote?address=0x90F79bf6EB2c4f870365E785982E1f101E93b906");
+  resetLoanStub();
+
+  // REFUSED: two assets held -- WETH and cbBTC together. On the real chain-reading
+  // path this is detected inside `readLoan` itself, before `assess()` runs. The stub
+  // mirrors that control flow by returning `ok: false` directly, with the same message
+  // template `loan.ts` uses, filled in with concrete plausible numbers.
+  loanState.next = {
+    ok: false,
+    refusal: {
+      code: "MULTI_COLLATERAL",
+      message:
+        "This Loan holds both WETH and cbBTC. A Cover can only be priced for a " +
+        "single-collateral Loan -- with a mix, Aave's blended threshold makes the liquidation price wrong " +
+        "by tens of percent and nothing on screen would show it.",
+    },
+  };
+  generated["cover-refused-multi-collateral"] = await get("/cover/quote?address=0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65");
+  resetLoanStub();
+
+  // REFUSED: no debt. The stub returns a valid WETH loan with `totalDebtUsd: 0`, which
+  // real `assess()` catches at its second check and refuses with NO_DEBT. `healthFactor`
+  // is Infinity, matching what `loan.ts` sets when Aave returns 2^256-1 for a debt-free
+  // position -- `assess()` never reads it for this path, so it never reaches the formatter.
+  loanState.next = {
+    ok: true,
+    loan: {
+      collateral: "WETH",
+      underlying: "ETH",
+      collateralAmount: 1.0,
+      totalCollateralUsd: SPOT,
+      totalDebtUsd: 0,
+      liquidationThreshold: 0.83,
+      healthFactor: Infinity,
+      aavePrice: SPOT,
+      thetanutsPrice: SPOT,
+    },
+  };
+  generated["cover-refused-no-debt"] = await get("/cover/quote?address=0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc");
+  resetLoanStub();
+
+  // REFUSED: health factor below 1 -- the loan can already be liquidated. The stub
+  // returns debt > 0 and a plausible sub-1 health factor; real `assess()` catches it
+  // at its fourth check (after PRICE_DIVERGENCE, NO_DEBT, MULTI_COLLATERAL all pass).
+  loanState.next = {
+    ok: true,
+    loan: {
+      collateral: "WETH",
+      underlying: "ETH",
+      collateralAmount: 1.0,
+      totalCollateralUsd: SPOT,   // collateralAmount * aavePrice exactly -- MULTI_COLLATERAL passes
+      totalDebtUsd: 3000,
+      liquidationThreshold: 0.83,
+      healthFactor: 0.947,
+      aavePrice: SPOT,
+      thetanutsPrice: SPOT,
+    },
+  };
+  generated["cover-refused-already-liquidatable"] = await get("/cover/quote?address=0x976EA74026E726554dB657fA54763abd0C3a0aa9");
+  resetLoanStub();
+
+  // REFUSED: unsupported collateral (wstETH). On the real path, `readLoan` detects that
+  // no supported aToken has a balance, names the held asset via `nameUnsupportedCollateral`,
+  // and refuses. The stub returns the refusal directly with the real message template,
+  // filled in with wstETH -- the most common case that Aave borrowers on Base hit.
+  loanState.next = {
+    ok: false,
+    refusal: {
+      code: "UNSUPPORTED_COLLATERAL",
+      message:
+        "This Loan is collateralised with wstETH, which a Cover cannot hedge. Only WETH and cbBTC are " +
+        "supported. wstETH, cbETH and weETH are deliberately excluded: they drift against ETH over time, " +
+        "so an ETH put under-hedges them by a margin that grows.",
+    },
+  };
+  generated["cover-refused-unsupported-collateral"] = await get("/cover/quote?address=0x14dC79964da2C08b23698B3D3cc7Ca32193d9955");
+  resetLoanStub();
+
+  // REFUSED: nothing supplied to Aave at all. On the real path, `totalCollateralUsd <= 0`
+  // and no aToken balance is held, so `readLoan` refuses with NO_COLLATERAL. The address
+  // in the message matches the one used in the get() call below -- that is what the real
+  // route does: it embeds the address that was asked about.
+  loanState.next = {
+    ok: false,
+    refusal: {
+      code: "NO_COLLATERAL",
+      message:
+        "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f has nothing supplied to Aave V3 on Base, " +
+        "so there is no Loan to cover. Check you are on Base and not another network.",
+    },
+  };
+  generated["cover-refused-no-collateral"] = await get("/cover/quote?address=0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f");
+  resetLoanStub();
 });
 
 /**

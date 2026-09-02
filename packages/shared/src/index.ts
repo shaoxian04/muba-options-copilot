@@ -183,7 +183,7 @@ export const RfqTenorDays = z.union([z.literal(7), z.literal(14), z.literal(30),
 export type RfqTenorDays = z.infer<typeof RfqTenorDays>;
 
 /**
- * What POST /rfq accepts.
+ * POST /rfq, the trading door's own member -- unchanged in every field from before the union.
  *
  * Deliberately NOT a TradeIntent: there is no Order behind this, so there is no
  * `sizeUsdc.max(1000)`-shaped economics to price and nothing a `cardRef` could select.
@@ -191,8 +191,15 @@ export type RfqTenorDays = z.infer<typeof RfqTenorDays>;
  * spot, signed, exactly as felt on the slider -- and it is never resolved to a dollar
  * strike anywhere in the browser (issue #31): only the server, which alone holds live
  * spot, may do that arithmetic, and only inside the 501 refusal's echoed sentence.
+ *
+ * `strikeOffsetPct` is bounded to ±30 and must stay that way. A Cover's strike distance
+ * is routinely outside it -- a healthy Loan sits around -73% -- so forcing Cover through
+ * this member would refuse exactly the Loans most people have, and widening the band to
+ * fit would loosen validation on this door for no reason. That is why a second member
+ * exists.
  */
-export const RfqRequest = z.object({
+export const RfqTraderRequest = z.object({
+  kind: z.literal("TRADER"),
   underlying: UnderlyingSymbol,
   direction: z.enum(["UP", "DOWN"]),
   /** Percent distance from spot the slider names, signed, in half-percent steps across +/-30%. */
@@ -201,6 +208,32 @@ export const RfqRequest = z.object({
   /** The reserve price a future Offer would have to respect -- not a premium, because none exists yet. */
   sizeUsdc: z.number().positive().max(1000),
 });
+export type RfqTraderRequest = z.infer<typeof RfqTraderRequest>;
+
+/**
+ * POST /rfq's Cover door (issue #43): a selector, never a value.
+ *
+ * A COVER request carries an address and nothing else. The server re-reads the Loan off
+ * Aave, re-derives strike, size and cap through the existing single path, and answers
+ * from what it derived -- exactly the way a cardRef selects an Order and never supplies
+ * its economics (ADR-0006). A stale or tampered browser cannot change what is actually
+ * requested.
+ *
+ * No figure travels in the request. `strikeOffsetPct` is bounded to ±30 and Cover's
+ * distances sit well outside it; having a second member avoids loosening validation on
+ * the Trader door to fit the Borrower's very different range.
+ */
+export const RfqCoverRequest = z.object({
+  kind: z.literal("COVER"),
+  address: z.string().trim().min(1),
+});
+export type RfqCoverRequest = z.infer<typeof RfqCoverRequest>;
+
+/**
+ * What POST /rfq accepts: a discriminated union so the trading door and the Cover door
+ * share one endpoint without sharing one schema or one validation range.
+ */
+export const RfqRequest = z.discriminatedUnion("kind", [RfqTraderRequest, RfqCoverRequest]);
 export type RfqRequest = z.infer<typeof RfqRequest>;
 
 export const FillResult = z.object({

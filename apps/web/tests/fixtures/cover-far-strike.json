@@ -1,0 +1,68 @@
+{
+  "status": "QUOTE",
+  "quote": {
+    "address": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+    "collateral": "WETH",
+    "underlying": "ETH",
+    "spot": {
+      "value": 2445.49,
+      "display": "$2,445.49"
+    },
+    "loan": {
+      "collateralAmount": {
+        "value": 2,
+        "display": "2.000000 WETH"
+      },
+      "collateralUsd": {
+        "value": 4890.98,
+        "display": "$4,890.98"
+      },
+      "debtUsd": {
+        "value": 800,
+        "display": "$800.00"
+      },
+      "liquidationThreshold": {
+        "value": 0.83,
+        "display": "83%"
+      },
+      "healthFactor": {
+        "value": 5.074391749999999,
+        "display": "5.07"
+      }
+    },
+    "cover": {
+      "liquidationPrice": {
+        "value": 481.9277108433735,
+        "display": "$481.93"
+      },
+      "targetStrike": {
+        "value": 530.1204819277109,
+        "display": "$530.12"
+      },
+      "strikeDistanceFromSpot": {
+        "value": -0.783225250592842,
+        "display": "-78.3%"
+      },
+      "requiredContracts": {
+        "value": 1.66,
+        "display": "1.660000"
+      },
+      "tenorDays": {
+        "value": 14,
+        "display": "14d"
+      },
+      "expiry": {
+        "value": 1769673600000,
+        "display": "29 Jan, 08:00 UTC"
+      },
+      "premiumCapUsdc": {
+        "value": 8,
+        "display": "$8.00"
+      }
+    },
+    "warnings": [
+      "At health factor 5.07 you are 78% away from liquidation. A strike that far out is cheap, but makers are unlikely to price it at all."
+    ],
+    "disclaimer": "Nothing has been requested from a maker, nothing has been signed, and no USDC has moved. This is what your Loan would need, read from Aave."
+  }
+}

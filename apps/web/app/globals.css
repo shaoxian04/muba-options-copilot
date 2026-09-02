@@ -184,6 +184,11 @@ body {
   font-size: 14px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
+  /* Shell layout: header sits fixed-height at the top; the content area below it fills
+     the rest. `overflow: hidden` on the body is deliberately kept so that only
+     individual routes decide whether they scroll — `body` never does. */
+  display: flex;
+  flex-direction: column;
 }
 button {
   font: inherit;
@@ -241,10 +246,90 @@ button[disabled] {
   border: 0;
 }
 
+/* ================= application shell ================= */
+/*
+  `.shell-header` is fixed-height and never scrolls. It sits at the top of the flex
+  column on `body`, and `.viewport` fills the remaining space below it.
+
+  `.viewport` clips itself (`overflow: hidden`) so that only a route's OWN content
+  decides whether it scrolls. `min-height: 0` is the load-bearing fix for a classic
+  flexbox trap: without it a flex child never shrinks below its content's natural height,
+  so `overflow: hidden` does nothing and the page scrolls instead of the inner pane.
+*/
+.shell-header {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 20px;
+  height: 46px;
+  flex: 0 0 auto;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.shell-header .brand {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-size: 13px;
+}
+.shell-header nav {
+  display: flex;
+  align-self: stretch;
+  align-items: center;
+  gap: 2px;
+  /*
+    Vertical padding is 0 so the nav's interior height matches 44px (header 46px minus
+    1px border top and bottom), which is exactly what the links need for a tap target.
+    The pill background and border-radius supply the visual grouping without adding
+    extra height.
+  */
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--well);
+  border: 1px solid var(--line);
+}
+.shell-header nav a {
+  /*
+    44px minimum height satisfies both WCAG touch target guidance and the repo's own
+    `deck.spec.ts` tap-target check, which scans every `a[href]` on the page.
+    `display: flex; align-items: center` centres the label inside that touch area.
+    Horizontal padding preserves the pill's proportions without affecting the height.
+  */
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  text-decoration: none;
+  font-weight: 500;
+  transition: background 0.16s, color 0.16s;
+}
+.shell-header nav a[aria-current="page"] {
+  background: var(--ink);
+  color: var(--ground);
+}
+
+.viewport {
+  /* Fills the body flex column below the header. `min-height: 0` is critical — without
+     it the element refuses to shrink below its content's natural height inside the flex
+     column, and `overflow: hidden` here does nothing (the body scrolls instead of the
+     trading surface's inner panes). */
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
 .app {
   display: grid;
   grid-template-columns: 344px minmax(0, 1fr);
-  height: 100vh;
+  /* Fill `.viewport` rather than the full viewport height. `.viewport` is already sized
+     to be exactly "viewport height minus the header" via flexbox, so `.app` no longer
+     needs to know the absolute viewport height. Everything inside `.app` — its grid
+     tracks, its overflow panes — is unchanged. */
+  height: 100%;
 }
 
 /* ================= left: language ================= */
@@ -1890,66 +1975,229 @@ button[disabled] {
    this product never celebrates, and a page about being liquidated is the last
    place to start.
    --------------------------------------------------------------------------- */
-.cvr { max-width: 60rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
-.cvr h1 { font-size: 1.5rem; letter-spacing: -0.01em; margin: 0 0 0.35rem; }
-.cvr .sub { color: var(--ink-2); margin: 0 0 1.75rem; max-width: 44rem; line-height: 1.5; }
 
-.cvr form { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: flex-end; margin-bottom: 1.75rem; }
-.cvr .fld { display: flex; flex-direction: column; gap: 0.35rem; flex: 1 1 26rem; }
-.cvr label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); }
-.cvr input {
-  font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  padding: 0.6rem 0.7rem; border: 1px solid var(--line); border-radius: 8px;
+/*
+  The scroll container for the /cover route. This is in `app/cover/layout.tsx`, not on
+  `.cvr`, because issue #44 replaces `.cvr`'s markup and this rule must survive that
+  without change. As a flex child of `.viewport` (the shell content area), it fills the
+  available space and then scrolls its own content as a document. `overflow-x: hidden`
+  prevents horizontal overflow at any viewport width.
+*/
+.cover-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* =========================================================================
+ * Liquidation Cover surface (issue #44, variant B).
+ *
+ * Type scale: px on a 14px base, matching the product's convention.
+ * All tokens (`--surface`, `--well`, `--put`, `--crit`, `--hue`, etc.)
+ * already have dark-mode values defined in the media/[data-theme] blocks
+ * above -- zero new dark-mode rules needed here.
+ * ========================================================================= */
+
+/* Root: the .cvr class is on <main>. No rem sizing here. */
+.cvr {
+  padding: 22px 24px 40px;
+  max-width: 66rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.cvr h1 { font-size: 19px; letter-spacing: -0.02em; margin-bottom: 5px; }
+.cvr .sub { color: var(--ink-2); max-width: 44rem; margin: 0; }
+
+/* Address form (.ask / .fld / .go are declared directly, unscoped, so they don't
+   inherit cruft from surrounding context -- same pattern as .ask-row above). */
+.cvr .ask { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
+.cvr .ask .fld { display: flex; flex-direction: column; gap: 5px; flex: 1 1 22rem; min-width: 0; }
+.cvr .ask label { font-size: 9.5px; letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink-2); font-weight: 500; }
+.cvr .ask input {
+  padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line);
   background: var(--surface); color: var(--ink);
+  font-family: "IBM Plex Mono", monospace; font-size: 13px; min-width: 0;
 }
-.cvr input:focus-visible { outline: 2px solid var(--hue); outline-offset: 1px; }
-.cvr button {
-  font: inherit; font-weight: 600; padding: 0.62rem 1.1rem; border: 0; border-radius: 8px;
-  background: var(--btn); color: var(--btn-ink); cursor: pointer;
+.cvr .ask input::placeholder { color: var(--ink-3); }
+.cvr .ask input:focus-visible { outline: 2px solid var(--hue); outline-offset: 1px; }
+.cvr .ask .go {
+  padding: 9px 18px; border-radius: 10px; background: var(--btn); color: var(--btn-ink);
+  font-weight: 550; font-size: 13px; cursor: pointer; border: 0;
 }
-.cvr button:disabled { opacity: 0.45; cursor: progress; }
-.cvr button:focus-visible { outline: 2px solid var(--hue); outline-offset: 2px; }
+.cvr .ask .go:disabled { opacity: 0.45; cursor: progress; }
+.cvr .ask .go:focus-visible { outline: 2px solid var(--hue); outline-offset: 2px; }
 
-/* The Lapse. The loudest thing on a Cover, by ADR-0008 -- said with size and a rule,
-   never with colour alone, so it survives being read by someone who cannot see it. */
+/* Verdict card: health factor (big), cause-and-effect sentence (say), spot chip */
+.cvr .verdict {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+  padding: 18px 20px; box-shadow: var(--lift); display: flex; gap: 22px;
+  align-items: center; flex-wrap: wrap;
+}
+.cvr .verdict .big { display: flex; flex-direction: column; gap: 2px; flex: 0 0 auto; }
+.cvr .verdict .big .v { font-size: 30px; font-weight: 650; }
+.cvr .verdict .say { flex: 1 1 20rem; min-width: 0; line-height: 1.5; color: var(--ink-2); font-size: 14.5px; margin: 0; }
+.cvr .verdict .say b { color: var(--ink); font-weight: 600; }
+.cvr .verdict .chip {
+  flex: 0 0 auto; display: flex; flex-direction: column; gap: 2px;
+  padding-left: 22px; border-left: 1px solid var(--line-2);
+}
+.cvr .verdict .chip .v { font-size: 15px; font-weight: 600; }
+
+/* Price line: one horizontal axis, three labelled dots, a danger band */
+.cvr-line {
+  background: var(--well); border-radius: 14px; padding: 30px 18px 34px;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,.09);
+}
+.cvr-line-axis {
+  position: relative; height: 4px; border-radius: 4px; background: var(--line);
+}
+.cvr-line-danger {
+  position: absolute; top: 0; height: 4px; border-radius: 4px; background: var(--put);
+}
+/* A point: the label above (.cvr-line-k), the dot (i), and the value below (.cvr-line-v).
+   white-space:nowrap keeps labels from wrapping inside the constrained axis area. */
+.cvr-line-pt {
+  position: absolute; top: 50%; transform: translate(-50%, -50%); text-align: center;
+  white-space: nowrap;
+}
+.cvr-line-pt i {
+  display: block; width: 9px; height: 9px; border-radius: 50%; background: var(--ink-3);
+  margin: 0 auto; border: 2px solid var(--well); box-sizing: content-box;
+}
+.cvr-line-k {
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: 20px;
+  font-size: 10.5px; color: var(--ink-2); letter-spacing: 0.04em;
+}
+.cvr-line-v {
+  position: absolute; left: 50%; transform: translateX(-50%); top: 20px;
+  font-size: 13.5px; font-weight: 650;
+}
+/* Liquidation: critical red dot and value */
+.cvr-line-liq i { background: var(--crit); }
+.cvr-line-liq .cvr-line-v { color: var(--crit); }
+/* Strike: put-colour dot and value (orange, not red) */
+.cvr-line-stk i { background: var(--put); }
+.cvr-line-stk .cvr-line-v { color: var(--put); }
+/* Spot: the ink-coloured dot */
+.cvr-line-now i { background: var(--ink); }
+
+/* Cost card: premium cap */
+.cvr .cost {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  padding: 16px 18px; display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap;
+}
+.cvr .cost .amt { flex: 0 0 auto; }
+.cvr .cost .amt .v { font-size: 26px; font-weight: 700; letter-spacing: -0.03em; display: block; margin-top: 2px; }
+.cvr .cost .txt { flex: 1 1 22rem; min-width: 0; color: var(--ink-2); line-height: 1.55; font-size: 13px; }
+.cvr .cost .txt p { margin: 0 0 6px; }
+.cvr .cost .txt p:last-child { margin-bottom: 0; }
+.cvr .cost .txt b { color: var(--ink); font-weight: 600; }
+
+/* Lapse strip: expiry date prominent, no-auto-renewal note */
 .cvr .lapse {
-  border: 1px solid var(--line); border-left: 4px solid var(--ink);
-  background: var(--surface); border-radius: 10px; padding: 1.1rem 1.25rem; margin-bottom: 1rem;
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--line);
+  border-left: 3px solid var(--hue); border-radius: 12px; padding: 13px 16px;
 }
-.cvr .lapse .k { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); }
-.cvr .lapse .v { font-size: 1.75rem; font-weight: 650; letter-spacing: -0.02em; margin: 0.15rem 0 0.4rem; }
-.cvr .lapse p { margin: 0; color: var(--ink-2); line-height: 1.5; max-width: 46rem; }
+.cvr .lapse .v { font-size: 17px; font-weight: 650; }
+.cvr .lapse p { margin: 0; color: var(--ink-2); font-size: 12.5px; flex: 1 1 18rem; }
 
-.cvr .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 1rem; }
-.cvr section.panel {
-  border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 1.1rem 1.25rem;
+/* Two sheets: "Your loan" and "The cover" */
+.cvr .sheets { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 14px; }
+.cvr .sheet {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  padding: 14px 16px 6px;
 }
-.cvr section.panel h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); margin: 0 0 0.85rem; }
-.cvr dl { display: grid; grid-template-columns: 1fr auto; gap: 0.55rem 1rem; margin: 0; }
-.cvr dt { color: var(--ink-2); }
-.cvr dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weight: 550; }
-.cvr dd .qual { display: block; font-weight: 400; font-size: 0.85rem; color: var(--ink-3); }
+.cvr .sheet .cap {
+  display: flex; justify-content: space-between; align-items: center;
+  padding-bottom: 10px; border-bottom: 1px solid var(--line-2);
+}
+.cvr .sheet dl { display: grid; grid-template-columns: 1fr auto; gap: 0; margin: 0; }
+.cvr .sheet dt {
+  color: var(--ink-2); font-size: 12.5px; padding: 9px 0; border-bottom: 1px solid var(--line-2);
+}
+.cvr .sheet dd {
+  margin: 0; text-align: right; font-weight: 600; padding: 9px 0;
+  border-bottom: 1px solid var(--line-2);
+}
+.cvr .sheet dt:last-of-type, .cvr .sheet dd:last-of-type { border-bottom: 0; }
+/* Qualifier line: the small note under a value (e.g. "worth $3,668", "covers the loan in full").
+   --ink-2, not --ink-3: at this size --ink-3 fails WCAG AA (see the same note by .strip .axis). */
+.cvr .sheet dd .q {
+  display: block; font-weight: 400; font-size: 11.5px; color: var(--ink-2);
+  letter-spacing: 0; font-family: "IBM Plex Sans", sans-serif;
+}
 
-/* NOTE ON NAMING: every class below is unique to this page, never a word the trading
-   surface already uses. `.refusal` and `.note` both exist unprefixed above -- `.refusal`
-   is a red flex row on the Deck -- and reusing either meant this page silently inherited
-   `display:flex` and a crit colour. A `.cvr `-prefixed rule ADDS specificity; it does not
-   stop the bare rule applying.
+/*
+ * The door (issue #46): "Cover this loan", plainer than the primary buttons
+ * elsewhere in the product on purpose -- the weight of the decision belongs to the
+ * confirmation it opens, not to this button's own styling.
+ * --ink-2, not --ink-3, on the note: at this size --ink-3 fails WCAG AA (see the
+ * same note by .strip .axis) -- and unlike a card's own qualifier lines, this sits
+ * directly on the page's ground colour, where the gap is even worse.
+ */
+.cvr .cta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.cvr .cta .go2 {
+  background: var(--btn); color: var(--btn-ink); padding: 12px 22px; border-radius: 12px;
+  font-weight: 600; font-size: 14px; min-height: 44px; border: 0; cursor: pointer;
+}
+.cvr .cta .go2:focus-visible { outline: 2px solid var(--hue); outline-offset: 2px; }
+.cvr .cta .note { color: var(--ink-2); font-size: 12.5px; }
 
-   A refusal is an ANSWER, so it is laid out like one -- a heading and a paragraph,
-   not a toast. It is the most likely thing a Borrower sees: of the 40 largest aWETH
-   holders on Base, 30 of them cannot be quoted. */
-.cvr .declined {
+/* Disclosure: the raw Aave numbers, collapsed by default */
+.cvr-disclosure {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-2); padding: 0 14px; max-width: 52rem;
+}
+.cvr-disclosure summary {
+  cursor: pointer; padding: 11px 0; font-size: 12.5px; color: var(--ink-2); font-weight: 500;
+}
+.cvr-disclosure[open] summary { border-bottom: 1px solid var(--line-2); }
+.cvr-disclosure dl { display: grid; grid-template-columns: 1fr auto; gap: 8px 14px; margin: 0; padding: 12px 0; }
+.cvr-disclosure dt { color: var(--ink-2); font-size: 12.5px; }
+.cvr-disclosure dd { margin: 0; text-align: right; font-weight: 600; font-size: 12.5px; }
+
+/* Warnings: present alongside the quote, never replacing it.
+   Kept close to the old .cvr .warn for issue #45 to restyle. */
+.cvr-warn {
   border: 1px solid var(--line); border-left: 4px solid var(--warn);
-  background: var(--surface); border-radius: 10px; padding: 1.1rem 1.25rem;
-}
-.cvr .declined h2 { font-size: 1rem; margin: 0 0 0.4rem; }
-.cvr .declined p { margin: 0; color: var(--ink-2); line-height: 1.55; max-width: 46rem; }
-
-.cvr .warn {
-  border: 1px solid var(--line); border-left: 4px solid var(--warn);
-  background: var(--surface); border-radius: 10px; padding: 0.85rem 1.1rem; margin-top: 1rem;
+  background: var(--surface); border-radius: 10px; padding: 0.85rem 1.1rem;
   color: var(--ink-2); line-height: 1.5;
 }
-.cvr .disclaimer { margin-top: 1.25rem; color: var(--ink-3); line-height: 1.5; max-width: 46rem; }
-.cvr .err { color: var(--crit); margin-top: 1rem; }
+
+/*
+ * REFUSED: a true answer to a real question, laid out as content -- not an error.
+ * Reuses the warn accent the prototype's own `.declined` rule settles on (issue #40's
+ * design reference), never the crit-red `.cvr-alert` below uses, so the two read as
+ * different KINDS of thing at a glance and not only by their words. (Issue #45)
+ */
+.cvr-declined {
+  border: 1px solid var(--line); border-left: 4px solid var(--warn);
+  background: var(--surface); border-radius: 12px; padding: 16px 18px; max-width: 52rem;
+}
+.cvr-declined h2 { font-size: 15px; margin: 0 0 6px; }
+.cvr-declined p { margin: 0; color: var(--ink-2); line-height: 1.55; }
+/* The refusal code: a label for a bug report or a support conversation, not the
+   sentence a Borrower is meant to read -- small, muted, set apart from the prose. */
+.cvr-declined-code { margin-top: 10px; }
+
+/*
+ * A transport failure or a 4xx: something is actually broken, and it looks like it.
+ * The crit-red accent (never used by a REFUSED block) plus `role="alert"` -- an
+ * assertive live region, interrupting where `.cvr-declined`'s `role="status"` politely
+ * waits -- makes the two distinguishable both visibly and to assistive technology.
+ * (Issue #45)
+ */
+.cvr-alert {
+  border: 1px solid var(--line); border-left: 4px solid var(--crit);
+  background: var(--surface); border-radius: 12px; padding: 16px 18px; max-width: 52rem;
+}
+.cvr-alert h2 { font-size: 15px; margin: 0 0 6px; color: var(--crit); }
+.cvr-alert p { margin: 0; color: var(--ink-2); line-height: 1.55; }
+
+/* Disclaimer: the server's own prose, verbatim.
+   --ink-2, not --ink-3: at this size --ink-3 fails WCAG AA (see the same note by .strip .axis). */
+.cvr .disclaimer { color: var(--ink-2); line-height: 1.5; max-width: 46rem; margin: 0; }

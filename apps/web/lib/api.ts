@@ -228,6 +228,10 @@ export const practice = (proposalId: string): Promise<{ holding: Holding }> =>
  * to a dollar strike in this file or anywhere else in the browser: only the server,
  * which alone holds live spot, may turn it into one, and it does that only inside the
  * refusal's own echoed sentence.
+ *
+ * `kind: "TRADER"` is injected here so the call site in `surface.ts` needs no change --
+ * the union discriminant is an implementation detail of the wire shape, not something
+ * a caller thinking about a trade needs to name.
  */
 export const requestRfq = (body: {
   underlying: UnderlyingSymbol;
@@ -235,7 +239,28 @@ export const requestRfq = (body: {
   strikeOffsetPct: number;
   horizonDays: RfqTenorDays;
   sizeUsdc: number;
-}): Promise<never> => call<never>("/rfq", { method: "POST", body: JSON.stringify(body) });
+}): Promise<never> =>
+  call<never>("/rfq", { method: "POST", body: JSON.stringify({ kind: "TRADER", ...body }), headers: authHeaders() });
+
+/**
+ * The Cover door's RFQ request (issue #43): a selector, not figures. The server
+ * re-reads the Loan off Aave and re-derives strike, size and cap itself -- a stale
+ * or tampered browser cannot change what is actually requested.
+ *
+ * A coverable Loan throws `ApiRefusal(501, ...)` (the sealed-bid backend is not built).
+ * An uncoverable Loan returns `{ status: "REFUSED", refusal }` as a normal 200 -- the
+ * same shape `getCoverQuote` uses, so a later surface can treat both identically.
+ * (The return type below says so -- `Promise<never>` would claim this call can only
+ * ever throw, which is exactly the half of the contract the REFUSED path is for.)
+ */
+export const requestCoverRfq = (body: {
+  address: string;
+}): Promise<{ status: "REFUSED"; refusal: CoverRefusal }> =>
+  call<{ status: "REFUSED"; refusal: CoverRefusal }>("/rfq", {
+    method: "POST",
+    body: JSON.stringify({ kind: "COVER", ...body }),
+    headers: authHeaders(),
+  });
 
 /**
  * A Borrower's Loan, and the Cover it would need. Read-only: it requests nothing from a

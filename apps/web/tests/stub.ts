@@ -34,6 +34,15 @@ import practiceResult from "./fixtures/practice.json" with { type: "json" };
 import veto from "./fixtures/veto.json" with { type: "json" };
 import noOrder from "./fixtures/no-order.json" with { type: "json" };
 import refusal from "./fixtures/refusal.json" with { type: "json" };
+import coverHealthy from "./fixtures/cover-healthy.json" with { type: "json" };
+import coverTight from "./fixtures/cover-tight.json" with { type: "json" };
+import coverCbbtc from "./fixtures/cover-cbbtc.json" with { type: "json" };
+import coverFarStrike from "./fixtures/cover-far-strike.json" with { type: "json" };
+import coverRefusedMultiCollateral from "./fixtures/cover-refused-multi-collateral.json" with { type: "json" };
+import coverRefusedNoDebt from "./fixtures/cover-refused-no-debt.json" with { type: "json" };
+import coverRefusedAlreadyLiquidatable from "./fixtures/cover-refused-already-liquidatable.json" with { type: "json" };
+import coverRefusedUnsupportedCollateral from "./fixtures/cover-refused-unsupported-collateral.json" with { type: "json" };
+import coverRefusedNoCollateral from "./fixtures/cover-refused-no-collateral.json" with { type: "json" };
 
 export const API = "http://127.0.0.1:3001";
 
@@ -76,6 +85,48 @@ export const fixtures = {
   positionsAfterPractice,
   depthEth,
   depthEthMarked,
+};
+
+/**
+ * The wallet addresses that route to a specific Cover fixture, issue #44's fixture-backed
+ * replacement for the earlier hand-written placeholder. `GET /cover/quote` is keyed by
+ * `address` alone, so a Playwright test picks a scenario by which address it types into
+ * the form -- named here so a spec never has to retype a raw hex string to pick one.
+ *
+ * The four QUOTE addresses are read straight off their own fixture (each was generated
+ * against a distinct address, so there is nothing to invent); the five REFUSED fixtures
+ * carry no address in their wire shape at all (a `CoverRefusal` is just `{ code, message }`),
+ * so those five are given arbitrary, memorable addresses here -- except `noCollateral`,
+ * whose fixture message happens to name a real address, reused rather than duplicated.
+ */
+export const COVER_ADDRESSES = {
+  healthy: coverHealthy.quote.address,
+  tight: coverTight.quote.address,
+  cbbtc: coverCbbtc.quote.address,
+  farStrike: coverFarStrike.quote.address,
+  multiCollateral: "0x111111111111111111111111111111111111111a",
+  noDebt: "0x222222222222222222222222222222222222222b",
+  alreadyLiquidatable: "0x333333333333333333333333333333333333333c",
+  unsupportedCollateral: "0x444444444444444444444444444444444444444d",
+  noCollateral: "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+} as const;
+
+/**
+ * The nine Cover response bodies, keyed by the address above that selects each one.
+ * Anything else -- including `shell.spec.ts`'s own arbitrary address -- falls back to
+ * the healthy QUOTE, which is what that spec needs: a renderable quote with a real
+ * disclaimer to scroll to.
+ */
+const COVER_RESPONSES: Record<string, unknown> = {
+  [COVER_ADDRESSES.healthy]: coverHealthy,
+  [COVER_ADDRESSES.tight]: coverTight,
+  [COVER_ADDRESSES.cbbtc]: coverCbbtc,
+  [COVER_ADDRESSES.farStrike]: coverFarStrike,
+  [COVER_ADDRESSES.multiCollateral]: coverRefusedMultiCollateral,
+  [COVER_ADDRESSES.noDebt]: coverRefusedNoDebt,
+  [COVER_ADDRESSES.alreadyLiquidatable]: coverRefusedAlreadyLiquidatable,
+  [COVER_ADDRESSES.unsupportedCollateral]: coverRefusedUnsupportedCollateral,
+  [COVER_ADDRESSES.noCollateral]: coverRefusedNoCollateral,
 };
 
 /** Longest shot first, so index 0 is the leftmost Card in the row. */
@@ -209,6 +260,32 @@ function rfqRefusal(body: { underlying: string; direction: "UP" | "DOWN"; strike
 }
 
 /**
+ * What the real POST /rfq answers for the COVER member (issue #43/#46), keyed by the
+ * same addresses `GET /cover/quote` uses. A coverable Loan gets the honest 501,
+ * echoing figures re-derived from that Loan's OWN fixture -- never from the request
+ * body, which for a COVER request carries only an address to begin with. An
+ * uncoverable Loan gets a normal 200 carrying that Loan's own refusal, the same
+ * `CoverRefusal` shape `GET /cover/quote` already answers with.
+ */
+function coverRfqAnswer(address: string): { status: 200 | 501; body: unknown } {
+  const known = COVER_RESPONSES[address] as { refusal?: unknown; quote?: (typeof coverHealthy)["quote"] } | undefined;
+  if (known && known.refusal) {
+    return { status: 200, body: { status: "REFUSED", refusal: known.refusal } };
+  }
+  const quote = known?.quote ?? coverHealthy.quote;
+  return {
+    status: 501,
+    body: {
+      error:
+        "The sealed-bid RFQ backend is not built yet. Nothing was sent to a maker, nothing was signed, " +
+        "and no USDC moved. " +
+        `You asked to cover this Loan: a ${quote.underlying} put struck at ${quote.cover.targetStrike.display}, ` +
+        `${quote.cover.tenorDays.value} days, at most ${quote.cover.premiumCapUsdc.display}.`,
+    },
+  };
+}
+
+/**
  * What the real `/propose` does when a size changes: re-derive premium, Max Loss and
  * the contract count for the SAME Order at the new stake. The fixture book quotes a
  * fixed price per contract, so scaling the base answer by `sizeUsdc / baseSizeUsdc`
@@ -332,15 +409,37 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         practised = true;
         return json(route, practiceResult, traffic);
 
-      /** Issue #31 -- always 501, the honest refusal, echoing back the request. */
+      /*
+       * Issue #44: a real Cover fixture, keyed by the address the form submitted.
+       *
+       * Every one of these nine bodies came out of the shipped `GET /cover/quote` --
+       * real `liquidation.ts` arithmetic, real `format.ts` strings -- with only the
+       * chain read stubbed (see `apps/api/src/test/stub-loan.ts`). An address this
+       * suite does not specifically recognise falls back to the healthy quote, which
+       * is what `shell.spec.ts` needs: a renderable QUOTE with a real disclaimer to
+       * scroll to.
+       */
+      case "/cover/quote": {
+        const requested = url.searchParams.get("address") ?? "";
+        const body = COVER_RESPONSES[requested] ?? coverHealthy;
+        return json(route, body, traffic);
+      }
+
+      /**
+       * Issue #31/#43/#46 -- the RFQ union. TRADER always 501, echoing the request.
+       * COVER is a selector (an address, and nothing else): a coverable Loan still
+       * gets the honest 501, but an uncoverable one gets that Loan's own refusal as a
+       * normal 200 -- see `coverRfqAnswer` above.
+       */
       case "/rfq": {
-        const body = request.postDataJSON() as {
-          underlying: string;
-          direction: "UP" | "DOWN";
-          strikeOffsetPct: number;
-          horizonDays: number;
-          sizeUsdc: number;
-        };
+        const body = request.postDataJSON() as
+          | { kind: "TRADER"; underlying: string; direction: "UP" | "DOWN"; strikeOffsetPct: number; horizonDays: number; sizeUsdc: number }
+          | { kind: "COVER"; address: string };
+
+        if (body.kind === "COVER") {
+          const answer = coverRfqAnswer(body.address);
+          return json(route, answer.body, traffic, answer.status);
+        }
         return json(route, rfqRefusal(body), traffic, 501);
       }
 
