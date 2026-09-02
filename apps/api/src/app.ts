@@ -39,8 +39,9 @@ import { buildChallengeMessage, generateNonce, verifyChallengeSignature } from "
 import { requireAccount, optionalAccountId } from "./account.js";
 import {
   upsertLinkedWallet, logActivity, getAccountSettings, saveAccountSettings,
-  getLinkedWallet, listPracticePositionsAsHoldings, recordPracticePosition,
+  getLinkedWallet, listPracticePositionsAsHoldings, recordPracticePosition, listActivity,
 } from "./accountStore.js";
+import { AccountSettingsRequest } from "@copilot/shared";
 import { usd } from "./format.js";
 import {
   sessionFor, remainingBudget, setRiskBudget,
@@ -670,6 +671,44 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
   });
   await app.register(rfqRoutes);
+
+  /**
+   * The signed-in account's saved settings and linked wallet, if any -- what
+   * `AccountControl` reads to render itself, and what a fresh signup reads back as
+   * all-defaults.
+   */
+  app.get("/account", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const userId = await requireAccount(req, reply);
+    if (!userId) return;
+
+    const [settings, linkedWallet] = await Promise.all([getAccountSettings(userId), getLinkedWallet(userId)]);
+    return { settings, linkedWallet };
+  });
+
+  app.post("/account/settings", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const userId = await requireAccount(req, reply);
+    if (!userId) return;
+    const parsed = AccountSettingsRequest.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid settings", issues: parsed.error.issues });
+
+    await saveAccountSettings(userId, parsed.data);
+    if (parsed.data.riskBudgetUsdc !== undefined) {
+      void logActivity(userId, "budget_changed", { riskBudgetUsdc: parsed.data.riskBudgetUsdc });
+    }
+    const settings = await getAccountSettings(userId);
+    return { settings };
+  });
+
+  app.get("/account/activity", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const userId = await requireAccount(req, reply);
+    if (!userId) return;
+
+    const items = await listActivity(userId);
+    return { items };
+  });
 
   return app;
 }

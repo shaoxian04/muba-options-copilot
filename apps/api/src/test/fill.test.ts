@@ -471,3 +471,40 @@ describe("GET /positions with an explicit address", () => {
     expect(res.statusCode).toBe(400);
   });
 });
+
+describe("GET /account, POST /account/settings, GET /account/activity", () => {
+  it("GET /account requires an account", async () => {
+    const res = await app.inject({ method: "GET", url: "/account", headers: { "x-session-id": freshSession() } });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("returns default settings and no linked wallet for a brand-new account", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/account",
+      headers: { "x-session-id": freshSession(), "x-account-token": ACCOUNT_TOKEN },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      settings: { riskBudgetUsdc: 5, defaultAsset: null, defaultDirection: null },
+      linkedWallet: null,
+    });
+  });
+
+  it("POST /account/settings saves a partial update, reflected on the next GET /account", async () => {
+    const headers = { "x-session-id": freshSession(), "x-account-token": ACCOUNT_TOKEN };
+
+    await app.inject({ method: "POST", url: "/account/settings", headers, payload: { defaultAsset: "BTC" } });
+    const res = await app.inject({ method: "GET", url: "/account", headers });
+    expect(res.json().settings.defaultAsset).toBe("BTC");
+  });
+
+  it("GET /account/activity lists what was logged, newest first", async () => {
+    const headers = { "x-session-id": freshSession(), "x-account-token": ACCOUNT_TOKEN };
+    await app.inject({ method: "POST", url: "/account/settings", headers, payload: { riskBudgetUsdc: 15 } });
+
+    const res = await app.inject({ method: "GET", url: "/account/activity", headers });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().items.length).toBeGreaterThan(0);
+  });
+});

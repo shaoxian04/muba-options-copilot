@@ -16,6 +16,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 
 vi.mock("../thetanuts/client.js", async () => await import("./stub-client.js"));
+vi.mock("../supabase.js", async () => await import("./stub-supabase.js"));
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -23,6 +24,7 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
 import { resetStub, state, chain, TRADER_ADDRESS, proveWallet } from "./stub-client.js";
+import { registerUser } from "./stub-supabase.js";
 import { NOW, DEFAULT_BOOK, makeOrder } from "./fixtures.js";
 
 vi.useFakeTimers({ toFake: ["Date"] });
@@ -34,6 +36,9 @@ const WRITE = process.env.WRITE_FIXTURES === "1";
 
 /** The session every fixture is generated under, so its cardRefs resolve against each other. */
 const SESSION = "fixtures";
+
+/** The one signed-in account every fixture needing one (ADR-0013) is generated under. */
+const ACCOUNT_TOKEN = "fixture-account-token";
 
 /**
  * Every fixture, named up front.
@@ -66,6 +71,7 @@ const NAMES = [
   "veto",
   "no-order",
   "refusal",
+  "account",
 ] as const;
 
 /**
@@ -100,19 +106,31 @@ function stabilise(value: unknown): unknown {
 let app: FastifyInstance;
 const generated: Record<string, unknown> = {};
 
-const get = async (url: string, session = SESSION) =>
-  (await app.inject({ method: "GET", url, headers: { "x-session-id": session } })).json();
+const get = async (url: string, session = SESSION, accountToken?: string) =>
+  (
+    await app.inject({
+      method: "GET",
+      url,
+      headers: { "x-session-id": session, ...(accountToken ? { "x-account-token": accountToken } : {}) },
+    })
+  ).json();
 
 // `payload` is typed rather than left as `unknown`, which sends TypeScript down a
 // different `inject` overload and loses the response type entirely.
-const post = async (url: string, payload: Record<string, unknown>, session = SESSION) =>
-  await app.inject({ method: "POST", url, headers: { "x-session-id": session }, payload });
+const post = async (url: string, payload: Record<string, unknown>, session = SESSION, accountToken?: string) =>
+  await app.inject({
+    method: "POST",
+    url,
+    headers: { "x-session-id": session, ...(accountToken ? { "x-account-token": accountToken } : {}) },
+    payload,
+  });
 
 const DOWN_1 = "/deck?asset=ETH&direction=DOWN&horizonDays=1&sizeUsdc=2";
 const intent = { underlying: "ETH", direction: "DOWN", sizeUsdc: 2, horizonDays: 1 };
 
 beforeAll(async () => {
   resetStub();
+  registerUser(ACCOUNT_TOKEN, { id: "fixture-user", email: "fixture@example.com" });
   app = await buildApp();
 
   // --- the ordinary surface -------------------------------------------------
@@ -160,27 +178,32 @@ beforeAll(async () => {
   generated["practice"] = (await post("/practice", { proposalId: forPractice.proposalId })).json();
   generated["positions-after-practice"] = await get("/positions");
 
-  // Proving wallet ownership -- the sign-in challenge (ADR-0012). The nonce is a fresh
-  // random value every run (that is the point of it), so it is normalized to a fixed
-  // placeholder here rather than through the shared `stabilise` below, which only
-  // replaces a whole matching field value, not a value embedded inside a sentence.
-  const challenge = (await post("/auth/challenge", { walletAddress: TRADER_ADDRESS })).json() as { message: string };
+  // Proving wallet ownership -- the sign-in challenge (ADR-0012), which now also
+  // requires a signed-in account (ADR-0013). The nonce is a fresh random value every
+  // run (that is the point of it), so it is normalized to a fixed placeholder here
+  // rather than through the shared `stabilise` below, which only replaces a whole
+  // matching field value, not a value embedded inside a sentence.
+  const challenge = (await post("/auth/challenge", { walletAddress: TRADER_ADDRESS }, SESSION, ACCOUNT_TOKEN)).json() as { message: string };
   generated["auth-challenge"] = {
     message: challenge.message.replace(/Nonce: [0-9a-f]{32}/, "Nonce: stable-nonce-for-fixtures"),
   };
-  await proveWallet(app, SESSION);
+  await proveWallet(app, SESSION, TRADER_ADDRESS, ACCOUNT_TOKEN);
 
-  // A prepared fill, and settling it -- the non-custodial, chain-verified contract
-  // (ADR-0011, ADR-0012).
+  // A prepared fill, and settling it -- the non-custodial, chain-verified, account-gated
+  // contract (ADR-0011, ADR-0012, ADR-0013).
   const forFill = (await post("/propose", intent)).json() as { proposalId: string };
   generated["fill-prepare"] = (
-    await post("/fill/prepare", { proposalId: forFill.proposalId, walletAddress: TRADER_ADDRESS })
+    await post("/fill/prepare", { proposalId: forFill.proposalId, walletAddress: TRADER_ADDRESS }, SESSION, ACCOUNT_TOKEN)
   ).json();
   state.receipt = { status: 1, to: chain.contracts.optionBook };
   generated["fill-settle"] = (
-    await post("/fill/settle", { proposalId: forFill.proposalId, txHash: "0xFIXTURETX" })
+    await post("/fill/settle", { proposalId: forFill.proposalId, txHash: "0xFIXTURETX" }, SESSION, ACCOUNT_TOKEN)
   ).json();
   state.receipt = null;
+
+  // The signed-in account's own view of itself -- settings plus the wallet just linked
+  // by proveWallet() above.
+  generated["account"] = await get("/account", SESSION, ACCOUNT_TOKEN);
 
   // --- the halt states ------------------------------------------------------
   process.env.COPILOT_REVIEW_FIXTURE = "veto";
