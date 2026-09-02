@@ -35,6 +35,10 @@ export interface Session {
    * comes (the Trader closed the tab mid-signature), `sweepPendingFills` releases it.
    */
   pendingFills: Map<string, { maxLossUsdc: number; at: number }>;
+  /** An outstanding sign-in challenge this session has not yet completed, if any. */
+  pendingAuth: { walletAddress: string; nonce: string; at: number } | null;
+  /** The wallet this session has proven ownership of, if any (ADR-0010). */
+  verifiedWallet: string | null;
   /**
    * Per-session key that turns an Order's identity into its cardRef. Random, so a ref
    * is unguessable and reveals nothing about the maker; per-session, so a ref dealt to
@@ -67,6 +71,8 @@ export function getSession(id = "default"): Session {
       proposals: new Map(),
       cards: new Map(),
       pendingFills: new Map(),
+      pendingAuth: null,
+      verifiedWallet: null,
       cardKey: randomBytes(32),
       practice: [],
     };
@@ -201,6 +207,29 @@ export function sweepPendingFills(s: Session): void {
   for (const [id, v] of s.pendingFills) {
     if (now - v.at > PENDING_FILL_TTL_MS) releasePendingFill(s, id);
   }
+}
+
+/** Long enough to read and sign one message; short enough not to sit around unused. */
+const CHALLENGE_TTL_MS = 5 * 60_000;
+
+/** Replaces any challenge already outstanding -- a fresh request always wins. */
+export function beginAuthChallenge(s: Session, walletAddress: string, nonce: string): void {
+  s.pendingAuth = { walletAddress, nonce, at: Date.now() };
+}
+
+/**
+ * Consume the outstanding challenge, if any and if still fresh. One-time regardless of
+ * outcome: a failed verify must request a new challenge, never retry the old nonce.
+ */
+export function takeAuthChallenge(s: Session): { walletAddress: string; nonce: string } | null {
+  const pending = s.pendingAuth;
+  s.pendingAuth = null;
+  if (!pending || Date.now() - pending.at > CHALLENGE_TTL_MS) return null;
+  return { walletAddress: pending.walletAddress, nonce: pending.nonce };
+}
+
+export function markWalletVerified(s: Session, walletAddress: string): void {
+  s.verifiedWallet = walletAddress;
 }
 
 /** Compare against every candidate without letting the clock reveal how close a guess was. */
