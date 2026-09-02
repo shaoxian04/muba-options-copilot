@@ -1,0 +1,13 @@
+{
+  "approveTx": {
+    "to": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "data": "0xapprove:0x0000000000000000000000000000000000000B00:1999999"
+  },
+  "fillTx": {
+    "to": "0x0000000000000000000000000000000000000B00",
+    "data": "0xfillorder:0xMAKER0000000000000000000000000000000001:2000000"
+  },
+  "optionAddress": "",
+  "explorerTxUrlBase": "https://basescan.org/tx/",
+  "remainingUsdc": 3.000001
+}

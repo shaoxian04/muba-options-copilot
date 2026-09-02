@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
-import { resetStub, state } from "./stub-client.js";
+import { resetStub, state, TRADER_ADDRESS } from "./stub-client.js";
 import { NOW, makeOrder } from "./fixtures.js";
 
 vi.useFakeTimers({ toFake: ["Date"] });
@@ -55,6 +55,8 @@ const NAMES = [
   "propose-agent",
   "propose-by-card",
   "practice",
+  "fill-prepare",
+  "fill-settle",
   "veto",
   "no-order",
   "refusal",
@@ -130,6 +132,15 @@ beforeAll(async () => {
   const forPractice = (await post("/propose", intent)).json() as { proposalId: string };
   generated["practice"] = (await post("/practice", { proposalId: forPractice.proposalId })).json();
   generated["positions-after-practice"] = await get("/positions");
+
+  // A prepared fill, and settling it -- the non-custodial contract (ADR-0009).
+  const forFill = (await post("/propose", intent)).json() as { proposalId: string };
+  generated["fill-prepare"] = (
+    await post("/fill/prepare", { proposalId: forFill.proposalId, walletAddress: TRADER_ADDRESS })
+  ).json();
+  generated["fill-settle"] = (
+    await post("/fill/settle", { proposalId: forFill.proposalId, succeeded: true, txHash: "0xFIXTURETX" })
+  ).json();
 
   // --- the halt states ------------------------------------------------------
   process.env.COPILOT_REVIEW_FIXTURE = "veto";
