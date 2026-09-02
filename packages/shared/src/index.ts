@@ -608,4 +608,80 @@ export const RouterResult = z.discriminatedUnion("kind", [
 ]);
 export type RouterResult = z.infer<typeof RouterResult>;
 
+/**
+ * Liquidation Cover -- the wire shape of a Cover quote.
+ *
+ * A different context from everything above it (see CONTEXT-MAP.md): the vocabulary is
+ * Borrower, Loan, Cover and Lapse, not Trader, Order and Position. It shares the Figure
+ * discipline and nothing else.
+ */
+export const COVER_COLLATERAL = ["WETH", "cbBTC"] as const;
+export const CoverCollateral = z.enum(COVER_COLLATERAL);
+export type CoverCollateral = z.infer<typeof CoverCollateral>;
+
+/**
+ * Why a Cover was not priced. Always accompanied by a sentence a Borrower can act on --
+ * a Cover declined without a reason is indistinguishable from one that is broken.
+ */
+export const CoverRefusal = z.object({
+  code: z.enum([
+    "BAD_ADDRESS",
+    "NO_COLLATERAL",
+    "UNSUPPORTED_COLLATERAL",
+    "MULTI_COLLATERAL",
+    "NO_DEBT",
+    "ALREADY_LIQUIDATABLE",
+    "PRICE_DIVERGENCE",
+  ]),
+  message: z.string(),
+});
+export type CoverRefusal = z.infer<typeof CoverRefusal>;
+
+export const CoverQuote = z.object({
+  address: z.string(),
+  collateral: CoverCollateral,
+  /** The Underlying whose puts hedge this collateral. WETH -> ETH, cbBTC -> BTC. */
+  underlying: UnderlyingSymbol,
+  /**
+   * AAVE's price, not the options market's. The Liquidation Price is a fact about Aave, so
+   * it is derived from the price Aave liquidates on. The two are cross-checked and a
+   * divergence refuses rather than picking one. (ADR-0011)
+   */
+  spot: Figure,
+  loan: z.object({
+    collateralAmount: Figure,
+    collateralUsd: Figure,
+    debtUsd: Figure,
+    liquidationThreshold: Figure,
+    healthFactor: Figure,
+  }),
+  cover: z.object({
+    liquidationPrice: Figure,
+    targetStrike: Figure,
+    /** SIGNED. Negative is below spot. `Math.abs` here writes the sentence backwards. */
+    strikeDistanceFromSpot: Figure,
+    /**
+     * The hedge that matches the Loan exactly: `collateralAmount * liquidationThreshold`.
+     * What a Cover SHOULD be. What it can actually buy is decided when a maker answers,
+     * and the gap between the two is the Coverage. (ADR-0012)
+     */
+    requiredContracts: Figure,
+    tenorDays: Figure,
+    /** The Lapse. The loudest thing on a Cover. (ADR-0008) */
+    expiry: Figure,
+    premiumCapUsdc: Figure,
+  }),
+  /** True, unwelcome, and not disqualifying. */
+  warnings: z.array(z.string()),
+  /** States plainly that nothing has been requested and nothing signed. */
+  disclaimer: z.string(),
+});
+export type CoverQuote = z.infer<typeof CoverQuote>;
+
+export const CoverQuoteResult = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("QUOTE"), quote: CoverQuote }),
+  z.object({ status: z.literal("REFUSED"), refusal: CoverRefusal }),
+]);
+export type CoverQuoteResult = z.infer<typeof CoverQuoteResult>;
+
 export * from "./forecast.js";

@@ -31,6 +31,7 @@ import { marketOverview } from "./thetanuts/markets.js";
 import { reviewIntent } from "./agents/review.js";
 import { practiceRoutes, practiceHoldings } from "./practice.js";
 import { rfqRoutes } from "./rfq.js";
+import { coverRoutes } from "./insurance/http.js";
 import { safeErrorResponse } from "./errors.js";
 import { realHoldings } from "./thetanuts/holdings.js";
 import { usd } from "./format.js";
@@ -495,6 +496,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(practiceRoutes);
   await app.register(rfqRoutes);
+  await app.register(coverRoutes);
 
   return app;
 }
