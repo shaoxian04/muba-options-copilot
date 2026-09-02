@@ -11,11 +11,14 @@
  * same id.
  */
 import type {
+  AccountActivityResponse, AccountResponse, AccountSettingsRequest,
   Card, ConversationTurn, CoinAskResult, Deck, DepthView, ExpiryOption, Figure, Holding,
   MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, UnderlyingSymbol,
 } from "@copilot/shared";
+import { supabase } from "./supabaseClient";
 
 export type {
+  AccountActivityResponse, AccountResponse, AccountSettingsRequest,
   Card, ConversationTurn, CoinAskResult, Deck, DepthView, ExpiryOption, Figure, Holding,
   MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, UnderlyingSymbol,
 };
@@ -98,12 +101,26 @@ export function sessionId(): string {
   return id;
 }
 
+/**
+ * Sent on every call, when a signed-in session exists (ADR-0013). Read fresh each
+ * time rather than cached: `supabase.auth.getSession()` auto-refreshes an expiring
+ * access token internally, so asking right before use -- never holding a stale copy
+ * in React state -- is what keeps a long-lived tab from silently sending an expired
+ * token.
+ */
+async function accountHeaders(): Promise<Record<string, string>> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  return token ? { "x-account-token": token } : {};
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
       "content-type": "application/json",
       "x-session-id": sessionId(),
+      ...(await accountHeaders()),
       ...(init?.headers ?? {}),
     },
   });
@@ -263,3 +280,15 @@ export const requestRfq = (body: {
   horizonDays: RfqTenorDays;
   sizeUsdc: number;
 }): Promise<never> => call<never>("/rfq", { method: "POST", body: JSON.stringify(body) });
+
+/** The signed-in account's saved settings and linked wallet, if any (ADR-0013). */
+export const getAccount = (): Promise<AccountResponse> => call<AccountResponse>("/account");
+
+/** Saves a partial settings update -- only the given fields change. */
+export const saveAccountSettings = (
+  patch: AccountSettingsRequest
+): Promise<{ settings: AccountResponse["settings"] }> =>
+  call("/account/settings", { method: "POST", body: JSON.stringify(patch) });
+
+export const getAccountActivity = (): Promise<AccountActivityResponse> =>
+  call<AccountActivityResponse>("/account/activity");

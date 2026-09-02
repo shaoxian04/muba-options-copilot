@@ -44,6 +44,7 @@ import {
 } from "./api";
 import { connectWallet as connectInjectedWallet, connectedAddress, sendTx, signMessage } from "./wallet";
 import { clampSizeUsdc, rfqSizeCapUsdc } from "./geometry";
+import { supabase } from "./supabaseClient";
 
 /** Trades of 1-2 USDC are normal and expected for this product. */
 export const STAKE_USDC = 2;
@@ -245,6 +246,8 @@ export interface Surface {
   busy: boolean;
   log: ChatLine[];
 
+  /** The signed-in account, if any (ADR-0013). Null means: browsing anonymously. */
+  account: { userId: string; email: string } | null;
   walletAddress: string | null;
   walletConnecting: boolean;
   walletVerified: boolean;
@@ -454,11 +457,24 @@ export function useSurface(): Surface {
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<ChatLine[]>([]);
 
+  const [account, setAccount] = useState<{ userId: string; email: string } | null>(null);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [walletConnecting, setWalletConnecting] = useState(false);
   const [walletVerified, setWalletVerified] = useState(false);
   const [walletVerifying, setWalletVerifying] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
+
+  // Picks up an existing sign-in on first paint, then reacts to every sign-in/sign-out
+  // from then on -- including the redirect back from /login (ADR-0013).
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) setAccount({ userId: data.session.user.id, email: data.session.user.email ?? "" });
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAccount(session ? { userId: session.user.id, email: session.user.email ?? "" } : null);
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
 
   const say = useCallback((text: string) => setLog((l) => [...l, { who: "copilot", text }]), []);
   const heard = useCallback((text: string) => setLog((l) => [...l, { who: "trader", text }]), []);
@@ -1070,6 +1086,7 @@ export function useSurface(): Surface {
     receipt,
     busy,
     log,
+    account,
     walletAddress,
     walletConnecting,
     walletVerified,
