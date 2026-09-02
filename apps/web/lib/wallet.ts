@@ -49,6 +49,12 @@ export async function connectedAddress(): Promise<string | null> {
   }
 }
 
+/** Signs a plain text message with the connected wallet. No transaction, no gas. */
+export async function signMessage(message: string): Promise<string> {
+  const signer = await provider().getSigner();
+  return signer.signMessage(message);
+}
+
 /** Sends one prepared transaction through the connected wallet and waits for it to mine. */
 export async function sendTx(tx: UnsignedTx): Promise<string> {
   const signer = await provider().getSigner();

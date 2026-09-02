@@ -28,6 +28,7 @@ vi.mock("ethers", () => {
       if (!fake.authorised) throw new Error("no such account");
       return {
         getAddress: async () => ADDRESS,
+        signMessage: async (message: string) => `0xSIGNED:${message.length}`,
         sendTransaction: async (tx: { to: string; data: string }) => ({
           hash: "0xTXHASH",
           to: tx.to,
@@ -100,5 +101,21 @@ describe("sendTx", () => {
     await expect(
       sendTx({ to: "0x0000000000000000000000000000000000000B00", data: "0x12345678" })
     ).rejects.toThrow(/failed on-chain/);
+  });
+});
+
+describe("signMessage", () => {
+  it("signs the exact message through the connected wallet", async () => {
+    (globalThis as any).window = { ethereum: {} };
+    const { connectWallet, signMessage } = await import("./wallet.js");
+    await connectWallet();
+    const signature = await signMessage("sign this");
+    expect(signature).toBe("0xSIGNED:9");
+  });
+
+  it("throws WalletUnavailable when no wallet is injected", async () => {
+    (globalThis as any).window = {};
+    const { signMessage, WalletUnavailable } = await import("./wallet.js");
+    await expect(signMessage("sign this")).rejects.toThrow(WalletUnavailable);
   });
 });
