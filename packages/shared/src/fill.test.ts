@@ -43,8 +43,9 @@ describe("FillPrepareRequest", () => {
 });
 
 describe("FillSettleRequest", () => {
-  it("requires proposalId and succeeded; txHash is optional", () => {
-    expect(FillSettleRequest.safeParse({ proposalId: "p1", succeeded: true }).success).toBe(true);
-    expect(FillSettleRequest.safeParse({ proposalId: "p1" }).success).toBe(false);
+  it("requires proposalId; txHash is optional", () => {
+    expect(FillSettleRequest.safeParse({ proposalId: "p1" }).success).toBe(true);
+    expect(FillSettleRequest.safeParse({ proposalId: "p1", txHash: "0xTX" }).success).toBe(true);
+    expect(FillSettleRequest.safeParse({}).success).toBe(false);
   });
 });

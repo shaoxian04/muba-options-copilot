@@ -25,19 +25,22 @@ export const PreparedFill = z.object({
 });
 export type PreparedFill = z.infer<typeof PreparedFill>;
 
-const WALLET_ADDRESS = z.string().regex(/^0x[a-fA-F0-9]{40}$/, "must be a 0x-prefixed 20-byte address");
+export const WalletAddress = z.string().regex(/^0x[a-fA-F0-9]{40}$/, "must be a 0x-prefixed 20-byte address");
 
 /** What POST /fill/prepare accepts. */
 export const FillPrepareRequest = z.object({
   proposalId: z.string(),
-  walletAddress: WALLET_ADDRESS,
+  walletAddress: WalletAddress,
 });
 export type FillPrepareRequest = z.infer<typeof FillPrepareRequest>;
 
-/** What POST /fill/settle accepts, once the Trader's wallet has sent fillTx (or refused to). */
+/**
+ * What POST /fill/settle accepts. `txHash` present means "check the chain and let it
+ * decide" (ADR-0010); absent means nothing was ever sent -- the wallet declined to
+ * sign -- so there is nothing to check and the reservation is simply released.
+ */
 export const FillSettleRequest = z.object({
   proposalId: z.string(),
-  succeeded: z.boolean(),
   txHash: z.string().optional(),
 });
 export type FillSettleRequest = z.infer<typeof FillSettleRequest>;
