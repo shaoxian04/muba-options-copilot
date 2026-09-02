@@ -206,6 +206,38 @@ describe("depthChartLayout", () => {
     expect(layout.cumulativeDownPath).toMatch(/^M/);
   });
 
+  it("scales each side of the cumulative staircase to its OWN maximum, not the bar maximum", () => {
+    // A call side ten thousand USDC deep against a put side worth ten -- if the two
+    // shared one maximum (the bug this guards against), the put side's excursion would
+    // be flattened to almost nothing beside the call side's. Scaled independently, a
+    // lone put strike is 100% of ITS OWN total, so its staircase should reach nearly
+    // the same excursion off the baseline as the call side does off ITS.
+    const layout = depthChartLayout({
+      strikes: [
+        baseStrike({ strikeValue: 90, putUsdc: 10 }),
+        baseStrike({ strikeValue: 110, callUsdc: 10000 }),
+      ],
+      spotValue: 100,
+      spotLabel: "$100.00",
+      windowLowValue: 70,
+      windowHighValue: 130,
+      axisMaxValue: 10000,
+    });
+
+    const lastY = (path: string): number => {
+      const ys = [...path.matchAll(/L[\d.]+ ([\d.]+)/g)].map((m) => Number(m[1]));
+      return ys[ys.length - 1]!;
+    };
+
+    const upExcursion = Math.abs(lastY(layout.cumulativeUpPath) - layout.midY);
+    const downExcursion = Math.abs(lastY(layout.cumulativeDownPath) - layout.midY);
+
+    // Both are the sole strike on their own side, so each is 100% of its own maximum --
+    // the two excursions should be nearly equal despite a thousandfold difference in
+    // the underlying USDC totals.
+    expect(downExcursion).toBeGreaterThan(upExcursion * 0.9);
+  });
+
   it("places the spot marker between the window's bounds", () => {
     const layout = depthChartLayout({
       strikes: [baseStrike({ strikeValue: 100 })],

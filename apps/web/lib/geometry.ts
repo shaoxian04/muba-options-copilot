@@ -374,10 +374,12 @@ function depthCumulativePaths(
 
   const upPoints = walk(aboveIdx, "call");
   const downPoints = walk(belowIdx, "put");
-  const max = Math.max(1, ...upPoints.map((p) => p.total), ...downPoints.map((p) => p.total));
 
   const step = (points: { x: number; total: number }[], sign: 1 | -1): string => {
     if (!points.length) return "";
+    // This side's OWN maximum, never the other side's -- a deep call book must not
+    // flatten a thin put staircase into a hairline, or vice versa.
+    const max = Math.max(1, ...points.map((p) => p.total));
     let path = `M${points[0]!.x.toFixed(1)} ${midY.toFixed(1)}`;
     let prevY = midY;
     for (const p of points) {
