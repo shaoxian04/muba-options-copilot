@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { UnderlyingSymbol } from "./underlying.js";
+
+export { UNDERLYING_SYMBOLS, UnderlyingSymbol } from "./underlying.js";
 
 /**
  * A number a Trader reads, together with the string they read it as.
@@ -30,16 +33,6 @@ export type Figure = z.infer<typeof Figure>;
  */
 export const PayoutAsset = z.enum(["USDC", "WETH", "WBTC"]);
 export type PayoutAsset = z.infer<typeof PayoutAsset>;
-
-/**
- * The Underlyings the book quotes. Mirrors the price-feed registry in
- * `apps/api/src/thetanuts/underlyings.ts`, which is the authority -- this enum is the
- * shape the browser and the wire agree on, and `underlyings.test.ts` holds the two in
- * step so neither can gain an Underlying the other does not have.
- */
-export const UNDERLYING_SYMBOLS = ["BTC", "ETH", "SOL", "BNB", "XRP", "AVAX"] as const;
-export const UnderlyingSymbol = z.enum(UNDERLYING_SYMBOLS);
-export type UnderlyingSymbol = z.infer<typeof UnderlyingSymbol>;
 
 /**
  * The longest expiry a Trader may ask for.

@@ -423,6 +423,36 @@ button[disabled] {
   overflow: hidden;
   background: var(--ground);
 }
+.account-control {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.account-control a,
+.account-control button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface);
+}
+.account-control .addr {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 16px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 13px;
+  color: var(--ink-2);
+}
 .tape {
   display: flex;
   align-items: center;

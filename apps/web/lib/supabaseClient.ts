@@ -11,7 +11,17 @@
  */
 import { createClient } from "@supabase/supabase-js";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+/**
+ * `createClient` throws synchronously if given an empty URL -- fatal at import time,
+ * which would take down every module that imports `surface.ts` (this app's test suite
+ * included) wherever the env vars aren't set. A placeholder URL keeps construction
+ * inert instead: `auth.getSession()` reads a session from local storage without any
+ * network call, so sign-in state still round-trips correctly once the real vars are
+ * configured, and every call simply fails closed (no session, refused sign-in) when
+ * they aren't -- matching `apps/api/src/supabase.ts`'s `getSupabase()` returning
+ * `undefined` rather than throwing.
+ */
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co";
+const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "placeholder-anon-key";
 
 export const supabase = createClient(url, anonKey);
