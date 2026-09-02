@@ -34,6 +34,12 @@ import practiceResult from "./fixtures/practice.json" with { type: "json" };
 import veto from "./fixtures/veto.json" with { type: "json" };
 import noOrder from "./fixtures/no-order.json" with { type: "json" };
 import refusal from "./fixtures/refusal.json" with { type: "json" };
+import riskProfileUnset from "./fixtures/risk-profile-unset.json" with { type: "json" };
+import riskProfileBalanced from "./fixtures/risk-profile-balanced.json" with { type: "json" };
+import suggestionUnset from "./fixtures/suggestion-unset.json" with { type: "json" };
+import suggestionEth from "./fixtures/suggestion-eth.json" with { type: "json" };
+import suggestionNoSignal from "./fixtures/suggestion-no-signal.json" with { type: "json" };
+import decisionsAccepted from "./fixtures/decisions-accepted.json" with { type: "json" };
 
 export const API = "http://127.0.0.1:3001";
 
@@ -76,6 +82,12 @@ export const fixtures = {
   positionsAfterPractice,
   depthEth,
   depthEthMarked,
+  riskProfileUnset,
+  riskProfileBalanced,
+  suggestionUnset,
+  suggestionEth,
+  suggestionNoSignal,
+  decisionsAccepted,
 };
 
 /** Longest shot first, so index 0 is the leftmost Card in the row. */
@@ -95,7 +107,14 @@ export type Scenario =
   | "compressed"
   | "over-budget"
   | "depth-marked"
-  | "deep-budget";
+  | "deep-budget"
+  /**
+   * A profile that gets saved, but whose Suggestion always comes back with a
+   * null `intent` -- the "nothing to suggest" case (SuggestionCard.tsx's
+   * "no-signal" status), distinct from the default scenario where a saved
+   * profile always fires.
+   */
+  | "no-signal";
 
 export interface Traffic {
   /** Every request the page made to the API, in order. */
@@ -131,6 +150,18 @@ const json = (route: Route, body: unknown, traffic: Traffic, status = 200) => {
 };
 
 const authorised = (request: Request) => request.headers()["authorization"] === `Bearer ${TEST_API_TOKEN}`;
+
+/**
+ * Mirrors `OWNER_ID_RE` in `apps/api/src/app.ts` (and `lib/owner.ts`'s copy of it).
+ * A stub that accepted anything here would never catch the browser generating a
+ * bad owner id -- which 400s every Risk Profile / Suggestion / Decision call with
+ * no recovery (see the comment in `lib/owner.ts`).
+ */
+const OWNER_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
+const ownerOf = (request: Request) => {
+  const header = request.headers()["x-copilot-owner"];
+  return typeof header === "string" && OWNER_ID_RE.test(header) ? header : null;
+};
 
 /**
  * The Deck for whatever was asked for.
@@ -254,6 +285,12 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
   let practised = false;
   let moved = false;
 
+  // Stateful within this stub instance, the same way `practised` is: a PUT stores
+  // the choice, and every GET after that reads it back. "Pick a profile -> it
+  // persists -> a Suggestion follows" is the actual journey; a canned GET would
+  // only prove a fixture can be served.
+  let savedProfile: "conservative" | "balanced" | "aggressive" | null = null;
+
   // Issue #32's `hold`/`release` pair -- see `Traffic.hold` above for why this exists.
   // Keyed by pathname; only ONE outstanding hold per path at a time, which is all any
   // test here needs.
@@ -331,6 +368,51 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
       case "/practice":
         practised = true;
         return json(route, practiceResult, traffic);
+
+      /*
+       * The Risk Profile / Suggestion / Decision routes. All three constraints from
+       * the real routes apply here, not just to the ordinary surface: gated on the
+       * bearer token (a real `/suggestion` call reaches a paid-for exchange lookup
+       * through the agents service, same reasoning as `/propose`), and 400 on a
+       * missing or malformed owner id (mirrors `ownerIdFrom`'s regex in app.ts).
+       */
+      case "/risk-profile": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        const owner = ownerOf(request);
+        if (!owner) return json(route, { error: "x-copilot-owner header is required (8-64 chars, [A-Za-z0-9_-])" }, traffic, 400);
+
+        if (request.method() === "PUT") {
+          const body = request.postDataJSON() as { profile?: string };
+          if (body.profile !== "conservative" && body.profile !== "balanced" && body.profile !== "aggressive") {
+            return json(route, { error: "profile must be one of conservative, balanced, aggressive" }, traffic, 400);
+          }
+          savedProfile = body.profile;
+          return json(route, { profile: savedProfile }, traffic);
+        }
+        return json(route, savedProfile ? { profile: savedProfile } : riskProfileUnset, traffic);
+      }
+
+      case "/suggestion": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        const owner = ownerOf(request);
+        if (!owner) return json(route, { error: "x-copilot-owner header is required (8-64 chars, [A-Za-z0-9_-])" }, traffic, 400);
+
+        // No saved profile -- the real "No saved profile" branch, never a fetch to
+        // Python. Once one is saved: the no-signal fixture for the "no-signal"
+        // scenario, the fired Suggestion for every other scenario.
+        if (!savedProfile) return json(route, suggestionUnset, traffic);
+        const base = scenario === "no-signal" ? suggestionNoSignal : suggestionEth;
+        return json(route, { ...base, profile: savedProfile }, traffic);
+      }
+
+      case "/decisions": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        const owner = ownerOf(request);
+        if (!owner) return json(route, { error: "x-copilot-owner header is required (8-64 chars, [A-Za-z0-9_-])" }, traffic, 400);
+
+        const body = request.postDataJSON() as { decision?: "ACCEPTED" | "DISMISSED" };
+        return json(route, { ...decisionsAccepted, decision: body.decision ?? decisionsAccepted.decision }, traffic);
+      }
 
       /** Issue #31 -- always 501, the honest refusal, echoing back the request. */
       case "/rfq": {
