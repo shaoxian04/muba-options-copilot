@@ -33,6 +33,7 @@ export function CommitBar({
   pending,
   gates,
   canCommit,
+  walletConnected,
   busy,
   refusal,
   receipt,
@@ -46,6 +47,8 @@ export function CommitBar({
   pending: number;
   gates: Gate[];
   canCommit: boolean;
+  /** Confirm needs a signature from the Trader's own wallet; Practice Run never does. */
+  walletConnected: boolean;
   busy: boolean;
   refusal: string | null;
   /** What the chain did, once it has done it. */
@@ -99,9 +102,21 @@ export function CommitBar({
         Practice run · no money
       </button>
 
-      <button type="button" className="go" data-testid="confirm" disabled={!canCommit || busy} onClick={onConfirm}>
+      <button
+        type="button"
+        className="go"
+        data-testid="confirm"
+        disabled={!canCommit || !walletConnected || busy}
+        onClick={onConfirm}
+      >
         {maxLoss ? `Confirm · ${maxLoss.display}` : "Confirm"}
       </button>
+
+      {canCommit && !walletConnected ? (
+        <p className="refusal" role="status" data-testid="wallet-gate">
+          Connect a wallet above to Confirm — Practice Run needs no wallet at all.
+        </p>
+      ) : null}
 
       {quoteMoved ? (
         <p className="refusal" role="alert" data-testid="quote-moved">

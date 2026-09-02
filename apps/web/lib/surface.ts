@@ -20,19 +20,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Figure } from "@copilot/shared";
 import {
   ApiRefusal,
-  fill,
   getBoard,
   getDeck,
   getSession,
   practice,
+  prepareFill,
   propose,
+  settleFill,
   type Board,
   type Card,
   type Deck,
   type FillReceipt,
+  type PreparedFill,
   type ProposeResult,
   type SessionState,
 } from "./api";
+import { connectWallet as connectInjectedWallet, connectedAddress, sendTx } from "./wallet";
 
 /** Trades of 1-2 USDC are normal and expected for this product. */
 export const STAKE_USDC = 2;
@@ -73,6 +76,11 @@ export interface Surface {
   receipt: FillReceipt | null;
   busy: boolean;
   log: ChatLine[];
+
+  walletAddress: string | null;
+  walletConnecting: boolean;
+  walletError: string | null;
+  connectWallet: () => Promise<void>;
 
   setDirection: (d: Direction) => void;
   setHorizon: (h: Horizon) => void;
@@ -151,13 +159,34 @@ export function useSurface(): Surface {
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<ChatLine[]>([]);
 
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [walletConnecting, setWalletConnecting] = useState(false);
+  const [walletError, setWalletError] = useState<string | null>(null);
+
   const say = useCallback((text: string) => setLog((l) => [...l, { who: "copilot", text }]), []);
   const heard = useCallback((text: string) => setLog((l) => [...l, { who: "trader", text }]), []);
 
   const refreshMoney = useCallback(async () => {
-    const [s, b] = await Promise.all([getSession().catch(() => null), getBoard().catch(() => null)]);
+    const [s, b] = await Promise.all([getSession().catch(() => null), getBoard(walletAddress).catch(() => null)]);
     if (s) setSession(s);
     if (b) setBoard(b);
+  }, [walletAddress]);
+
+  // First paint: pick up a wallet the browser already authorised, without prompting.
+  useEffect(() => {
+    void connectedAddress().then(setWalletAddress);
+  }, []);
+
+  const connectWallet = useCallback(async () => {
+    setWalletConnecting(true);
+    setWalletError(null);
+    try {
+      setWalletAddress(await connectInjectedWallet());
+    } catch (e) {
+      setWalletError(e instanceof Error ? e.message : "Could not connect a wallet.");
+    } finally {
+      setWalletConnecting(false);
+    }
   }, []);
 
   /**
@@ -315,28 +344,40 @@ export function useSurface(): Surface {
     [ask, busy, say]
   );
 
-  /** Spends real USDC. Reached only from the Trader's own press. */
+  /** Spends real USDC, signed by the Trader's own connected wallet (ADR-0009). */
   const confirm = useCallback(async () => {
     const p = proposalOf(result);
     if (!p || quoteMoved) return;
+    if (!walletAddress) {
+      setRefusal("Connect a wallet first — Confirm needs a signature from your own wallet.");
+      return;
+    }
     setBusy(true);
     setRefusal(null);
+    let prepared: PreparedFill | null = null;
     try {
-      const done = await fill(p.proposalId);
+      prepared = await prepareFill(p.proposalId, walletAddress);
+      if (prepared.approveTx) await sendTx(prepared.approveTx);
+      const txHash = await sendTx(prepared.fillTx);
+      await settleFill(p.proposalId, { succeeded: true, txHash });
+
       say(`Bought. ${p.proposal.figures.contracts.display} contracts at ${p.proposal.figures.strike.display}, paid ${p.proposal.figures.premiumUsdc.display}.`);
       clearSelection();
       // AFTER clearSelection, which wipes it. A Trader who has just spent real money
       // and been handed no transaction to look at has been told "trust me" at exactly
       // the moment they should not have to.
-      setReceipt(done);
+      setReceipt({ txHash, optionAddress: prepared.optionAddress, explorerUrl: `${prepared.explorerTxUrlBase}${txHash}` });
       await refreshMoney();
     } catch (e) {
+      // Only settle(false) if prepare actually succeeded -- there is nothing to release
+      // if the reservation was never made.
+      if (prepared) await settleFill(p.proposalId, { succeeded: false }).catch(() => {});
       if (e instanceof ApiRefusal) setRefusal(e.message);
-      else throw e;
+      else setRefusal(e instanceof Error ? e.message : "The wallet could not complete this fill.");
     } finally {
       setBusy(false);
     }
-  }, [result, quoteMoved, say, clearSelection, refreshMoney]);
+  }, [result, quoteMoved, walletAddress, say, clearSelection, refreshMoney]);
 
   /** Opens a simulated Position. A different function, on a different route. */
   const runPractice = useCallback(async () => {
@@ -384,6 +425,10 @@ export function useSurface(): Surface {
     receipt,
     busy,
     log,
+    walletAddress,
+    walletConnecting,
+    walletError,
+    connectWallet,
     setDirection,
     setHorizon,
     deal,

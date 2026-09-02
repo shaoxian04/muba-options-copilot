@@ -18,6 +18,7 @@ import { DeckRow } from "../components/DeckRow";
 import { EmptyDeck, VetoScreen } from "../components/Halt";
 import { PayoffStrip } from "../components/PayoffStrip";
 import { Tape } from "../components/Tape";
+import { WalletConnect } from "../components/WalletConnect";
 import { agentGate, agreedMaxLoss, useNow, useSurface, type Direction } from "../lib/surface";
 
 const DIRECTIONS: Array<{ value: Direction; label: string }> = [
@@ -62,6 +63,13 @@ export default function Page() {
   return (
     <main className="app">
       <Chat log={s.log} seeds={seeds} busy={s.busy} />
+
+      <WalletConnect
+        address={s.walletAddress}
+        connecting={s.walletConnecting}
+        error={s.walletError}
+        onConnect={() => void s.connectWallet()}
+      />
 
       <div className="rig">
         <Tape deck={s.deck} horizonDays={s.horizonDays} onHorizon={s.setHorizon} now={now} />
@@ -144,6 +152,7 @@ export default function Page() {
               pending={proposal ? proposal.maxLossUsdc : 0}
               gates={agentGate(s.result)}
               canCommit={canCommit}
+              walletConnected={Boolean(s.walletAddress)}
               busy={s.busy}
               refusal={s.refusal}
               receipt={s.receipt}

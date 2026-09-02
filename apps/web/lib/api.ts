@@ -10,9 +10,9 @@
  * so the Deck a Trader is looking at and the Card they pick have to arrive under the
  * same id.
  */
-import type { Card, ConversationTurn, CoinAskResult, Deck, Figure, Holding, ProposeResult } from "@copilot/shared";
+import type { Card, ConversationTurn, CoinAskResult, Deck, Figure, Holding, PreparedFill, ProposeResult } from "@copilot/shared";
 
-export type { Card, ConversationTurn, CoinAskResult, Deck, Figure, Holding, ProposeResult };
+export type { Card, ConversationTurn, CoinAskResult, Deck, Figure, Holding, PreparedFill, ProposeResult };
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:3001";
 
@@ -114,7 +114,8 @@ export const getDeck = (q: { direction: "UP" | "DOWN"; horizonDays: number; size
 
 export const getSession = (): Promise<SessionState> => call<SessionState>("/session", { headers: authHeaders() });
 
-export const getBoard = (): Promise<Board> => call<Board>("/positions", { headers: authHeaders() });
+export const getBoard = (address: string | null): Promise<Board> =>
+  call<Board>(`/positions${address ? `?address=${address}` : ""}`, { headers: authHeaders() });
 
 /**
  * Ask for a trade.
@@ -136,11 +137,22 @@ export const propose = (body: {
     headers: authHeaders(),
   });
 
-/** Spends real USDC. Only ever called from the Trader's own press on Confirm. */
-export const fill = (proposalId: string): Promise<FillReceipt> =>
-  call<FillReceipt>("/fill", {
+/** Asks the backend to build the unsigned transaction(s) this fill needs. Signs nothing. */
+export const prepareFill = (proposalId: string, walletAddress: string): Promise<PreparedFill> =>
+  call<PreparedFill>("/fill/prepare", {
     method: "POST",
-    body: JSON.stringify({ proposalId }),
+    body: JSON.stringify({ proposalId, walletAddress }),
+    headers: authHeaders(),
+  });
+
+/** Reports what the Trader's own wallet did, so the Risk Budget reservation can be finalized or released. */
+export const settleFill = (
+  proposalId: string,
+  outcome: { succeeded: boolean; txHash?: string }
+): Promise<{ remainingUsdc: number }> =>
+  call<{ remainingUsdc: number }>("/fill/settle", {
+    method: "POST",
+    body: JSON.stringify({ proposalId, ...outcome }),
     headers: authHeaders(),
   });
 
