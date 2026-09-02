@@ -10,10 +10,34 @@
  * so the Deck a Trader is looking at and the Card they pick have to arrive under the
  * same id.
  */
-import type { Card, ConversationTurn, CoinAskResult, Deck, Figure, Holding, ProposeResult } from "@copilot/shared";
+import type {
+  Card,
+  ConversationTurn,
+  CoinAskResult,
+  Deck,
+  DecisionRequest,
+  Figure,
+  Holding,
+  ProposeResult,
+  RiskProfileName,
+  RiskProfileResponse,
+  SuggestionResponse,
+} from "@copilot/shared";
 import { ownerId } from "./owner";
 
-export type { Card, ConversationTurn, CoinAskResult, Deck, Figure, Holding, ProposeResult };
+export type {
+  Card,
+  ConversationTurn,
+  CoinAskResult,
+  Deck,
+  DecisionRequest,
+  Figure,
+  Holding,
+  ProposeResult,
+  RiskProfileName,
+  RiskProfileResponse,
+  SuggestionResponse,
+};
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:3001";
 
@@ -174,3 +198,39 @@ export const askForecast = (
  */
 export const practice = (proposalId: string): Promise<{ holding: Holding }> =>
   call<{ holding: Holding }>("/practice", { method: "POST", body: JSON.stringify({ proposalId }) });
+
+/**
+ * The Trader's saved Risk Profile, or `null` if they have never chosen one -- not an
+ * error, same as an empty board is not an error. Token-gated like /forecast/*.
+ */
+export const getRiskProfile = (): Promise<RiskProfileName | null> =>
+  call<RiskProfileResponse>("/risk-profile", { headers: authHeaders() }).then((r) => r.profile);
+
+/** Saves the Trader's Risk Profile. Asked once; this is also how they change it later. */
+export const setRiskProfile = (profile: RiskProfileName): Promise<RiskProfileName> =>
+  call<RiskProfileResponse>("/risk-profile", {
+    method: "PUT",
+    body: JSON.stringify({ profile }),
+    headers: authHeaders(),
+  }).then((r) => r.profile as RiskProfileName);
+
+/**
+ * The ETH Suggestion for the Trader's saved Risk Profile. `profile`/`intent` come back
+ * null together when nothing has fired or nothing is saved yet -- not an error, same as
+ * `getRiskProfile` returning null. Token-gated, same as /risk-profile.
+ */
+export const getSuggestion = (): Promise<SuggestionResponse> =>
+  call<SuggestionResponse>("/suggestion", { headers: authHeaders() });
+
+/**
+ * Records what the Trader did with a Suggestion -- accepted it or dismissed it. Spends
+ * nothing and signs nothing (see apps/api/src/app.ts's POST /decisions doc comment):
+ * it's a note about their choice, not an act on their behalf. Token-gated and
+ * rate-limited on the server like the other DB-touching routes.
+ */
+export const recordDecision = (body: DecisionRequest): Promise<unknown> =>
+  call<unknown>("/decisions", {
+    method: "POST",
+    body: JSON.stringify(body),
+    headers: authHeaders(),
+  });

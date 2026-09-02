@@ -146,6 +146,10 @@ class StrategyDefinition(BaseModel):
     enabled: bool
     # analysis surface (ADR-0005): free text lives here, never in `then`
     notes: str = ""
+    # short, non-numeric line for the Suggestion card (ADR-0005 keeps the card
+    # figure-free) -- must never contain a digit. Optional so the four
+    # user-authored examples/*.json keep validating without it.
+    summary: str = ""
     # empty list would vacuously "always fire", which nobody means, so reject it
     when: list[Condition] = Field(min_length=1)
     then: Then

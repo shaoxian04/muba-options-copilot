@@ -1054,6 +1054,173 @@ button[disabled] {
 .chat .from-copilot .err {
   color: var(--crit);
 }
+
+/* The Risk Profile picker and the Suggestion it drives, merged into one card
+   (SuggestionCard.tsx) so the two read as one thought instead of two boxes that both
+   happen to say "Balanced". Sits between the log and the ask-row, borrowing the same
+   margin rhythm as .ask-row below.
+
+   `.chat`'s own background is --surface, so a card in that colour would be
+   invisible against it -- --surface-2 is the token that actually differs from the
+   panel, and `--lift`'s shadow (the same token cards on the Deck use to read as
+   raised) does the rest of the work of separating the card from the page. */
+.suggestion-card {
+  margin: 6px 18px 0;
+  padding: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--lift);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.suggestion-card-note {
+  font-size: 13px;
+  color: var(--ink-2);
+  margin: 0;
+}
+.suggestion-card-note.err {
+  color: var(--crit);
+}
+
+/* Fieldset/legend: same float trick as the rest of the app uses to stop a fieldset's
+   min-content default (and the legend's native straddle-the-border placement) from
+   forcing the card wider than its column at narrow viewports. */
+.suggestion-card-profiles {
+  min-width: 0;
+  display: flow-root;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.suggestion-card-profiles legend {
+  float: left;
+  width: 100%;
+  padding: 0;
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.suggestion-card-profile-row {
+  clear: both;
+  display: flex;
+  gap: 6px;
+}
+.suggestion-card-profile-row button {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 8px 6px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: center;
+  transition: border-color 0.14s, color 0.14s, background 0.14s;
+}
+.suggestion-card-profile-row button:hover {
+  border-color: var(--ink-2);
+}
+.suggestion-card-profile-row button:focus-visible {
+  outline: 2px solid var(--hue);
+  outline-offset: 1px;
+}
+/* Selected is never colour alone: a heavier border, a filled background, bold text,
+   and the ✓ glyph rendered in the button (SuggestionCard.tsx) all move together. */
+.suggestion-card-profile-row button.is-selected {
+  border: 2px solid var(--hue-deep);
+  padding: 7px 5px;
+  background: var(--hue-soft);
+  color: var(--ink);
+  font-weight: 700;
+}
+.suggestion-card-profile-row button:disabled {
+  opacity: 0.6;
+}
+.suggestion-card-meaning {
+  clear: both;
+  font-size: 12px;
+  color: var(--ink-2);
+  margin: 6px 0 0;
+}
+
+.suggestion-card-body {
+  clear: both;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-2);
+}
+.suggestion-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0 0 4px;
+}
+.suggestion-card-blurb {
+  font-size: 12px;
+  color: var(--ink-2);
+  margin: 0;
+}
+.suggestion-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+}
+/* Exactly one prominent action per card: "See what this buys" is the button; Dismiss
+   is plain text so the pair never reads as two equal calls to action. */
+.suggestion-card-primary {
+  flex: 1;
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--hue);
+  color: #ffffff;
+  transition: background 0.14s;
+}
+.suggestion-card-primary:hover {
+  background: var(--hue-deep);
+}
+.suggestion-card-primary:focus-visible {
+  outline: 2px solid var(--hue);
+  outline-offset: 2px;
+}
+.suggestion-card-primary:disabled {
+  opacity: 0.6;
+}
+.suggestion-card-dismiss {
+  min-height: 44px;
+  padding: 0 4px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink-3);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.suggestion-card-dismiss:hover {
+  color: var(--ink-2);
+}
+.suggestion-card-dismiss:focus-visible {
+  outline: 2px solid var(--hue);
+  outline-offset: 1px;
+}
+.suggestion-card-dismiss:disabled {
+  opacity: 0.6;
+  text-decoration: none;
+}
+.suggestion-card-dismissed {
+  color: var(--ink-2);
+}
+
 .ask-row {
   display: flex;
   gap: 8px;
@@ -1073,10 +1240,37 @@ button[disabled] {
   outline: 2px solid var(--hue);
   outline-offset: 1px;
 }
-.ask-row button {
-  background: var(--btn);
-  color: var(--btn-ink);
+/* Enabled reads as a clear, blue call to action (not the same near-black --btn used
+   for neutral chrome elsewhere) with a leading arrow glyph. Disabled (empty input, or
+   a question in flight) drops both the colour and the arrow's affordance -- flat
+   --surface-2 fill, dimmed text -- so the two states are never told apart by colour
+   alone. */
+.ask-row button.ask-submit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  background: var(--hue);
+  color: #ffffff;
+  border: 1px solid transparent;
   border-radius: 10px;
   padding: 0 16px;
+  font-weight: 600;
+  transition: background 0.14s;
+}
+.ask-row button.ask-submit:hover:not(:disabled) {
+  background: var(--hue-deep);
+}
+.ask-row button.ask-submit:focus-visible {
+  outline: 2px solid var(--hue);
+  outline-offset: 2px;
+}
+.ask-row button.ask-submit:disabled {
+  background: var(--surface-2);
+  color: var(--ink-3);
+  border-color: var(--line);
   font-weight: 500;
+}
+.ask-row button.ask-submit:disabled span {
+  opacity: 0.5;
 }

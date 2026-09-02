@@ -9,14 +9,32 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 export type { SupabaseClient };
 
-const setupHint = "\n  Set it in the repo root .env (see .env.example lines 27-28)";
+const setupHint = "\n  Set it in the repo root .env (see .env.example, Database section)";
 
 function requireSupabaseUrl(): string {
-  const url = process.env.SUPABASE_URL;
-  if (!url) {
+  const raw = process.env.SUPABASE_URL?.trim();
+  if (!raw) {
     throw new Error(`\n  SUPABASE_URL is not set.${setupHint}\n`);
   }
-  return url;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`\n  SUPABASE_URL "${raw}" is not a valid URL.${setupHint}\n`);
+  }
+
+  // Reject rather than silently strip a trailing /rest/v1: createClient() appends
+  // /rest/v1 itself, so a bare project URL is the only correct value. Normalising
+  // here would leave the .env wrong for the next tool that reads it.
+  if (parsed.pathname !== "/" && parsed.pathname !== "") {
+    throw new Error(
+      `\n  SUPABASE_URL "${raw}" has a path ("${parsed.pathname}"), but it must be the bare project URL with no path.\n` +
+        `  The Supabase dashboard's REST endpoint is "${parsed.origin}/rest/v1" -- drop the "/rest/v1" and use "${parsed.origin}" instead.${setupHint}\n`
+    );
+  }
+
+  return raw;
 }
 
 function requireSupabaseServiceRoleKey(): string {

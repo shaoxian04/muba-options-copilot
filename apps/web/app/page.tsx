@@ -64,7 +64,7 @@ export default function Page() {
 
   return (
     <main className="app">
-      <Chat log={s.log} seeds={seeds} busy={s.busy} />
+      <Chat log={s.log} seeds={seeds} busy={s.busy} deal={s.deal} />
 
       <div className="rig">
         <Tape deck={s.deck} horizonDays={s.horizonDays} onHorizon={s.setHorizon} now={now} />

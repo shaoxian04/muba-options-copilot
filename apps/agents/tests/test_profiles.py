@@ -195,6 +195,30 @@ def test_across_profiles_conservative_covers_at_least_as_much_as_balanced_and_ag
 
 
 @pytest.mark.parametrize("name", PROFILE_NAMES)
+def test_every_seed_strategy_has_a_non_empty_summary(name):
+    for strategy in load_profile(name):
+        assert strategy.summary != ""
+
+
+@pytest.mark.parametrize("name", PROFILE_NAMES)
+def test_no_summary_contains_a_digit(name):
+    for strategy in load_profile(name):
+        assert not any(ch.isdigit() for ch in strategy.summary)
+
+
+def test_the_three_calm_band_summaries_are_pairwise_distinct():
+    calm = [next(s for s in load_profile(name) if _band_of(s) == "calm") for name in PROFILE_NAMES]
+    summaries = [s.summary for s in calm]
+    assert len(set(summaries)) == len(summaries)
+
+
+def test_the_three_weak_band_summaries_are_pairwise_distinct():
+    weak = [next(s for s in load_profile(name) if _band_of(s) == "weak") for name in PROFILE_NAMES]
+    summaries = [s.summary for s in weak]
+    assert len(set(summaries)) == len(summaries)
+
+
+@pytest.mark.parametrize("name", PROFILE_NAMES)
 def test_every_bands_horizon_stays_inside_the_tapes_three_dealable_days(name):
     # apps/web/lib/surface.ts types Horizon as 1 | 2 | 3 and the Tape only
     # offers those three -- a Suggestion outside this range can't be dealt.

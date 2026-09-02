@@ -46,6 +46,10 @@ export function strategySchemas<TradeIntentSchema extends ZodTypeAny>(TradeInten
     strategyId: z.string().nullable(),
     strategyName: z.string().nullable(),
     firedAt: isoDatetime.nullable(),
+    // short, non-numeric card line (ADR-0005): authored copy from the fired
+    // strategy's `summary`, never derived from a figure. Bounded like the
+    // other display strings here.
+    coverSummary: z.string().max(200).nullable(),
     intent: TradeIntent.nullable(),
     asOf: z.string().nullable(),
   });
