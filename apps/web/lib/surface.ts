@@ -26,7 +26,9 @@ import {
   practice,
   prepareFill,
   propose,
+  requestAuthChallenge,
   settleFill,
+  verifyAuthChallenge,
   type Board,
   type Card,
   type Deck,
@@ -35,7 +37,7 @@ import {
   type ProposeResult,
   type SessionState,
 } from "./api";
-import { connectWallet as connectInjectedWallet, connectedAddress, sendTx } from "./wallet";
+import { connectWallet as connectInjectedWallet, connectedAddress, sendTx, signMessage } from "./wallet";
 
 /** Trades of 1-2 USDC are normal and expected for this product. */
 export const STAKE_USDC = 2;
@@ -79,8 +81,11 @@ export interface Surface {
 
   walletAddress: string | null;
   walletConnecting: boolean;
+  walletVerified: boolean;
+  walletVerifying: boolean;
   walletError: string | null;
   connectWallet: () => Promise<void>;
+  verifyWallet: () => Promise<void>;
 
   setDirection: (d: Direction) => void;
   setHorizon: (h: Horizon) => void;
@@ -93,6 +98,30 @@ export interface Surface {
 }
 
 const proposalOf = (r: ProposeResult | null) => (r && r.kind === "PROPOSAL" ? r : null);
+
+/**
+ * /fill/settle answers 425 when the chain hasn't shown it the transaction yet -- a
+ * short-lived gap, not a failure. A few quick retries covers ordinary propagation lag
+ * without asking the Trader to do anything.
+ */
+async function settleWithRetry(
+  proposalId: string,
+  txHash: string | undefined,
+  attempts = 3
+): Promise<{ remainingUsdc: number; confirmed: boolean }> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await settleFill(proposalId, txHash);
+    } catch (e) {
+      if (e instanceof ApiRefusal && e.status === 425 && i < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error("unreachable");
+}
 
 /**
  * The Max Loss to show before the Trader has picked anything.
@@ -161,6 +190,8 @@ export function useSurface(): Surface {
 
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [walletConnecting, setWalletConnecting] = useState(false);
+  const [walletVerified, setWalletVerified] = useState(false);
+  const [walletVerifying, setWalletVerifying] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
 
   const say = useCallback((text: string) => setLog((l) => [...l, { who: "copilot", text }]), []);
@@ -177,17 +208,41 @@ export function useSurface(): Surface {
     void connectedAddress().then(setWalletAddress);
   }, []);
 
+  /**
+   * Proves the connected wallet is who it says it is (ADR-0010) -- a text signature,
+   * never a transaction. Separate from `connectWallet` so a Trader whose wallet was
+   * already authorised before this page loaded (`connectedAddress()`, which never
+   * prompts) has a way to complete verification with one press, rather than a dead end.
+   */
+  const verifyWalletFor = useCallback(async (address: string) => {
+    setWalletVerifying(true);
+    setWalletError(null);
+    try {
+      const { message } = await requestAuthChallenge(address);
+      const signature = await signMessage(message);
+      await verifyAuthChallenge(signature);
+      setWalletVerified(true);
+    } catch (e) {
+      setWalletError(e instanceof Error ? e.message : "Could not verify this wallet.");
+    } finally {
+      setWalletVerifying(false);
+    }
+  }, []);
+
   const connectWallet = useCallback(async () => {
     setWalletConnecting(true);
     setWalletError(null);
+    setWalletVerified(false);
     try {
-      setWalletAddress(await connectInjectedWallet());
+      const address = await connectInjectedWallet();
+      setWalletAddress(address);
+      await verifyWalletFor(address);
     } catch (e) {
       setWalletError(e instanceof Error ? e.message : "Could not connect a wallet.");
     } finally {
       setWalletConnecting(false);
     }
-  }, []);
+  }, [verifyWalletFor]);
 
   /**
    * The current proposal, against the Deck as it stands now.
@@ -344,12 +399,12 @@ export function useSurface(): Surface {
     [ask, busy, say]
   );
 
-  /** Spends real USDC, signed by the Trader's own connected wallet (ADR-0009). */
+  /** Spends real USDC, signed by the Trader's own connected AND verified wallet (ADR-0010). */
   const confirm = useCallback(async () => {
     const p = proposalOf(result);
     if (!p || quoteMoved) return;
-    if (!walletAddress) {
-      setRefusal("Connect a wallet first — Confirm needs a signature from your own wallet.");
+    if (!walletAddress || !walletVerified) {
+      setRefusal("Connect and verify your wallet first — Confirm needs a signature from your own wallet.");
       return;
     }
     setBusy(true);
@@ -363,7 +418,7 @@ export function useSurface(): Surface {
       // The wallet has already broadcast and mined this -- the Trader's money has
       // moved. Everything from here is bookkeeping, so a failure to reach
       // /fill/settle must never be caught below and reported as a failed fill.
-      await settleFill(p.proposalId, { succeeded: true, txHash }).catch(() => {});
+      await settleWithRetry(p.proposalId, txHash).catch(() => {});
 
       say(`Bought. ${p.proposal.figures.contracts.display} contracts at ${p.proposal.figures.strike.display}, paid ${p.proposal.figures.premiumUsdc.display}.`);
       clearSelection();
@@ -379,7 +434,7 @@ export function useSurface(): Surface {
       // here too -- not just on the success path -- or a Trader sees a budget that
       // still looks untouched while a reservation sits released behind it.
       if (prepared) {
-        await settleFill(p.proposalId, { succeeded: false }).catch(() => {});
+        await settleWithRetry(p.proposalId, undefined).catch(() => {});
         await refreshMoney();
       }
       if (e instanceof ApiRefusal) setRefusal(e.message);
@@ -387,7 +442,7 @@ export function useSurface(): Surface {
     } finally {
       setBusy(false);
     }
-  }, [result, quoteMoved, walletAddress, say, clearSelection, refreshMoney]);
+  }, [result, quoteMoved, walletAddress, walletVerified, say, clearSelection, refreshMoney]);
 
   /** Opens a simulated Position. A different function, on a different route. */
   const runPractice = useCallback(async () => {
@@ -437,8 +492,11 @@ export function useSurface(): Surface {
     log,
     walletAddress,
     walletConnecting,
+    walletVerified,
+    walletVerifying,
     walletError,
     connectWallet,
+    verifyWallet: () => (walletAddress ? verifyWalletFor(walletAddress) : Promise.resolve()),
     setDirection,
     setHorizon,
     deal,

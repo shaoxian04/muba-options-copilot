@@ -68,8 +68,11 @@ export default function Page() {
         <WalletConnect
           address={s.walletAddress}
           connecting={s.walletConnecting}
+          verified={s.walletVerified}
+          verifying={s.walletVerifying}
           error={s.walletError}
           onConnect={() => void s.connectWallet()}
+          onVerify={() => void s.verifyWallet()}
         />
 
         <Tape deck={s.deck} horizonDays={s.horizonDays} onHorizon={s.setHorizon} now={now} />
@@ -152,7 +155,7 @@ export default function Page() {
               pending={proposal ? proposal.maxLossUsdc : 0}
               gates={agentGate(s.result)}
               canCommit={canCommit}
-              walletConnected={Boolean(s.walletAddress)}
+              walletVerified={s.walletVerified}
               busy={s.busy}
               refusal={s.refusal}
               receipt={s.receipt}

@@ -137,6 +137,22 @@ export const propose = (body: {
     headers: authHeaders(),
   });
 
+/** Step one of proving this wallet is who it says it is (ADR-0010). Signs nothing yet. */
+export const requestAuthChallenge = (walletAddress: string): Promise<{ message: string }> =>
+  call<{ message: string }>("/auth/challenge", {
+    method: "POST",
+    body: JSON.stringify({ walletAddress }),
+    headers: authHeaders(),
+  });
+
+/** Step two: hands over the signature /auth/challenge's message produced. */
+export const verifyAuthChallenge = (signature: string): Promise<{ walletAddress: string }> =>
+  call<{ walletAddress: string }>("/auth/verify", {
+    method: "POST",
+    body: JSON.stringify({ signature }),
+    headers: authHeaders(),
+  });
+
 /** Asks the backend to build the unsigned transaction(s) this fill needs. Signs nothing. */
 export const prepareFill = (proposalId: string, walletAddress: string): Promise<PreparedFill> =>
   call<PreparedFill>("/fill/prepare", {
@@ -145,14 +161,15 @@ export const prepareFill = (proposalId: string, walletAddress: string): Promise<
     headers: authHeaders(),
   });
 
-/** Reports what the Trader's own wallet did, so the Risk Budget reservation can be finalized or released. */
-export const settleFill = (
-  proposalId: string,
-  outcome: { succeeded: boolean; txHash?: string }
-): Promise<{ remainingUsdc: number }> =>
-  call<{ remainingUsdc: number }>("/fill/settle", {
+/**
+ * Reports what happened, so the Risk Budget reservation can be finalized or released.
+ * `txHash` present means the backend checks the chain itself and decides (ADR-0010);
+ * absent means nothing was ever sent, and the reservation is simply released.
+ */
+export const settleFill = (proposalId: string, txHash?: string): Promise<{ remainingUsdc: number; confirmed: boolean }> =>
+  call<{ remainingUsdc: number; confirmed: boolean }>("/fill/settle", {
     method: "POST",
-    body: JSON.stringify({ proposalId, ...outcome }),
+    body: JSON.stringify({ proposalId, txHash }),
     headers: authHeaders(),
   });
 
