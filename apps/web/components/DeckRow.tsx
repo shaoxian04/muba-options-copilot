@@ -28,11 +28,15 @@
 import type { Card, Deck } from "@copilot/shared";
 import { countdown, countdownWords } from "../lib/clock";
 import { depthBarWidths } from "../lib/geometry";
+import { CARD_DRAG_MIME, type DroppedCard } from "../lib/cardQuestion";
 import { Dial } from "./Dial";
 
 function CardTile({
   card,
   direction,
+  asset,
+  assetName,
+  horizonDays,
   selected,
   dealt,
   depthWidth,
@@ -42,6 +46,9 @@ function CardTile({
 }: {
   card: Card;
   direction: Deck["direction"];
+  asset: Deck["asset"];
+  assetName: Deck["assetName"];
+  horizonDays: Deck["horizonDays"];
   selected: boolean;
   dealt: boolean;
   depthWidth: string;
@@ -83,6 +90,24 @@ function CardTile({
         aria-pressed={selected}
         disabled={disabled}
         onClick={onPick}
+        draggable
+        onDragStart={(e) => {
+          // The drop target (Task 4) rebuilds its question from these fields alone --
+          // every value here is already on `card`/`direction` or the Deck props passed
+          // down, never re-derived or formatted anew.
+          const payload: DroppedCard = {
+            underlying: asset,
+            assetName,
+            direction,
+            horizonDays,
+            strikeValue: card.strike.value,
+            strikeDisplay: card.strike.display,
+            impliedChanceDisplay: card.impliedChance.display,
+            perContractDisplay: card.perContractUsd.display,
+          };
+          e.dataTransfer.setData(CARD_DRAG_MIME, JSON.stringify(payload));
+          e.dataTransfer.effectAllowed = "copy";
+        }}
         data-testid="card"
         data-card-ref={card.cardRef}
         data-chance={card.impliedChance.display}
@@ -212,6 +237,9 @@ export function DeckRow({
             key={card.cardRef}
             card={card}
             direction={deck.direction}
+            asset={deck.asset}
+            assetName={deck.assetName}
+            horizonDays={deck.horizonDays}
             selected={card.cardRef === selectedRef}
             dealt={card.cardRef === dealtRef}
             depthWidth={depthWidths[i] ?? "6%"}
