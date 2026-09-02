@@ -27,6 +27,22 @@ export const MarketData = z.object({
 });
 export type MarketData = z.infer<typeof MarketData>;
 
+/**
+ * Indicators from daily candles, computed in apps/agents. Fact, not opinion -- so like
+ * MarketData, these alone never trigger FORECAST_DISCLAIMER. Null means warm-up: a coin
+ * with under 20 candles has no SMA(20) yet.
+ */
+export const Indicators = z.object({
+  symbol: z.string(),
+  close: z.number(),
+  rsi14: z.number().nullable(),
+  sma20: z.number().nullable(),
+  ema20: z.number().nullable(),
+  candleSource: z.enum(["binance", "coinbase"]),
+  asOf: z.string(),
+});
+export type Indicators = z.infer<typeof Indicators>;
+
 export const MarketScenario = z.object({
   symbol: z.string(),
   horizon: z.string(),
@@ -82,7 +98,7 @@ export const HORIZON_MAX_LENGTH = 40;
 export const ChatQueryRequest = z.object({
   coin: z.string(),
   horizon: z.string().max(HORIZON_MAX_LENGTH),
-  analyses: z.array(z.enum(["news", "price", "risk-benefit", "market"])),
+  analyses: z.array(z.enum(["news", "price", "risk-benefit", "market", "indicators"])),
 });
 export type ChatQueryRequest = z.infer<typeof ChatQueryRequest>;
 
@@ -106,6 +122,7 @@ export const CoinAskResult = z.object({
   answer: z.string().optional(),
   disclaimer: z.string().optional(),
   market: MarketData.optional(),
+  indicators: Indicators.optional(),
   news: NewsAnalysis.optional(),
   price: PricePrediction.optional(),
   riskBenefit: RiskBenefitView.optional(),

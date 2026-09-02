@@ -11,6 +11,7 @@ import {
   FORECAST_DISCLAIMER,
   type ChatQueryRequest,
   type ConversationTurn,
+  type Indicators,
   type MarketData,
   type MarketScenario,
   type NewsAnalysis,
@@ -23,6 +24,7 @@ import { fetchMarketData, type MarketDataDeps } from "./marketData.js";
 import { analyzeNews } from "./news.js";
 import { predictPrice } from "./price.js";
 import { assessRiskBenefit } from "./riskBenefit.js";
+import { fetchIndicators } from "./indicators.js";
 import { synthesizeAnswer, type CoinSummary } from "./answer.js";
 import { describeHistory } from "./conversationHistory.js";
 
@@ -63,15 +65,17 @@ export async function extractChatQuery(
   const result = await callAgentForJson(
     ChatQuery,
     'You extract structured information from a question about crypto coins. Output ONLY JSON: ' +
-      '{"requests": [{"coin": string, "horizon": string, "analyses": ("news"|"price"|"risk-benefit"|"market")[]}], ' +
+      '{"requests": [{"coin": string, "horizon": string, "analyses": ("news"|"price"|"risk-benefit"|"market"|"indicators")[]}], ' +
       '"isComparison": boolean}. Produce one request object per distinct coin symbol or name mentioned in the ' +
       "question -- if none is named, use an empty requests array, never guess one. Each request's \"horizon\" is " +
       "the timeframe mentioned for THAT coin, in the question's own words -- if none is mentioned for it, use an " +
       "empty string, never guess one; not every question needs one. Each request's \"analyses\" is which of " +
-      'news/price/risk-benefit/market THAT coin\'s part of the question is actually asking for: use "market" for ' +
+      'news/price/risk-benefit/market/indicators THAT coin\'s part of the question is actually asking for: use "market" for ' +
       'real current price/volume/stats with no speculation, "news" for a sentiment/news question, "price" only ' +
-      'for a forward-looking price question, "risk-benefit" only for an upside/downside question -- include only ' +
-      "the categories that coin's part of the question actually calls for, or all four if genuinely unclear. Set " +
+      'for a forward-looking price question, "risk-benefit" only for an upside/downside question, "indicators" ' +
+      'only for a technical/momentum question (RSI, moving averages, overbought, oversold, trend) -- include only ' +
+      "the categories that coin's part of the question actually calls for, or all of " +
+      "news/price/risk-benefit/market if genuinely unclear. Set " +
       '"isComparison" to true only when the question asks to compare, rank, or determine which of several named ' +
       "coins is stronger/better/preferred against the others -- not merely because it names more than one coin. " +
       "If recent conversation history is provided above the current question, use it only to fill in a coin, " +
@@ -101,14 +105,18 @@ export async function extractChatQuery(
 interface GatheredCoin {
   symbol: string;
   market: MarketData;
+  indicators?: Indicators;
   news?: NewsAnalysis;
   price?: PricePrediction;
   riskBenefit?: RiskBenefitView;
 }
 
+/** Injected so the suite stays network-free, the same way marketData already is. */
+export type FetchIndicatorsFn = (symbol: string) => Promise<Indicators>;
+
 async function gatherCoinData(
   request: ChatQueryRequest,
-  deps?: { create?: AgentCreateFn; marketData?: MarketDataDeps }
+  deps?: { create?: AgentCreateFn; marketData?: MarketDataDeps; indicators?: FetchIndicatorsFn }
 ): Promise<GatheredCoin> {
   const needsScenario =
     request.analyses.includes("news") || request.analyses.includes("price") || request.analyses.includes("risk-benefit");
@@ -123,8 +131,19 @@ async function gatherCoinData(
   }
 
   const gathered: GatheredCoin = { symbol: marketData.symbol, market: marketData };
+
+  
+  if (request.analyses.includes("indicators") || request.analyses.includes("price")) {
+    try {
+      gathered.indicators = await (deps?.indicators ?? fetchIndicators)(marketData.symbol);
+    } catch {
+      /* no indicators for this coin right now */
+    }
+  }
+
   if (request.analyses.includes("news") && scenario) gathered.news = await analyzeNews(scenario, deps?.create);
-  if (request.analyses.includes("price") && scenario) gathered.price = await predictPrice(scenario, deps?.create);
+  if (request.analyses.includes("price") && scenario)
+    gathered.price = await predictPrice(scenario, deps?.create, gathered.indicators);
   if (request.analyses.includes("risk-benefit") && scenario)
     gathered.riskBenefit = await assessRiskBenefit(scenario, deps?.create);
 
@@ -135,7 +154,12 @@ type Settled = { ok: true; data: GatheredCoin } | { ok: false; symbol: string; e
 
 export async function answerQuestion(
   question: string,
-  deps?: { create?: AgentCreateFn; marketData?: MarketDataDeps; history?: ConversationTurn[] }
+  deps?: {
+    create?: AgentCreateFn;
+    marketData?: MarketDataDeps;
+    history?: ConversationTurn[];
+    indicators?: FetchIndicatorsFn;
+  }
 ): Promise<Record<string, CoinAskResult>> {
   const history = deps?.history ?? [];
   const query = await extractChatQuery(question, deps?.create, history);
@@ -160,7 +184,14 @@ export async function answerQuestion(
         const otherCoins: CoinSummary[] | undefined = query.isComparison
           ? successful
               .filter((c) => c.symbol !== s.data.symbol)
-              .map((c) => ({ symbol: c.symbol, market: c.market, news: c.news, price: c.price, riskBenefit: c.riskBenefit }))
+              .map((c) => ({
+                symbol: c.symbol,
+                market: c.market,
+                indicators: c.indicators,
+                news: c.news,
+                price: c.price,
+                riskBenefit: c.riskBenefit,
+              }))
           : undefined;
 
         const answer = await synthesizeAnswer(
@@ -168,6 +199,7 @@ export async function answerQuestion(
           s.data.symbol,
           {
             market: s.data.market,
+            indicators: s.data.indicators,
             news: s.data.news,
             price: s.data.price,
             riskBenefit: s.data.riskBenefit,
@@ -178,6 +210,8 @@ export async function answerQuestion(
         );
 
         const result: CoinAskResult = { symbol: s.data.symbol, market: s.data.market, answer };
+        // Fact, like market -- carried without triggering the disclaimer below.
+        if (s.data.indicators) result.indicators = s.data.indicators;
         if (s.data.news) result.news = s.data.news;
         if (s.data.price) result.price = s.data.price;
         if (s.data.riskBenefit) result.riskBenefit = s.data.riskBenefit;

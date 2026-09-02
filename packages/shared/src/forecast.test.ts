@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   Headline,
   MarketData,
+  Indicators,
   MarketScenario,
   NewsAnalysis,
   PricePrediction,
@@ -254,4 +255,52 @@ test("ConversationTurn accepts a coins array of exactly 10 entries", () => {
     coins: Array.from({ length: 10 }, (_, i) => ({ symbol: `C${i}`, answer: "fine" })),
   });
   assert.equal(result.success, true);
+});
+
+const validIndicators = {
+  symbol: "ETH",
+  close: 2450.12,
+  rsi14: 28.4,
+  sma20: 2500.5,
+  ema20: 2480.1,
+  candleSource: "binance",
+  asOf: new Date().toISOString(),
+};
+
+test("Indicators accepts a valid object", () => {
+  assert.equal(Indicators.safeParse(validIndicators).success, true);
+});
+
+test("Indicators accepts nulls for a symbol still inside its warm-up window", () => {
+  const result = Indicators.safeParse({ ...validIndicators, rsi14: null, sma20: null, ema20: null });
+  assert.equal(result.success, true);
+});
+
+test("Indicators requires close -- a candle series always has a last price", () => {
+  const { close, ...withoutClose } = validIndicators;
+  assert.equal(Indicators.safeParse(withoutClose).success, false);
+});
+
+test("Indicators rejects an unknown candleSource", () => {
+  assert.equal(Indicators.safeParse({ ...validIndicators, candleSource: "kraken" }).success, false);
+});
+
+test("ChatQuery accepts the 'indicators' analysis category", () => {
+  const result = ChatQuery.safeParse({
+    requests: [{ coin: "ETH", horizon: "", analyses: ["indicators"] }],
+    isComparison: false,
+  });
+  assert.equal(result.success, true);
+});
+
+test("CoinAskResult carries indicators without needing any opinion block", () => {
+  const result = CoinAskResult.safeParse({
+    symbol: "ETH",
+    answer: "ETH's RSI(14) is 28.4, which is below the usual oversold line of 30.",
+    market: validMarketData,
+    indicators: validIndicators,
+  });
+  assert.equal(result.success, true);
+  // No disclaimer: indicators are arithmetic over public price history, not opinion.
+  assert.equal(result.success && result.data.disclaimer, undefined);
 });
