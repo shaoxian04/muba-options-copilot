@@ -199,6 +199,42 @@ describe("/fill/prepare has no practice flag", () => {
   });
 });
 
+describe("the onOpened callback", () => {
+  it("is called with the position once a Practice Run opens", async () => {
+    const onOpened = vi.fn();
+    const Fastify = (await import("fastify")).default;
+    const { practiceRoutes } = await import("../practice.js");
+    const appWithCallback = Fastify();
+    await appWithCallback.register(practiceRoutes, { onOpened });
+
+    const session = freshSession();
+    const proposalId = await proposalIn(session);
+
+    await appWithCallback.inject({
+      method: "POST", url: "/practice", headers: { "x-session-id": session }, payload: { proposalId },
+    });
+
+    expect(onOpened).toHaveBeenCalledTimes(1);
+    const [position] = onOpened.mock.calls[0]!;
+    expect(position.asset).toBeDefined();
+  });
+
+  it("is never called when opening fails (an expired proposal)", async () => {
+    const onOpened = vi.fn();
+    const Fastify = (await import("fastify")).default;
+    const { practiceRoutes } = await import("../practice.js");
+    const appWithCallback = Fastify();
+    await appWithCallback.register(practiceRoutes, { onOpened });
+
+    await appWithCallback.inject({
+      method: "POST", url: "/practice", headers: { "x-session-id": freshSession() },
+      payload: { proposalId: "00000000-0000-0000-0000-000000000000" },
+    });
+
+    expect(onOpened).not.toHaveBeenCalled();
+  });
+});
+
 describe("/practice has no signer in reach", () => {
   /** Every module `entry` can reach, following relative imports. */
   function importClosure(entry: string): Set<string> {
