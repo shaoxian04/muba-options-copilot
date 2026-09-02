@@ -365,6 +365,38 @@ test.describe("finishing, for real and for practice", () => {
     await expect(page.getByTestId("connect-wallet")).toHaveCount(0);
   });
 
+  test("offers a Verify button when a wallet was already authorised before this page loaded", async ({ page }) => {
+    // installFakeWallet pre-authorises eth_accounts, simulating a wallet the browser
+    // already trusted from a previous visit -- connectedAddress() picks this up on
+    // mount without prompting, but verification is a fresh signature every page load.
+    await stubApi(page);
+    await installFakeWallet(page, { preAuthorised: true });
+    await page.goto("/");
+
+    await expect(page.getByTestId("wallet-address")).toHaveCount(0);
+    const verify = page.getByTestId("verify-wallet");
+    await expect(verify).toBeVisible();
+    await verify.click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+  });
+
+  test("recovers from a transaction the chain hasn't shown it yet", async ({ page }) => {
+    const traffic = await stubApi(page, "settle-pending-once");
+    await installFakeWallet(page);
+    await page.goto("/");
+    // The retry delay is a real setTimeout in confirm() -- let the page's clock run
+    // instead of the frozen one stubApi installs for the countdown timers, the same
+    // fix needed for the wallet-signing flow itself.
+    await page.clock.resume();
+    await connectWallet(page);
+    await deal(page);
+
+    await page.getByTestId("confirm").click();
+
+    await expect(page.getByTestId("receipt")).toBeVisible({ timeout: 10_000 });
+    await expect.poll(() => traffic.paths().filter((p) => p === "/fill/settle").length).toBe(2);
+  });
+
   test("hands the Trader the transaction once real money has moved", async ({ page }) => {
     await stubApi(page);
     await installFakeWallet(page);
@@ -415,7 +447,7 @@ test.describe("finishing, for real and for practice", () => {
     await expect(page.getByTestId("refusal")).toBeVisible();
     await expect.poll(() => traffic.paths().filter((p) => p === "/fill/settle").length).toBe(1);
     const settleBody = traffic.all.find((r) => new URL(r.url()).pathname === "/fill/settle")!.postDataJSON();
-    expect(settleBody.succeeded).toBe(false);
+    expect(settleBody.txHash).toBeUndefined(); // nothing to check -- the send itself never returned a hash
 
     // The reservation was released -- the Risk Budget reads the same as before Confirm.
     await expect(page.getByTestId("risk-remaining")).toHaveText(before!);
@@ -605,16 +637,23 @@ test.describe("the golden path", () => {
 
     // Every response EXCEPT /fill/prepare's own -- which legitimately carries the real
     // transaction calldata the Trader's own wallet has to see to sign it (ADR-0009) --
-    // still carries none of this. /fill/prepare's body is deliberately not exempted
-    // from having been fetched; it is exempted from the FORBIDDEN scan alone.
-    const prepareIndex = traffic.all.findIndex((r) => new URL(r.url()).pathname === "/fill/prepare");
-    expect(prepareIndex).toBeGreaterThanOrEqual(0);
+    // still carries none of this. /auth/challenge and /auth/verify are exempted too,
+    // for a different, narrower reason: they legitimately echo the TRADER'S OWN wallet
+    // address back (proving sign-in, not naming an Order), which happens to be the same
+    // 40-hex-character shape FORBIDDEN's generic address pattern watches for. None of
+    // these three are exempted from having been fetched -- only from the scan itself.
+    const exemptPaths = new Set(["/fill/prepare", "/auth/challenge", "/auth/verify"]);
+    const exemptIndexes = new Set(
+      traffic.all.flatMap((r, i) => (exemptPaths.has(new URL(r.url()).pathname) ? [i] : []))
+    );
+    expect(exemptIndexes.size).toBeGreaterThanOrEqual(3);
     for (const [i, body] of traffic.bodies.entries()) {
-      if (i === prepareIndex) continue;
+      if (exemptIndexes.has(i)) continue;
       for (const forbidden of FORBIDDEN) expect(body).not.toMatch(forbidden);
     }
     // And /fill/prepare's body is exactly the fixture the real API produced -- not a
     // hand-widened stub standing in for a contract nobody checked.
+    const prepareIndex = traffic.all.findIndex((r) => new URL(r.url()).pathname === "/fill/prepare");
     expect(traffic.bodies[prepareIndex]).toBe(JSON.stringify(fixtures.fillPrepare));
   });
 
