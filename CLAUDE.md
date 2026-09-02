@@ -25,9 +25,10 @@ separate Python service (`apps/agents`, `npm run agents`) that serves the Strate
 indicator and Suggestion halves over loopback HTTP (`GET /indicators`, `GET /suggest`); the
 Node backend fronts those with five routes over two Supabase tables (`GET|PUT /risk-profile`,
 `GET /suggestion`, `POST /decisions`, `GET /decisions/stats`) — the Trade Agent still has no
-HTTP surface, the Review Agent is stubbed as always-agreeing, and no frontend surface calls the
-new routes yet; the surface's only way to ask for a proposal is still the seed prompts on the
-left. Cover has a glossary and an ADR but no code.
+HTTP surface, and the Review Agent is stubbed as always-agreeing. The Insights tab now carries a
+Risk Profile picker and the Suggestion it drives (`SuggestionCard.tsx`); accepting one deals a
+Deck, but the Trade tab's only way to ask for a proposal directly is still the seed prompts on
+the left. Cover has a glossary and an ADR but no code.
 
 **The book is multi-asset** (issues #23-#27): six Underlyings — BTC, ETH, SOL, BNB, XRP,
 AVAX — keyed by Chainlink **price feed**, never by underlying token (four of them are

@@ -78,6 +78,10 @@ evaluating another asset's RSI and handing back an ETH TradeIntent would be quie
 any other symbol 404s rather than being coerced. `profile` must be one of `PROFILE_NAMES`
 (`conservative`, `balanced`, `aggressive`).
 
+The browser never calls this route directly. It calls the Node backend's `GET /suggestion`,
+which fronts this one and supplies `profile` from the caller's saved Risk Profile row rather
+than a query parameter.
+
 Status codes:
 - `200` -- a `Suggest` body. `intent` (and `strategyId`/`strategyName`/`firedAt`) are `null`
   if nothing fired.

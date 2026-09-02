@@ -33,8 +33,21 @@
   --line-2: #e6ebf0;
   --ink: #111820;
   --ink-2: #4c5a69;
-  --ink-3: #7c8b9a;
-  --hue: #2a78d6;
+  /*
+    Both darkened until they clear 4.5:1 against the page ground, the same bar --good
+    and friends below were held to. The originals measured 3.19 and 4.42, and axe
+    flagged every muted line and the primary button the first time a browser test
+    actually opened the Insights tab.
+  */
+  --ink-3: #5e6c79;
+  --hue: #2470cc;
+  /*
+    Text painted ON --hue. This flips per theme instead of --hue itself, because in
+    dark --hue and --call are deliberately the same blue -- darkening it to clear
+    4.5:1 under white text would drag call/put along with it. White measures 3.64 on
+    dark's blue and fails; near-black measures 5.17 and passes.
+  */
+  --hue-ink: #ffffff;
   --hue-soft: #dceafa;
   --hue-deep: #1c5cab;
   /*
@@ -81,6 +94,7 @@
     --ink-2: #a2b1bf;
     --ink-3: #8497a6;
     --hue: #3987e5;
+    --hue-ink: #0c1218;
     --hue-soft: #14304f;
     --hue-deep: #86b6ef;
     --call: #3987e5;
@@ -116,6 +130,7 @@
   --ink-2: #a2b1bf;
   --ink-3: #8497a6;
   --hue: #3987e5;
+  --hue-ink: #0c1218;
   --hue-soft: #14304f;
   --hue-deep: #86b6ef;
   --call: #3987e5;
@@ -2002,7 +2017,7 @@ button[disabled] {
   font-size: 13px;
   font-weight: 600;
   background: var(--hue);
-  color: #ffffff;
+  color: var(--hue-ink);
   transition: background 0.14s;
 }
 .suggestion-card-primary:hover {
@@ -2069,7 +2084,7 @@ button[disabled] {
   gap: 6px;
   min-height: 44px;
   background: var(--hue);
-  color: #ffffff;
+  color: var(--hue-ink);
   border: 1px solid transparent;
   border-radius: 10px;
   padding: 0 16px;
