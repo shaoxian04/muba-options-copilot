@@ -36,7 +36,7 @@ beforeEach(async () => {
 });
 
 const deck = async (query = "direction=DOWN&horizonDays=1&sizeUsdc=2", id = session()) =>
-  (await app.inject({ method: "GET", url: `/deck?${query}`, headers: { "x-session-id": id } })).json();
+  (await app.inject({ method: "GET", url: `/deck?asset=ETH&${query}`, headers: { "x-session-id": id } })).json();
 
 const propose = async (id = session(), body: Record<string, unknown> = {}) =>
   (

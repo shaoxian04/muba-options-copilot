@@ -2,7 +2,7 @@
  * Issue #10 -- the Implied Chance ramp, measured rather than admired.
  *
  * The parent spec rejected red/green for gain and loss on a number: the pair separates
- * by dE 3.1 under deuteranopia, against a threshold of 8. Nothing was holding the
+ * by dE 5.5 under deuteranopia, against a threshold of 8. Nothing was holding the
  * replacement to the same bar, and the first thing this test did when it was written
  * was fail -- the original translucent fill separated by dE 2.2, worse than the palette
  * that had been rejected. The ramp and the Card's structure were both changed to pass.
@@ -10,6 +10,11 @@
  * It reads `globals.css` rather than a copy of the values, so editing the palette runs
  * the measurement. A ramp that stops being distinguishable is a failing test, not a
  * regression someone notices in a demo.
+ *
+ * Issue #26 brought the call/put pair under the same bar. That pair is the first thing
+ * on the surface rendered as colour ALONE -- the rail's split bar has no text on it --
+ * so it is the one place where failing this measurement means information is simply
+ * gone rather than merely harder to read.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -43,6 +48,10 @@ interface Theme {
   tintA: number;
   /** Every colour that text is actually painted in on a Card. */
   inks: RGB[];
+  /** The call/put pair, and the two grounds it is painted on. */
+  call: RGB;
+  put: RGB;
+  ground: RGB;
 }
 
 const themes: Theme[] = (["light", "dark"] as const).map((name) => ({
@@ -51,6 +60,9 @@ const themes: Theme[] = (["light", "dark"] as const).map((name) => ({
   surface: parseHex(token("surface", name)),
   tintA: Number(token("tintA", name)),
   inks: [parseHex(token("ink", name)), parseHex(token("ink-2", name))],
+  call: parseHex(token("call", name)),
+  put: parseHex(token("put", name)),
+  ground: parseHex(token("ground", name)),
 }));
 
 describe.each(themes)("the Implied Chance ramp ($name)", (theme) => {
@@ -105,6 +117,40 @@ describe.each(themes)("the Implied Chance ramp ($name)", (theme) => {
         const ratio = contrast(ink, tinted);
         expect(ratio, `text on the step-${i} tint is only ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(MIN_CONTRAST);
       }
+    }
+  });
+});
+
+describe.each(themes)("call and put ($name)", (theme) => {
+  it.each(["deuteranopia", "protanopia"] as const)("separate from each other under %s", (cvd) => {
+    // The bar red/green was held to and failed. Blue/orange clears it by a wide margin:
+    // 67.0 under deuteranopia and 59.5 under protanopia on the dark pair, which is why
+    // it was chosen over five other candidates rather than for looking nicer.
+    const seen = deltaE(simulate(theme.call, cvd), simulate(theme.put, cvd));
+    expect(seen, `call and put are ${seen.toFixed(1)} apart under ${cvd}`).toBeGreaterThanOrEqual(MIN_DELTA_E);
+  });
+
+  it("separates for a viewer with typical colour vision too", () => {
+    expect(deltaE(theme.call, theme.put)).toBeGreaterThanOrEqual(MIN_DELTA_E);
+  });
+
+  it.each(["ground", "surface"] as const)("clears WCAG AA against the %s", (where) => {
+    // The split bar on the rail carries no text, so this is not about legible labels --
+    // it is about the bar being visible at all as something other than the background.
+    const behind = where === "ground" ? theme.ground : theme.surface;
+    for (const [what, colour] of [["call", theme.call], ["put", theme.put]] as const) {
+      const ratio = contrast(colour, behind);
+      expect(ratio, `${what} on the ${where} is only ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(MIN_CONTRAST);
+    }
+  });
+
+  it("is not red and green wearing other names", () => {
+    // A cheap structural check beside the expensive perceptual one. Red/green passes a
+    // naive "are these different colours" test easily; what it fails is the simulation
+    // above. This catches the other direction -- someone reintroducing the hues.
+    for (const [what, [r, g, b]] of [["call", theme.call], ["put", theme.put]] as const) {
+      const green = g > r && g > b;
+      expect(green, `${what} is a green`).toBe(false);
     }
   });
 });

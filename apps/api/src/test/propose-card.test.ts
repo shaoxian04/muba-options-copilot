@@ -34,7 +34,7 @@ beforeEach(async () => {
 });
 
 const deck = async (session: string, query = "direction=DOWN&horizonDays=1&sizeUsdc=2") =>
-  (await app.inject({ method: "GET", url: `/deck?${query}`, headers: { "x-session-id": session } })).json();
+  (await app.inject({ method: "GET", url: `/deck?asset=ETH&${query}`, headers: { "x-session-id": session } })).json();
 
 const propose = (session: string, body: Record<string, unknown>) =>
   app.inject({ method: "POST", url: "/propose", headers: { "x-session-id": session }, payload: body });
@@ -190,7 +190,7 @@ describe("POST /propose with a cardRef", () => {
       const rises = (
         await app.inject({
           method: "GET",
-          url: "/deck?direction=UP&horizonDays=1&sizeUsdc=2",
+          url: "/deck?asset=ETH&direction=UP&horizonDays=1&sizeUsdc=2",
           headers: { "x-session-id": session },
         })
       ).json();
@@ -216,7 +216,7 @@ describe("POST /propose with a cardRef", () => {
       const twoDay = (
         await app.inject({
           method: "GET",
-          url: "/deck?direction=DOWN&horizonDays=2&sizeUsdc=2",
+          url: "/deck?asset=ETH&direction=DOWN&horizonDays=2&sizeUsdc=2",
           headers: { "x-session-id": session },
         })
       ).json();
@@ -233,7 +233,7 @@ describe("POST /propose with a cardRef", () => {
       const far = (
         await app.inject({
           method: "GET",
-          url: "/deck?direction=DOWN&horizonDays=3&sizeUsdc=2",
+          url: "/deck?asset=ETH&direction=DOWN&horizonDays=3&sizeUsdc=2",
           headers: { "x-session-id": session },
         })
       ).json();
