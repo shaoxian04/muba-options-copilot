@@ -48,6 +48,7 @@ export default function Page() {
       <div className="rig">
         <AccountControl
           account={s.account}
+          onSignOut={s.signOut}
           walletAddress={s.walletAddress}
           connecting={s.walletConnecting}
           verified={s.walletVerified}

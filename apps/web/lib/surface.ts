@@ -247,7 +247,8 @@ export interface Surface {
   log: ChatLine[];
 
   /** The signed-in account, if any (ADR-0013). Null means: browsing anonymously. */
-  account: { userId: string; email: string } | null;
+  account: { userId: string; email: string; avatarUrl: string | null } | null;
+  signOut: () => void;
   walletAddress: string | null;
   walletConnecting: boolean;
   walletVerified: boolean;
@@ -457,23 +458,58 @@ export function useSurface(): Surface {
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<ChatLine[]>([]);
 
-  const [account, setAccount] = useState<{ userId: string; email: string } | null>(null);
+  const [account, setAccount] = useState<{ userId: string; email: string; avatarUrl: string | null } | null>(
+    null
+  );
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [walletConnecting, setWalletConnecting] = useState(false);
   const [walletVerified, setWalletVerified] = useState(false);
   const [walletVerifying, setWalletVerifying] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
 
+  /**
+   * Google puts the profile photo under `avatar_url` in Supabase's normalized
+   * `user_metadata` -- `picture` is the raw OAuth claim some providers use instead,
+   * kept as a fallback rather than assumed absent. Email/password sign-in has neither,
+   * which is exactly when `AccountControl` falls back to an initial.
+   */
+  const accountFrom = (session: { user: { id: string; email?: string; user_metadata?: Record<string, unknown> } }) => ({
+    userId: session.user.id,
+    email: session.user.email ?? "",
+    avatarUrl: (session.user.user_metadata?.avatar_url as string) ?? (session.user.user_metadata?.picture as string) ?? null,
+  });
+
+  /*
+   * A Google/magic-link/email-confirmation redirect lands back here with the raw
+   * session in the URL's hash fragment (`#access_token=...`) -- Supabase's client
+   * reads it into `getSession()`/`onAuthStateChange` and is supposed to strip it
+   * itself, but that cleanup can lag a paint behind. Stripping it explicitly, the
+   * moment a session is confirmed, means it never lingers in the address bar, browser
+   * history, or a screen share -- the fragment is never sent to any server either
+   * way, but "never visible longer than necessary" is the safer bar to hold.
+   */
+  const scrubTokenFromUrl = () => {
+    if (window.location.hash.includes("access_token")) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+  };
+
   // Picks up an existing sign-in on first paint, then reacts to every sign-in/sign-out
   // from then on -- including the redirect back from /login (ADR-0013).
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) setAccount({ userId: data.session.user.id, email: data.session.user.email ?? "" });
+      if (data.session) setAccount(accountFrom(data.session));
+      scrubTokenFromUrl();
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setAccount(session ? { userId: session.user.id, email: session.user.email ?? "" } : null);
+      setAccount(session ? accountFrom(session) : null);
+      scrubTokenFromUrl();
     });
     return () => sub.subscription.unsubscribe();
+  }, []);
+
+  const signOut = useCallback(() => {
+    void supabase.auth.signOut();
   }, []);
 
   const say = useCallback((text: string) => setLog((l) => [...l, { who: "copilot", text }]), []);
@@ -1072,6 +1108,7 @@ export function useSurface(): Surface {
     busy,
     log,
     account,
+    signOut,
     walletAddress,
     walletConnecting,
     walletVerified,
