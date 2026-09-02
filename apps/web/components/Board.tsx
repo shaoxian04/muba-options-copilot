@@ -54,7 +54,23 @@ function HoldingCard({ holding, now }: { holding: Holding; now: number }) {
   );
 }
 
-export function Board({ holdings, now }: { holdings: Holding[]; now: number }) {
+export function Board({ holdings, now, loading }: { holdings: Holding[]; now: number; loading: boolean }) {
+  /*
+   * Issue #32: `loading` and "nothing open" are different states, and a board that drew
+   * the same sentence for both would tell a Trader who has real Positions that they
+   * hold nothing, for as long as `GET /positions` takes to answer. `boardLoading` in
+   * `lib/surface.ts` is a one-time first-read flag -- it never re-arms on a later
+   * refresh, so a Fill or a Practice Run updates these rows in place, not through this
+   * message.
+   */
+  if (loading) {
+    return (
+      <p className="loading" role="status" data-testid="board-loading">
+        Reading what you hold…
+      </p>
+    );
+  }
+
   if (!holdings.length) {
     return (
       <p className="emptyb" data-testid="board-empty">

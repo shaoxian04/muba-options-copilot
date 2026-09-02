@@ -1,4 +1,6 @@
 {
+  "asset": "ETH",
+  "assetName": "Ethereum",
   "direction": "DOWN",
   "horizonDays": 1,
   "sizeUsdc": 2,
@@ -6,6 +8,20 @@
     "value": 2445.49,
     "display": "$2,445.49"
   },
+  "expiries": [
+    {
+      "horizonDays": 1,
+      "label": "1d",
+      "cards": 3,
+      "live": true
+    },
+    {
+      "horizonDays": 2,
+      "label": "2d",
+      "cards": 1,
+      "live": true
+    }
+  ],
   "expiry": {
     "value": 1768550400000,
     "display": "16 Jan, 08:00 UTC"
@@ -16,6 +32,14 @@
       "strike": {
         "value": 2360,
         "display": "$2,360.00"
+      },
+      "distance": {
+        "needed": {
+          "value": 0.03495822923013375,
+          "display": "3.5%"
+        },
+        "alreadyPast": false,
+        "sentence": "must fall 3.5%"
       },
       "perContractUsd": {
         "value": 2.08,
@@ -47,6 +71,15 @@
         "value": 500,
         "display": "$500.00"
       },
+      "depthUsdc": {
+        "value": 500,
+        "display": "$500"
+      },
+      "depthOrders": {
+        "value": 1,
+        "display": "1"
+      },
+      "heldCount": null,
       "expiry": {
         "value": 1768550400000,
         "display": "16 Jan, 08:00 UTC"
@@ -58,6 +91,14 @@
       "strike": {
         "value": 2400,
         "display": "$2,400.00"
+      },
+      "distance": {
+        "needed": {
+          "value": 0.018601589047593646,
+          "display": "1.9%"
+        },
+        "alreadyPast": false,
+        "sentence": "must fall 1.9%"
       },
       "perContractUsd": {
         "value": 4.15,
@@ -89,6 +130,15 @@
         "value": 500,
         "display": "$500.00"
       },
+      "depthUsdc": {
+        "value": 500,
+        "display": "$500"
+      },
+      "depthOrders": {
+        "value": 1,
+        "display": "1"
+      },
+      "heldCount": null,
       "expiry": {
         "value": 1768550400000,
         "display": "16 Jan, 08:00 UTC"
@@ -100,6 +150,14 @@
       "strike": {
         "value": 2440,
         "display": "$2,440.00"
+      },
+      "distance": {
+        "needed": {
+          "value": 0.00224494886505354,
+          "display": "0.2%"
+        },
+        "alreadyPast": false,
+        "sentence": "must fall 0.2%"
       },
       "perContractUsd": {
         "value": 9.8,
@@ -131,6 +189,15 @@
         "value": 500,
         "display": "$500.00"
       },
+      "depthUsdc": {
+        "value": 500,
+        "display": "$500"
+      },
+      "depthOrders": {
+        "value": 1,
+        "display": "1"
+      },
+      "heldCount": null,
       "expiry": {
         "value": 1768550400000,
         "display": "16 Jan, 08:00 UTC"

@@ -177,10 +177,14 @@ export function SuggestionCard({
       // Accept must never spend. This only records the Trader's intent and deals a
       // fresh Deck from it -- a Card still has to be picked and Confirm still has to
       // be pressed before any signature happens (ADR-0008).
+      // All four fields, never a subset: the book is multi-asset now, and a Suggestion
+      // made on ETH dealt against whichever Underlying the rail has selected is a trade
+      // nobody suggested.
       await deal(undefined, {
+        underlying: intent.underlying,
         direction: intent.direction,
         sizeUsdc: intent.sizeUsdc,
-        horizonDays: intent.horizonDays as TradeIntent["horizonDays"],
+        horizonDays: intent.horizonDays,
       });
       onAccepted();
     } catch {
