@@ -322,3 +322,12 @@ export const RouterResult = z.discriminatedUnion("kind", [
 export type RouterResult = z.infer<typeof RouterResult>;
 
 export * from "./forecast.js";
+
+import { strategySchemas, RiskProfileName, RiskProfileResponse, DecisionStatsResponse } from "./strategy.js";
+export { RiskProfileName, RiskProfileResponse, DecisionStatsResponse };
+
+// Built here, not in strategy.ts, so TradeIntent is reused (never redeclared) without
+// a circular import back into this file -- see the comment on strategySchemas.
+export const { SuggestionResponse, DecisionRequest } = strategySchemas(TradeIntent);
+export type SuggestionResponse = z.infer<typeof SuggestionResponse>;
+export type DecisionRequest = z.infer<typeof DecisionRequest>;

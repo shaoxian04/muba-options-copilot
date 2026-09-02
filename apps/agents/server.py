@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict
 
 from strategy.candles import fetch_daily_candles_with_source
 from strategy.indicators import ema, rsi, sma
-from strategy.profiles import PROFILE_NAMES, load_profile
+from strategy.profiles import PROFILE_NAMES, CorruptProfileError, load_profile
 from strategy.suggest import StrategyEvaluationError, suggestions_for
 
 # The six Thetanuts majors, matching apps/api/src/forecast/marketData.ts. Anything
@@ -163,7 +163,12 @@ def suggest(
     except Exception as e:  # noqa: BLE001 - both exchange failures are named inside
         raise HTTPException(502, str(e)) from e
 
-    fired, errors = suggestions_for(_SEED_OWNER, _SeedProfileStore(profile), candles)
+    try:
+        fired, errors = suggestions_for(_SEED_OWNER, _SeedProfileStore(profile), candles)
+    except CorruptProfileError as e:
+        # a broken seed file shipped in our own repo, not a bad Trader input --
+        # 500, same as the multi-fire case below, not a 400/404
+        raise HTTPException(500, f"seed profile {profile!r} is corrupt: {e}") from e
     if errors:
         names = ", ".join(f"{e.strategy_name} ({e.error})" for e in errors)
         raise HTTPException(502, f"could not evaluate: {names}")

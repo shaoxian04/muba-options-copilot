@@ -23,6 +23,12 @@ Trading needs nothing else. The Forecast routes additionally need at least one o
 each falling through when its key is absent or its call fails. Without any of them the
 rest of the app runs exactly as before; only `/forecast/*` refuses.
 
+The Risk Profile / Suggestion / Decision routes need `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` — already present, empty, in `.env.example`. Without them those
+five routes 502. The schema for the two tables they use (`risk_profiles`, `decisions`) lives
+in `supabase/migrations/` and must be applied to a fresh Supabase project before those
+routes work.
+
 ```bash
 npm run wallet -- new          # generate a disposable wallet; fund it ON BASE
 npm run wallet                 # check it received USDC (to trade) and ETH (for gas)
@@ -70,6 +76,11 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 | `GET /forecast/news` | no | simulated-headline sentiment for `?symbol=&horizon=`. Opinion, quarantined from the trade flow (ADR-0005) |
 | `GET /forecast/price` | no | a price prediction grounded in real market data. Opinion, never a trade input |
 | `GET /forecast/risk-benefit` | no | the risk/benefit reading, with a runtime guardrail against Max Loss phrasing |
+| `GET /risk-profile` | no | the caller's saved Risk Profile, or `null` if none is set yet. Needs `x-copilot-owner` |
+| `PUT /risk-profile` | no | saves conservative/balanced/aggressive for the caller. Needs `x-copilot-owner` |
+| `GET /suggestion` | no | an ETH Suggestion from the Strategy Agent for the caller's saved profile. Needs `x-copilot-owner`; `null` fields if no profile is saved yet |
+| `POST /decisions` | no | records ACCEPTED/DISMISSED for a Suggestion the caller was shown. Needs `x-copilot-owner` |
+| `GET /decisions/stats` | no | per-strategy accept/dismiss counts for the caller, optionally `?strategyId=`. Needs `x-copilot-owner` |
 
 `/propose` is what fills the confirmation card; `/fill` is what the button does. The chosen
 order is held server-side and only a `proposalId` goes out, so no caller can ask us to fill
@@ -125,6 +136,13 @@ not just `/fill`. `/propose` and `/forecast/*` are also rate-limited (30/min per
 regardless of the token, since they cost real Thetanuts/AI API usage even though they never
 move funds. Do not bind it to `0.0.0.0` on shared WiFi -- anyone on the network could then
 spend from the wallet, or run up your API bill.
+
+The Risk Profile / Suggestion / Decision routes are also gated by `$COPILOT_API_TOKEN` when
+set, but they key their data on `x-copilot-owner`, a client-supplied header that is never
+verified -- it identifies a caller, it does not authenticate one. Any holder of the shared
+token can send a different owner id and read or overwrite that owner's Risk Profile or
+Decisions. This is a known limitation of having no real auth yet, not something these routes
+fix.
 
 If you set `COPILOT_API_TOKEN`, set `NEXT_PUBLIC_COPILOT_API_TOKEN` to the same value --
 Next.js only inlines `NEXT_PUBLIC_*` into the browser bundle, and without it Confirm

@@ -85,6 +85,8 @@ def load_profile(profile: str, owner_id: str | None = None) -> list[StrategyDefi
         _cache[profile] = _load_from_disk(profile)  # type: ignore[index]
 
     cached = _cache[profile]  # type: ignore[index]
+    # model_copy on both branches, not list(): pydantic models are mutable,
+    # and a bare list() only copies the list, not the objects inside it.
     if owner_id is None:
-        return list(cached)
+        return [s.model_copy() for s in cached]
     return [s.model_copy(update={"owner_id": owner_id}) for s in cached]

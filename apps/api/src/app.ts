@@ -18,7 +18,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
-import { ProposeRequest, type ProposeResult } from "@copilot/shared";
+import { ProposeRequest, type ProposeResult, RiskProfileName, DecisionRequest } from "@copilot/shared";
 import { canSign } from "./thetanuts/client.js";
 import { buyableOrders, impliedVol, daysToExpiry, orderIdentity, PUT } from "./thetanuts/orders.js";
 import { spotPrice } from "./thetanuts/market.js";
@@ -41,6 +41,9 @@ import { assessRiskBenefit } from "./forecast/riskBenefit.js";
 import { parseForecastQuery, parseAskBody, forecastErrorStatus } from "./forecast/http.js";
 import { answerQuestion } from "./forecast/ask.js";
 import { fetchIndicators, IndicatorsUnavailable } from "./forecast/indicators.js";
+import { fetchSuggestion, SuggestionUnavailable } from "./strategy/suggest.js";
+import { getRiskProfile, setRiskProfile } from "./supabase/riskProfiles.js";
+import { recordDecision, decisionStats } from "./supabase/decisions.js";
 
 /**
  * This process holds a funded key and exposes routes that spend money or cost real API
@@ -101,6 +104,26 @@ function requireToken(req: any, reply: any): boolean {
   if (a.length === b.length && timingSafeEqual(a, b)) return true;
   reply.code(401).send({ error: "Unauthorized" });
   return false;
+}
+
+const OWNER_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
+
+/**
+ * The Risk Profile / Suggestion routes need something to key rows on, and there is no
+ * auth yet -- so `x-copilot-owner` is a browser-generated id sent as a plain header,
+ * UNVERIFIED, the same placeholder-identity note as sessions.ts's `x-session-id` and
+ * store.py's `owner_id`. Returns null (never throws) so the caller can 400 cleanly.
+ *
+ * This identifies a caller, it does not authenticate one: nothing checks that the
+ * header's sender is who they claim, so a client can simply send a different owner id
+ * and read or overwrite that owner's row. `requireToken` is what actually gates access
+ * to these routes -- any holder of that one shared token can currently act as any
+ * owner. Known limitation of the no-auth placeholder, not something fixed here.
+ */
+function ownerIdFrom(req: any): string | null {
+  const header = req.headers["x-copilot-owner"];
+  const value = typeof header === "string" ? header : Array.isArray(header) ? header[0] : "";
+  return OWNER_ID_RE.test(value) ? value : null;
 }
 
 /**
@@ -408,6 +431,116 @@ export async function buildApp(): Promise<FastifyInstance> {
     } catch (e) {
       const { status, error } = forecastErrorStatus(e);
       return reply.code(status).send({ error });
+    }
+  });
+
+  /**
+   * The Trader's saved Risk Profile. Not an error when unset -- the surface then asks
+   * them to choose one, same as an empty board is not an error.
+   */
+  app.get("/risk-profile", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const ownerId = ownerIdFrom(req);
+    if (!ownerId) return reply.code(400).send({ error: "x-copilot-owner header is required (8-64 chars, [A-Za-z0-9_-])" });
+    try {
+      return { profile: await getRiskProfile(ownerId) };
+    } catch (e) {
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not load your Risk Profile."));
+    }
+  });
+
+  app.put("/risk-profile", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const ownerId = ownerIdFrom(req);
+    if (!ownerId) return reply.code(400).send({ error: "x-copilot-owner header is required (8-64 chars, [A-Za-z0-9_-])" });
+    const parsed = RiskProfileName.safeParse((req.body as any)?.profile);
+    if (!parsed.success) return reply.code(400).send({ error: "profile must be one of conservative, balanced, aggressive" });
+    try {
+      const row = await setRiskProfile(ownerId, parsed.data);
+      return { profile: row.profile };
+    } catch (e) {
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not save your Risk Profile."));
+    }
+  });
+
+  /**
+   * ETH Suggestion for the Trader's saved profile, from the Strategy Agent. Reaches
+   * a live exchange through the agents service, so it is gated like /forecast/indicators:
+   * token-gated and rate-limited, and 503 (not 502) when that service is down (ADR-0007).
+   */
+  app.get("/suggestion", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const ownerId = ownerIdFrom(req);
+    if (!ownerId) return reply.code(400).send({ error: "x-copilot-owner header is required (8-64 chars, [A-Za-z0-9_-])" });
+
+    let profile;
+    try {
+      profile = await getRiskProfile(ownerId);
+    } catch (e) {
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not load your Risk Profile."));
+    }
+    // No saved profile -- the surface asks them to choose one, not a guessed default.
+    if (!profile) return { profile: null, strategyId: null, strategyName: null, firedAt: null, intent: null, asOf: null };
+
+    try {
+      return await fetchSuggestion(profile);
+    } catch (e) {
+      if (e instanceof SuggestionUnavailable) {
+        if (e.details) req.log.error({ err: e, details: e.details }, "Suggestion shape drift");
+        // e.status is the Python service's own status when it answered (undefined
+        // means it never answered at all -- unreachable, or a body we couldn't read).
+        // A 4xx from Python is permanent -- a bad profile (400) or an unknown symbol
+        // (404) -- and RETRYABLE_STATUS in marketData.ts does not retry 4xx, so mapping
+        // either to 503 would be dishonest AND (for the 500 case below) costly: 500 IS
+        // in RETRYABLE_STATUS, and Python's "more than one strategy fired" seed-data bug
+        // answers 500 for something that will never succeed on retry. So: 404 stays 404
+        // (an unrecognized symbol, same as /forecast/indicators); any other 4xx becomes
+        // 502 (this backend built a request Python rejected -- not the Trader's fault,
+        // not an outage); 5xx, and no status at all (unreachable / bad body), stay 503
+        // per ADR-0007, since those genuinely are "the service is down."
+        const status = e.status;
+        const mapped = status === 404 ? 404 : status !== undefined && status >= 400 && status < 500 ? 502 : 503;
+        return reply.code(mapped).send({ error: e.message });
+      }
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not fetch a Suggestion."));
+    }
+  });
+
+  /**
+   * Records what the Trader did with a Suggestion. Spends nothing and signs nothing --
+   * it's a note about their choice, not an act on their behalf. Token-gated like the
+   * other DB-touching routes, since it writes via the Supabase SERVICE ROLE key.
+   *
+   * Rate-limited like the /forecast/* and /suggestion routes -- not because a Decision
+   * write costs a paid API call (it doesn't), but because it is the one route here that
+   * writes an unbounded number of rows per caller with only a token (which may be
+   * unset) standing between it and storage abuse. GET /risk-profile, PUT /risk-profile
+   * and GET /decisions/stats stay unlimited: they're a single row per owner (a PUT
+   * overwrites, it doesn't accumulate) or a read, so there's nothing here for a rate
+   * limit to bound.
+   */
+  app.post("/decisions", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const ownerId = ownerIdFrom(req);
+    if (!ownerId) return reply.code(400).send({ error: "x-copilot-owner header is required (8-64 chars, [A-Za-z0-9_-])" });
+    const parsed = DecisionRequest.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid decision", issues: parsed.error.issues });
+    try {
+      return await recordDecision(ownerId, parsed.data);
+    } catch (e) {
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not record that decision."));
+    }
+  });
+
+  app.get("/decisions/stats", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const ownerId = ownerIdFrom(req);
+    if (!ownerId) return reply.code(400).send({ error: "x-copilot-owner header is required (8-64 chars, [A-Za-z0-9_-])" });
+    const strategyId = typeof (req.query as any)?.strategyId === "string" ? (req.query as any).strategyId : undefined;
+    try {
+      return await decisionStats(ownerId, strategyId);
+    } catch (e) {
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not load decision stats."));
     }
   });
 
