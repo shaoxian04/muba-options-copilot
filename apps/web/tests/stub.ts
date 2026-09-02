@@ -26,6 +26,7 @@ import proposeAgent from "./fixtures/propose-agent.json" with { type: "json" };
 import proposeByCard from "./fixtures/propose-by-card.json" with { type: "json" };
 import practiceResult from "./fixtures/practice.json" with { type: "json" };
 import fillPrepare from "./fixtures/fill-prepare.json" with { type: "json" };
+import authChallenge from "./fixtures/auth-challenge.json" with { type: "json" };
 import veto from "./fixtures/veto.json" with { type: "json" };
 import noOrder from "./fixtures/no-order.json" with { type: "json" };
 import refusal from "./fixtures/refusal.json" with { type: "json" };
@@ -66,12 +67,21 @@ export const fixtures = {
   practiceResult,
   positionsAfterPractice,
   fillPrepare,
+  authChallenge,
 };
 
 /** Longest shot first, so index 0 is the leftmost Card in the row. */
 export const cards = deckDown1.cards;
 
-export type Scenario = "normal" | "veto" | "no-order" | "empty" | "compressed" | "over-budget" | "settle-fails";
+export type Scenario =
+  | "normal"
+  | "veto"
+  | "no-order"
+  | "empty"
+  | "compressed"
+  | "over-budget"
+  | "settle-fails"
+  | "settle-pending-once";
 
 export interface Traffic {
   /** Every request the page made to the API, in order. */
@@ -135,6 +145,9 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
   // journey that checks the Risk Budget after a failed fill sees the reservation
   // actually go away, rather than a number that never moved in the first place.
   let reservedUsdc = 0;
+  // For the "settle-pending-once" scenario: the first settle attempt with a txHash
+  // reports "not visible yet"; every one after succeeds.
+  let settledOnce = false;
 
   const sessionSnapshot = () => {
     const spent = session.spentUsdc + reservedUsdc;
@@ -206,6 +219,16 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
        * the bearer token. A stub that accepted anything would have let the surface ship
        * with no Authorization header at all -- which is exactly the bug that was here.
        */
+      case "/auth/challenge": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        return json(route, authChallenge, traffic);
+      }
+
+      case "/auth/verify": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        return json(route, { walletAddress: FAKE_WALLET_ADDRESS }, traffic);
+      }
+
       case "/fill/prepare": {
         if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
         reservedUsdc = 2; // the stake -- released or kept once /fill/settle reports back
@@ -214,15 +237,21 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
 
       case "/fill/settle": {
         if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
-        const { succeeded } = request.postDataJSON() as { succeeded: boolean };
+        const { txHash } = request.postDataJSON() as { txHash?: string };
         // Simulates the settle call itself failing (a dropped connection, a transient
         // 502) AFTER the wallet has already broadcast and mined the fill -- the money
         // has moved regardless of whether this report of it reaches the backend.
-        if (scenario === "settle-fails" && succeeded) {
+        if (scenario === "settle-fails" && txHash) {
           return json(route, { error: "Could not update the Risk Budget." }, traffic, 502);
         }
-        if (!succeeded) reservedUsdc = 0; // released; a success instead keeps it spent
-        return json(route, { remainingUsdc: sessionSnapshot().remainingUsdc }, traffic);
+        // Simulates the chain briefly not showing the transaction yet -- the second
+        // attempt (and every one after) succeeds.
+        if (scenario === "settle-pending-once" && txHash && !settledOnce) {
+          settledOnce = true;
+          return json(route, { error: "not visible yet" }, traffic, 425);
+        }
+        if (!txHash) reservedUsdc = 0; // released; a confirmed fill instead keeps it spent
+        return json(route, { remainingUsdc: sessionSnapshot().remainingUsdc, confirmed: Boolean(txHash) }, traffic);
       }
 
       default:
@@ -273,12 +302,12 @@ export const FAKE_WALLET_ADDRESS = "0x2222222222222222222222222222222222222222";
  */
 export async function installFakeWallet(
   page: Page,
-  opts: { address?: string; fail?: boolean } = {}
+  opts: { address?: string; fail?: boolean; preAuthorised?: boolean } = {}
 ): Promise<void> {
   const address = opts.address ?? FAKE_WALLET_ADDRESS;
   await page.addInitScript(
-    (config: { address: string; fail: boolean }) => {
-      let authorised = false;
+    (config: { address: string; fail: boolean; preAuthorised: boolean }) => {
+      let authorised = config.preAuthorised;
       let txCount = 0;
       let lastHash = "";
       const BLOCK_HASH = "0x" + "11".repeat(32);
@@ -296,6 +325,8 @@ export async function installFakeWallet(
               return "0x2105"; // 8453
             case "net_version":
               return "8453";
+            case "personal_sign":
+              return `0xFAKESIG${config.address.slice(2, 10)}`;
             // Everything below is machinery ethers' BrowserProvider calls while
             // populating a transaction (gas, nonce, fee data) before ever asking the
             // "wallet" to send it -- not behavior this suite is testing, so it gets
@@ -370,6 +401,6 @@ export async function installFakeWallet(
         },
       };
     },
-    { address, fail: opts.fail ?? false }
+    { address, fail: opts.fail ?? false, preAuthorised: opts.preAuthorised ?? false }
   );
 }
