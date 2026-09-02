@@ -138,6 +138,37 @@ const json = (route: Route, body: unknown, traffic: Traffic, status = 200) => {
 
 const authorised = (request: Request) => request.headers()["authorization"] === `Bearer ${TEST_API_TOKEN}`;
 
+/** The fake account every signed-in journey uses (ADR-0013). */
+export const FAKE_ACCOUNT_TOKEN = "fake-account-token";
+const accountAuthorised = (request: Request) => request.headers()["x-account-token"] === FAKE_ACCOUNT_TOKEN;
+
+/**
+ * Simulates a signed-in Supabase session directly in `localStorage`, in the shape
+ * `@supabase/supabase-js`'s browser client persists one under -- this is what lets a
+ * Playwright test start "already signed in" without actually driving the /login page's
+ * real Supabase calls (which would need a real project reachable from CI). Never
+ * contacts a real Supabase project, real project ID, or real user account.
+ */
+export async function signIn(page: Page): Promise<void> {
+  await page.addInitScript(
+    ({ url, token }: { url: string; token: string }) => {
+      const projectRef = new URL(url).hostname.split(".")[0];
+      window.localStorage.setItem(
+        `sb-${projectRef}-auth-token`,
+        JSON.stringify({
+          access_token: token,
+          refresh_token: "fake-refresh-token",
+          expires_in: 3600,
+          expires_at: Math.floor(Date.now() / 1000) + 3600,
+          token_type: "bearer",
+          user: { id: "fixture-user", email: "fixture@example.com" },
+        })
+      );
+    },
+    { url: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "https://fixture.supabase.co", token: FAKE_ACCOUNT_TOKEN }
+  );
+}
+
 /**
  * The Deck for whatever was asked for.
  *
@@ -385,18 +416,27 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
        */
       case "/auth/challenge": {
         if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        if (!accountAuthorised(request)) return json(route, { error: "Sign in to continue." }, traffic, 401);
         return json(route, authChallenge, traffic);
       }
 
       case "/auth/verify": {
         if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        if (!accountAuthorised(request)) return json(route, { error: "Sign in to continue." }, traffic, 401);
         return json(route, { walletAddress: FAKE_WALLET_ADDRESS }, traffic);
       }
 
       case "/fill/prepare": {
         if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        if (!accountAuthorised(request)) return json(route, { error: "Sign in to continue." }, traffic, 401);
         reservedUsdc = 2; // the stake -- released or kept once /fill/settle reports back
         return json(route, fillPrepare, traffic);
+      }
+
+      case "/account": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        if (!accountAuthorised(request)) return json(route, { error: "Sign in to continue." }, traffic, 401);
+        return json(route, { settings: { riskBudgetUsdc: 5, defaultAsset: null, defaultDirection: null }, linkedWallet: null }, traffic);
       }
 
       case "/fill/settle": {
