@@ -140,16 +140,24 @@ export const TRADER_WALLET = new Wallet("0x" + "1".repeat(64));
 export const TRADER_ADDRESS = TRADER_WALLET.address;
 export const walletAddress = (): string | null => (state.canSign ? TRADER_ADDRESS : null);
 
-/** Drives the challenge/verify round trip so a test's session may then use /fill/prepare. */
+/**
+ * Drives the challenge/verify round trip so a test's session may then use /fill/prepare.
+ * `accountToken`, when given, is sent as `x-account-token` on both calls -- required
+ * since /auth/challenge and /auth/verify themselves now require a signed-in account.
+ */
 export async function proveWallet(
   app: FastifyInstance,
   session: string,
-  address: string = TRADER_ADDRESS
+  address: string = TRADER_ADDRESS,
+  accountToken?: string
 ): Promise<void> {
+  const headers: Record<string, string> = { "x-session-id": session };
+  if (accountToken) headers["x-account-token"] = accountToken;
+
   const challenge = await app.inject({
     method: "POST",
     url: "/auth/challenge",
-    headers: { "x-session-id": session },
+    headers,
     payload: { walletAddress: address },
   });
   const { message } = challenge.json() as { message: string };
@@ -157,7 +165,7 @@ export async function proveWallet(
   await app.inject({
     method: "POST",
     url: "/auth/verify",
-    headers: { "x-session-id": session },
+    headers,
     payload: { signature },
   });
 }

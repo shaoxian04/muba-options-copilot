@@ -36,6 +36,8 @@ import { realHoldings } from "./thetanuts/holdings.js";
 import { prepareFillTx, UnsafeOrder } from "./thetanuts/prepareFill.js";
 import { verifyFillOnChain } from "./thetanuts/verifyFill.js";
 import { buildChallengeMessage, generateNonce, verifyChallengeSignature } from "./auth.js";
+import { requireAccount, optionalAccountId } from "./account.js";
+import { upsertLinkedWallet, logActivity } from "./accountStore.js";
 import { usd } from "./format.js";
 import {
   sessionFor, remainingBudget, setRiskBudget,
@@ -372,6 +374,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.post("/auth/challenge", async (req, reply) => {
     if (!requireToken(req, reply)) return;
+    if (!(await requireAccount(req, reply))) return;
     const parsed = AuthChallengeRequest.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "walletAddress is required" });
 
@@ -388,6 +391,8 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.post("/auth/verify", async (req, reply) => {
     if (!requireToken(req, reply)) return;
+    const userId = await requireAccount(req, reply);
+    if (!userId) return;
     const parsed = AuthVerifyRequest.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "signature is required" });
 
@@ -403,6 +408,8 @@ export async function buildApp(): Promise<FastifyInstance> {
       return;
     }
     markWalletVerified(s, pending.walletAddress);
+    void upsertLinkedWallet(userId, pending.walletAddress);
+    void logActivity(userId, "wallet_linked", { walletAddress: pending.walletAddress });
     return { walletAddress: pending.walletAddress };
   });
 
@@ -414,6 +421,8 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.post("/fill/prepare", async (req, reply): Promise<PreparedFill | undefined> => {
     if (!requireToken(req, reply)) return;
+    const userId = await requireAccount(req, reply);
+    if (!userId) return;
     const parsed = FillPrepareRequest.safeParse(req.body);
     if (!parsed.success) {
       reply.code(400).send({ error: "proposalId and a valid walletAddress are required", issues: parsed.error.issues });
@@ -449,6 +458,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
     try {
       const prepared = await prepareFillTx(found.proposal, found.order, trader);
+      void logActivity(userId, "fill_prepared", { proposalId, walletAddress: trader });
       return {
         approveTx: prepared.approveTx,
         fillTx: prepared.fillTx,
@@ -498,6 +508,8 @@ export async function buildApp(): Promise<FastifyInstance> {
         reply.code(410).send({ error: "No prepared fill found for that proposal." });
         return;
       }
+      const userId = await optionalAccountId(req);
+      if (userId) void logActivity(userId, "fill_settled", { proposalId, txHash, confirmed: verification.succeeded });
       return { remainingUsdc: remainingBudget(s), confirmed: verification.succeeded };
     } catch (e) {
       reply.code(502).send(safeErrorResponse(req.log, e, "Could not verify that transaction. Try again."));

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterAll } from "vitest";
 
 vi.mock("../thetanuts/client.js", async () => await import("./stub-client.js"));
+vi.mock("../supabase.js", async () => await import("./stub-supabase.js"));
 // Wraps the real prepareFillTx as a spy, so one test can force it to reject with
 // UnsafeOrder without needing to reach into session internals to construct that state
 // through the black-box HTTP surface -- every other test still runs the real function.
@@ -13,6 +14,7 @@ import type { FastifyInstance } from "fastify";
 import { Wallet } from "ethers";
 import { buildApp } from "../app.js";
 import { resetStub, spies, state, chain, TRADER_ADDRESS, TRADER_WALLET, proveWallet } from "./stub-client.js";
+import { resetSupabaseStub, registerUser, state as supabaseState } from "./stub-supabase.js";
 import { prepareFillTx, UnsafeOrder } from "../thetanuts/prepareFill.js";
 import { NOW } from "./fixtures.js";
 
@@ -24,8 +26,13 @@ let app: FastifyInstance;
 let sessionSeq = 0;
 const freshSession = () => `fill-${++sessionSeq}`;
 
+/** Every test in this file signs in as the same fake account unless it says otherwise. */
+const ACCOUNT_TOKEN = "acct-token-1";
+
 beforeEach(async () => {
   resetStub();
+  resetSupabaseStub();
+  registerUser(ACCOUNT_TOKEN, { id: "user-1", email: "trader@example.com" });
   app = await buildApp();
 });
 
@@ -41,8 +48,21 @@ async function proposalIn(session: string): Promise<string> {
   return res.json().proposalId;
 }
 
-const prepare = (session: string, body: Record<string, unknown>) =>
-  app.inject({ method: "POST", url: "/fill/prepare", headers: { "x-session-id": session }, payload: body });
+/**
+ * `accountToken` defaults to the one fake account every test in this file signs in as,
+ * so the vast majority of calls -- testing something other than the account gate
+ * itself -- need no change at all. Pass `undefined` explicitly to test what happens
+ * with no account.
+ */
+// `null` is the explicit "send no account token" sentinel -- a default parameter also
+// activates on an explicit `undefined` argument, so `undefined` cannot mean that here.
+const prepare = (session: string, body: Record<string, unknown>, accountToken: string | null = ACCOUNT_TOKEN) =>
+  app.inject({
+    method: "POST",
+    url: "/fill/prepare",
+    headers: { "x-session-id": session, ...(accountToken ? { "x-account-token": accountToken } : {}) },
+    payload: body,
+  });
 
 const settle = (session: string, body: Record<string, unknown>) =>
   app.inject({ method: "POST", url: "/fill/settle", headers: { "x-session-id": session }, payload: body });
@@ -56,7 +76,7 @@ describe("POST /auth/challenge and /auth/verify", () => {
     const challenge = await app.inject({
       method: "POST",
       url: "/auth/challenge",
-      headers: { "x-session-id": session },
+      headers: { "x-session-id": session, "x-account-token": ACCOUNT_TOKEN },
       payload: { walletAddress: TRADER_ADDRESS },
     });
     expect(challenge.statusCode).toBe(200);
@@ -67,7 +87,7 @@ describe("POST /auth/challenge and /auth/verify", () => {
     const verify = await app.inject({
       method: "POST",
       url: "/auth/verify",
-      headers: { "x-session-id": session },
+      headers: { "x-session-id": session, "x-account-token": ACCOUNT_TOKEN },
       payload: { signature },
     });
 
@@ -75,12 +95,17 @@ describe("POST /auth/challenge and /auth/verify", () => {
     expect(verify.json().walletAddress).toBe(TRADER_ADDRESS);
   });
 
+  it("links the verified wallet to the account", async () => {
+    await proveWallet(app, freshSession(), TRADER_ADDRESS, ACCOUNT_TOKEN);
+    expect(supabaseState.linkedWallets.get("user-1")?.wallet_address).toBe(TRADER_ADDRESS);
+  });
+
   it("refuses a signature from a wallet other than the one challenged", async () => {
     const session = freshSession();
     const challenge = await app.inject({
       method: "POST",
       url: "/auth/challenge",
-      headers: { "x-session-id": session },
+      headers: { "x-session-id": session, "x-account-token": ACCOUNT_TOKEN },
       payload: { walletAddress: TRADER_ADDRESS },
     });
     const { message } = challenge.json();
@@ -90,7 +115,7 @@ describe("POST /auth/challenge and /auth/verify", () => {
     const verify = await app.inject({
       method: "POST",
       url: "/auth/verify",
-      headers: { "x-session-id": session },
+      headers: { "x-session-id": session, "x-account-token": ACCOUNT_TOKEN },
       payload: { signature },
     });
 
@@ -101,7 +126,7 @@ describe("POST /auth/challenge and /auth/verify", () => {
     const res = await app.inject({
       method: "POST",
       url: "/auth/verify",
-      headers: { "x-session-id": freshSession() },
+      headers: { "x-session-id": freshSession(), "x-account-token": ACCOUNT_TOKEN },
       payload: { signature: "0xdead" },
     });
     expect(res.statusCode).toBe(410);
@@ -114,13 +139,23 @@ describe("POST /auth/challenge and /auth/verify", () => {
       const res = await gated.inject({
         method: "POST",
         url: "/auth/challenge",
-        headers: { "x-session-id": freshSession() },
+        headers: { "x-session-id": freshSession(), "x-account-token": ACCOUNT_TOKEN },
         payload: { walletAddress: TRADER_ADDRESS },
       });
       expect(res.statusCode).toBe(401);
     } finally {
       delete process.env.COPILOT_API_TOKEN;
     }
+  });
+
+  it("refuses a request with no account token, before the wallet address is even considered", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/challenge",
+      headers: { "x-session-id": freshSession() },
+      payload: { walletAddress: TRADER_ADDRESS },
+    });
+    expect(res.statusCode).toBe(401);
   });
 });
 
@@ -136,7 +171,7 @@ describe("POST /fill/prepare requires a proven wallet", () => {
 
   it("refuses a DIFFERENT address than the one this session proved", async () => {
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     const proposalId = await proposalIn(session);
     const someoneElse = "0x9999999999999999999999999999999999999999";
 
@@ -147,19 +182,29 @@ describe("POST /fill/prepare requires a proven wallet", () => {
 
   it("succeeds once the session has proven that exact wallet", async () => {
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     const proposalId = await proposalIn(session);
 
     const res = await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
 
     expect(res.statusCode).toBe(200);
   });
+
+  it("refuses even a proven wallet, with no account token", async () => {
+    const session = freshSession();
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
+    const proposalId = await proposalIn(session);
+
+    const res = await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS }, null);
+
+    expect(res.statusCode).toBe(401);
+  });
 });
 
 describe("POST /fill/prepare", () => {
   it("returns unsigned calldata and reserves the Risk Budget", async () => {
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     const proposalId = await proposalIn(session);
 
     const res = await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
@@ -176,7 +221,7 @@ describe("POST /fill/prepare", () => {
 
   it("never calls the signing methods -- only the encode/preview/allowance ones", async () => {
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     await prepare(session, { proposalId: await proposalIn(session), walletAddress: TRADER_ADDRESS });
 
     expect(spies.fillOrder).not.toHaveBeenCalled();
@@ -186,7 +231,7 @@ describe("POST /fill/prepare", () => {
 
   it("refuses a proposal it does not recognise", async () => {
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     const res = await prepare(session, {
       proposalId: "00000000-0000-0000-0000-000000000000",
       walletAddress: TRADER_ADDRESS,
@@ -202,7 +247,7 @@ describe("POST /fill/prepare", () => {
 
   it("refuses a fill that would exceed the Risk Budget", async () => {
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     // Price the $2 trade under the default $5 budget first, THEN lower the budget --
     // lowering it up front would make /propose itself refuse before a proposal exists.
     const proposalId = await proposalIn(session);
@@ -244,7 +289,7 @@ describe("POST /fill/prepare", () => {
 
   it("releases the reservation and refuses when the order fails a safety check", async () => {
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     const proposalId = await proposalIn(session);
     // A live order that passes /propose's own buy-only filter can never fail this
     // re-check through the ordinary HTTP flow -- prepareFillTx's own unit tests already
@@ -262,7 +307,7 @@ describe("POST /fill/prepare", () => {
 
   it("releases the reservation and sends a sanitized message when the SDK call fails", async () => {
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     const proposalId = await proposalIn(session);
     spies.getAllowance.mockRejectedValueOnce(new Error("RPC https://base-mainnet.g.alchemy.com/v2/SECRETKEY timed out"));
 
@@ -278,7 +323,7 @@ describe("POST /fill/prepare", () => {
 describe("POST /fill/settle", () => {
   it("keeps the reservation when the chain confirms the fill succeeded", async () => {
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     const proposalId = await proposalIn(session);
     await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
     state.receipt = { status: 1, to: chain.contracts.optionBook };
@@ -294,7 +339,7 @@ describe("POST /fill/settle", () => {
 
   it("releases the reservation when the chain says the transaction reverted", async () => {
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     const proposalId = await proposalIn(session);
     await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
     state.receipt = { status: 0, to: chain.contracts.optionBook };
@@ -313,7 +358,7 @@ describe("POST /fill/settle", () => {
     // succeeded on-chain, or success for one that did not. There is no field left in
     // the request that could claim either outcome -- only the chain lookup decides.
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     const proposalId = await proposalIn(session);
     await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
     state.receipt = { status: 1, to: chain.contracts.optionBook }; // really succeeded
@@ -325,7 +370,7 @@ describe("POST /fill/settle", () => {
 
   it("releases the reservation with no chain check when no txHash is given", async () => {
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     const proposalId = await proposalIn(session);
     await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
 
@@ -339,7 +384,7 @@ describe("POST /fill/settle", () => {
 
   it("answers 'not yet visible' rather than releasing when the receipt cannot be found", async () => {
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     const proposalId = await proposalIn(session);
     await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
     state.receipt = null;
@@ -353,7 +398,7 @@ describe("POST /fill/settle", () => {
 
   it("sends a sanitized message and keeps the reservation intact when the RPC call itself fails", async () => {
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     const proposalId = await proposalIn(session);
     await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
     spies.getTransactionReceipt.mockRejectedValueOnce(new Error("RPC https://base-mainnet.g.alchemy.com/v2/SECRETKEY timed out"));
@@ -373,7 +418,7 @@ describe("POST /fill/settle", () => {
 
   it("is one-shot on the no-txHash path -- settling twice fails the second time", async () => {
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     const proposalId = await proposalIn(session);
     await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
     await settle(session, { proposalId });
@@ -384,7 +429,7 @@ describe("POST /fill/settle", () => {
 
   it("is one-shot on the confirmed path -- settling twice fails the second time", async () => {
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     const proposalId = await proposalIn(session);
     await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
     state.receipt = { status: 1, to: chain.contracts.optionBook };
