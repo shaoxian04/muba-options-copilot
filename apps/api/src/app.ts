@@ -40,6 +40,8 @@ import { predictPrice } from "./forecast/price.js";
 import { assessRiskBenefit } from "./forecast/riskBenefit.js";
 import { parseForecastQuery, parseAskBody, forecastErrorStatus } from "./forecast/http.js";
 import { answerQuestion } from "./forecast/ask.js";
+import { CryptoNewsQuery, MacroNewsQuery, AllNewsQuery } from "@copilot/shared";
+import { getCryptoNewsFeed, getMacroNewsFeed, getAllNewsFeed } from "./news/service.js";
 
 /**
  * This process holds a funded key and exposes routes that spend money or cost real API
@@ -385,6 +387,34 @@ export async function buildApp(): Promise<FastifyInstance> {
       const { status, error } = forecastErrorStatus(e);
       return reply.code(status).send({ error });
     }
+  });
+
+  /**
+   * Live news feeds for crypto, macro, and combined analysis.
+   * Read-only and structured for downstream AI consumption.
+   */
+  app.get("/news/crypto", async (req, reply) => {
+    const parsed = CryptoNewsQuery.safeParse(req.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
+    }
+    return getCryptoNewsFeed(parsed.data);
+  });
+
+  app.get("/news/macro", async (req, reply) => {
+    const parsed = MacroNewsQuery.safeParse(req.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
+    }
+    return getMacroNewsFeed(parsed.data);
+  });
+
+  app.get("/news", async (req, reply) => {
+    const parsed = AllNewsQuery.safeParse(req.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
+    }
+    return getAllNewsFeed(parsed.data);
   });
 
   await app.register(practiceRoutes);

@@ -7,6 +7,7 @@
     "fill": "tsx src/scripts/fill.ts",
     "forecast": "tsx src/scripts/forecast.ts",
     "ask": "tsx src/scripts/ask.ts",
+    "news": "tsx src/scripts/news.ts",
     "dev": "tsx watch src/server.ts",
     "wallet": "tsx src/scripts/wallet.ts",
     "test": "tsx --test src/forecast/*.test.ts"
