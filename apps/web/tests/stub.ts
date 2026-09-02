@@ -264,7 +264,7 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
 
 /**
  * Anything the browser must never be handed OUTSIDE of `/fill/prepare`'s own response
- * (ADR-0009: that route alone returns real transaction calldata, encoding the maker
+ * (ADR-0011: that route alone returns real transaction calldata, encoding the maker
  * address of the order it names, because the Trader's own wallet has to see what it is
  * signing -- there is no way around that once signing happens client-side). Every
  * OTHER response is still held to the original, absolute guarantee.

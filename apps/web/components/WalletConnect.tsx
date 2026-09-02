@@ -1,6 +1,6 @@
 "use client";
 
-/** The control that asks a browser wallet for an address, then proves it (ADR-0010). */
+/** The control that asks a browser wallet for an address, then proves it (ADR-0012). */
 export function WalletConnect({
   address,
   connecting,

@@ -37,7 +37,7 @@ export interface Session {
   pendingFills: Map<string, { maxLossUsdc: number; at: number }>;
   /** An outstanding sign-in challenge this session has not yet completed, if any. */
   pendingAuth: { walletAddress: string; nonce: string; at: number } | null;
-  /** The wallet this session has proven ownership of, if any (ADR-0010). */
+  /** The wallet this session has proven ownership of, if any (ADR-0012). */
   verifiedWallet: string | null;
   /**
    * Per-session key that turns an Order's identity into its cardRef. Random, so a ref

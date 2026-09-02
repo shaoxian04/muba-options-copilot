@@ -1,16 +1,16 @@
 ---
-status: accepted, closes two gaps ADR-0009 and sessions.ts left open on purpose
+status: accepted, closes two gaps ADR-0011 and sessions.ts left open on purpose
 ---
 
 # Wallet-proof sessions, and the chain decides whether a fill succeeded
 
 ## Status
 
-Accepted. Closes two gaps ADR-0009 and `sessions.ts` left open on purpose.
+Accepted. Closes two gaps ADR-0011 and `sessions.ts` left open on purpose.
 
 ## Context
 
-ADR-0009 made fills non-custodial but left two things unresolved, both named in
+ADR-0011 made fills non-custodial but left two things unresolved, both named in
 `sessions.ts`'s own comments: a session has no real identity beyond an unauthenticated
 `x-session-id` header, and `POST /fill/prepare` accepted a `walletAddress` with no proof
 of ownership; separately, `POST /fill/settle` trusted a `succeeded` boolean the browser

@@ -137,7 +137,7 @@ export const propose = (body: {
     headers: authHeaders(),
   });
 
-/** Step one of proving this wallet is who it says it is (ADR-0010). Signs nothing yet. */
+/** Step one of proving this wallet is who it says it is (ADR-0012). Signs nothing yet. */
 export const requestAuthChallenge = (walletAddress: string): Promise<{ message: string }> =>
   call<{ message: string }>("/auth/challenge", {
     method: "POST",
@@ -163,7 +163,7 @@ export const prepareFill = (proposalId: string, walletAddress: string): Promise<
 
 /**
  * Reports what happened, so the Risk Budget reservation can be finalized or released.
- * `txHash` present means the backend checks the chain itself and decides (ADR-0010);
+ * `txHash` present means the backend checks the chain itself and decides (ADR-0012);
  * absent means nothing was ever sent, and the reservation is simply released.
  */
 export const settleFill = (proposalId: string, txHash?: string): Promise<{ remainingUsdc: number; confirmed: boolean }> =>

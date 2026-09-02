@@ -1,7 +1,7 @@
 /**
  * TradeProposal + Order -> the unsigned transaction(s) a Trader's own wallet must send
  * to actually fill it. The non-custodial replacement for `execute.ts`'s `executeFill`
- * on the browser path (ADR-0009). `execute.ts` itself is untouched: the operator's own
+ * on the browser path (ADR-0011). `execute.ts` itself is untouched: the operator's own
  * CLI (`npm run fill -- --live`) keeps signing with the configured wallet, which is a
  * separate, intentionally custodial flow unrelated to this one.
  *

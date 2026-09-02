@@ -134,7 +134,7 @@ beforeAll(async () => {
   generated["practice"] = (await post("/practice", { proposalId: forPractice.proposalId })).json();
   generated["positions-after-practice"] = await get("/positions");
 
-  // Proving wallet ownership -- the sign-in challenge (ADR-0010). The nonce is a fresh
+  // Proving wallet ownership -- the sign-in challenge (ADR-0012). The nonce is a fresh
   // random value every run (that is the point of it), so it is normalized to a fixed
   // placeholder here rather than through the shared `stabilise` below, which only
   // replaces a whole matching field value, not a value embedded inside a sentence.
@@ -145,7 +145,7 @@ beforeAll(async () => {
   await proveWallet(app, SESSION);
 
   // A prepared fill, and settling it -- the non-custodial, chain-verified contract
-  // (ADR-0009, ADR-0010).
+  // (ADR-0011, ADR-0012).
   const forFill = (await post("/propose", intent)).json() as { proposalId: string };
   generated["fill-prepare"] = (
     await post("/fill/prepare", { proposalId: forFill.proposalId, walletAddress: TRADER_ADDRESS })

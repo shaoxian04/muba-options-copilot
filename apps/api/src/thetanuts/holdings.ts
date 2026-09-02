@@ -24,7 +24,7 @@ import { usd, contracts as fmtContracts, moment } from "../format.js";
  * not come from here -- and rendering one on this board would put a Max Loss beside it
  * that is not true. It is omitted, not mislabelled.
  *
- * Takes the address explicitly (ADR-0009) rather than reading the operator's configured
+ * Takes the address explicitly (ADR-0011) rather than reading the operator's configured
  * wallet itself -- callers decide whose holdings to show; this module only knows how to
  * fetch them once told.
  */

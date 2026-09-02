@@ -6,7 +6,7 @@ info:
     Hand-derived from apps/api/src/app.ts and apps/api/src/practice.ts for HawkScan
     (no OpenAPI-generation tooling is wired into the Fastify app). Every route in
     apps/api/src/app.ts spends only what the caller's own connected wallet signs
-    client-side (ADR-0009) -- /fill/prepare returns unsigned calldata, nothing here
+    client-side (ADR-0011) -- /fill/prepare returns unsigned calldata, nothing here
     signs or submits a transaction, so nothing needs to be excluded from the scan.
 servers:
   - url: http://127.0.0.1:3001

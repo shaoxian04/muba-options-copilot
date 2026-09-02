@@ -3,7 +3,7 @@
 /**
  * The one place this app touches a browser wallet.
  *
- * ADR-0009: the backend still derives every number and prices every order; this module
+ * ADR-0011: the backend still derives every number and prices every order; this module
  * only ever sends the exact `{ to, data }` pairs `/fill/prepare` already built against
  * a proposal the Trader was already shown, through whatever wallet the browser has
  * injected (EIP-1193 -- MetaMask, Rabby, Coinbase Wallet, etc.). It never asks the SDK

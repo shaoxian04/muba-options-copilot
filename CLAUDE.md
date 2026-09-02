@@ -101,7 +101,7 @@ These are needed on every task. Violating one silently breaks the product's cent
   files may do arithmetic, each saying why: `lib/clock.ts` (durations, which no response can
   carry) and `lib/geometry.ts` (coordinates, never read as text). A test enforces the rest.
 - **The browser never receives calldata for an Order it has not already priced through
-  `/propose`.** (Narrowed by ADR-0009 from an absolute "no Order data crosses to the browser,"
+  `/propose`.** (Narrowed by ADR-0011 from an absolute "no Order data crosses to the browser,"
   to let `POST /fill/prepare` hand the Trader's own wallet the real transaction it must sign —
   unavoidable once signing moves client-side.) The `cardRef` indirection still holds
   everywhere else: `/deck` and `/propose` never expose a maker address, a nonce, or a
@@ -109,10 +109,10 @@ These are needed on every task. Violating one silently breaks the product's cent
   already shown priced.
 - **A session must prove ownership of any wallet address it acts on.** `POST
   /fill/prepare` refuses a `walletAddress` the session has not verified via
-  `POST /auth/challenge` + `POST /auth/verify` (ADR-0010) -- a signature, never a
+  `POST /auth/challenge` + `POST /auth/verify` (ADR-0012) -- a signature, never a
   transaction, and never requested without the Trader's own click.
 - **The chain decides whether a fill succeeded, not the caller.** `POST /fill/settle`
-  looks up the real transaction receipt itself (ADR-0010) whenever a `txHash` is given;
+  looks up the real transaction receipt itself (ADR-0012) whenever a `txHash` is given;
   a client's own claim of success or failure is never taken at face value.
 - **A cardRef selects; it never supplies a value.** The Order is re-fetched off the live book
   and every number re-derived, so an override passes every check an agent-chosen Card does.
@@ -149,7 +149,7 @@ it here with a one-line lesson.
 - **`apps/api/src/insurance/CONTEXT.md`** — Borrower, Loan, Cover, Liquidation Price, Lapse.
   **Read before any Liquidation Cover work.**
 - **`docs/adr/`** — the decisions and why they went that way. 0001 and 0004 are superseded;
-  0006–0010 are current. **Read before changing architecture, or when code looks deliberately
+  0006–0012 are current. **Read before changing architecture, or when code looks deliberately
   odd and you're tempted to "fix" it.**
 - **`README.md`** — API route table, repo layout, setup, security posture of the API process.
   **Read before running or wiring anything.**

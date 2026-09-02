@@ -1,6 +1,6 @@
 /**
  * Proves a session is backed by the wallet it claims, before /fill/prepare will trust a
- * walletAddress from it (ADR-0010). Pure local cryptography -- no RPC, no chain call,
+ * walletAddress from it (ADR-0012). Pure local cryptography -- no RPC, no chain call,
  * and no cost -- so it stays a plain module with no dependency on the SDK client.
  */
 import { randomBytes } from "node:crypto";

@@ -1,7 +1,7 @@
 /**
  * Whether a transaction hash the browser reports actually succeeded on Base mainnet,
  * checked against the chain itself through the SDK's own RPC connection rather than
- * trusted from the caller (ADR-0010).
+ * trusted from the caller (ADR-0012).
  */
 import { getClient, chain } from "./client.js";
 

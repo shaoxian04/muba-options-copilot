@@ -209,7 +209,7 @@ export function useSurface(): Surface {
   }, []);
 
   /**
-   * Proves the connected wallet is who it says it is (ADR-0010) -- a text signature,
+   * Proves the connected wallet is who it says it is (ADR-0012) -- a text signature,
    * never a transaction. Separate from `connectWallet` so a Trader whose wallet was
    * already authorised before this page loaded (`connectedAddress()`, which never
    * prompts) has a way to complete verification with one press, rather than a dead end.
@@ -399,7 +399,7 @@ export function useSurface(): Surface {
     [ask, busy, say]
   );
 
-  /** Spends real USDC, signed by the Trader's own connected AND verified wallet (ADR-0010). */
+  /** Spends real USDC, signed by the Trader's own connected AND verified wallet (ADR-0012). */
   const confirm = useCallback(async () => {
     const p = proposalOf(result);
     if (!p || quoteMoved) return;

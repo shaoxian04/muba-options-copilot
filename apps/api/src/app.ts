@@ -292,7 +292,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   /**
-   * Step one of proving a session is backed by the wallet it claims (ADR-0010). Pure
+   * Step one of proving a session is backed by the wallet it claims (ADR-0012). Pure
    * local cryptography -- no RPC call, no cost -- but still session-scoped and
    * token-gated like every other route that establishes what a session may do.
    */
@@ -333,7 +333,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   /**
-   * The Trader's own wallet signs the fill (ADR-0009). This route never signs or
+   * The Trader's own wallet signs the fill (ADR-0011). This route never signs or
    * submits anything -- it re-checks the Risk Budget, reserves the spend, and returns
    * the unsigned transaction(s) the connected wallet must send. `POST /fill/settle`
    * finalizes or releases that reservation once the wallet reports what happened.
@@ -395,7 +395,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   /**
    * Finalizes or releases a reservation `POST /fill/prepare` made. When a transaction
-   * hash is given, the chain -- not the caller -- decides the outcome (ADR-0010): the
+   * hash is given, the chain -- not the caller -- decides the outcome (ADR-0012): the
    * backend looks up the real receipt through its own RPC connection. No hash means
    * nothing was ever sent (the wallet declined to sign), so there is nothing to check
    * and the reservation is simply released.
@@ -438,7 +438,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   /**
    * The board: everything the Trader holds, real and practised, each labelled.
    *
-   * Reads holdings for whichever wallet the browser reports as connected (ADR-0009).
+   * Reads holdings for whichever wallet the browser reports as connected (ADR-0011).
    * With none given, it falls back to the operator's own configured wallet -- which is
    * what keeps a wallet-less dev session and the CLI's single-wallet model working
    * exactly as before.

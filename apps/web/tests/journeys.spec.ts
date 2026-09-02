@@ -636,7 +636,7 @@ test.describe("the golden path", () => {
     await expect.poll(() => traffic.paths().filter((p) => p === "/fill/settle").length).toBe(1);
 
     // Every response EXCEPT /fill/prepare's own -- which legitimately carries the real
-    // transaction calldata the Trader's own wallet has to see to sign it (ADR-0009) --
+    // transaction calldata the Trader's own wallet has to see to sign it (ADR-0011) --
     // still carries none of this. /auth/challenge and /auth/verify are exempted too,
     // for a different, narrower reason: they legitimately echo the TRADER'S OWN wallet
     // address back (proving sign-in, not naming an Order), which happens to be the same
