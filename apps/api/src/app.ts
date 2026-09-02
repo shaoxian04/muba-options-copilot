@@ -19,7 +19,7 @@ import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
 import { ProposeRequest, UnderlyingSymbol, MAX_HORIZON_DAYS, type ProposeResult } from "@copilot/shared";
-import { canSign } from "./thetanuts/client.js";
+import { canSign, walletAddress, chain } from "./thetanuts/client.js";
 import { buyableOrders, daysToExpiry, orderIdentity, PUT } from "./thetanuts/orders.js";
 import { impliedMovePct } from "./thetanuts/implied-move.js";
 import { spotPrice, spotPrices } from "./thetanuts/market.js";
@@ -33,12 +33,21 @@ import { practiceRoutes, practiceHoldings } from "./practice.js";
 import { rfqRoutes } from "./rfq.js";
 import { safeErrorResponse } from "./errors.js";
 import { realHoldings } from "./thetanuts/holdings.js";
+import { prepareFillTx, UnsafeOrder } from "./thetanuts/prepareFill.js";
+import { verifyFillOnChain } from "./thetanuts/verifyFill.js";
+import { buildChallengeMessage, generateNonce, verifyChallengeSignature } from "./auth.js";
 import { usd } from "./format.js";
-import { executeFill, RiskBudgetExceeded, UnsafeOrder } from "./thetanuts/execute.js";
 import {
   sessionFor, remainingBudget, setRiskBudget,
-  rememberProposal, recallProposal, rememberCard, recallCard, ProposalIdBody, type Session,
+  rememberProposal, recallProposal, rememberCard, recallCard,
+  reservePendingFill, confirmPendingFill, releasePendingFill,
+  beginAuthChallenge, takeAuthChallenge, markWalletVerified,
+  type Session,
 } from "./sessions.js";
+import {
+  AuthChallengeRequest, AuthVerifyRequest,
+  FillPrepareRequest, FillSettleRequest, type PreparedFill,
+} from "@copilot/shared";
 import { buildScenario } from "./forecast/scenario.js";
 import { analyzeNews } from "./forecast/news.js";
 import { predictPrice } from "./forecast/price.js";
@@ -357,69 +366,175 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   /**
-   * The only route that spends money. Takes a proposal id, never a raw order --
-   * so a caller cannot hand us an order we never priced or vetted.
+   * Step one of proving a session is backed by the wallet it claims (ADR-0012). Pure
+   * local cryptography -- no RPC call, no cost -- but still session-scoped and
+   * token-gated like every other route that establishes what a session may do.
    */
-  app.post("/fill", async (req, reply) => {
+  app.post("/auth/challenge", async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const parsedBody = ProposalIdBody.safeParse(req.body);
-    if (!parsedBody.success) return reply.code(400).send({ error: "proposalId required" });
-    const { proposalId } = parsedBody.data;
-    if (!canSign()) return reply.code(503).send({ error: "No signer configured. Set THETANUTS_PRIVATE_KEY." });
+    const parsed = AuthChallengeRequest.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "walletAddress is required" });
 
     const s = sessionFor(req.headers);
-    const found = recallProposal(s, proposalId);
-    if (!found)
-      return reply.code(410).send({ error: "That quote has expired. Prices move -- ask for a fresh one." });
+    const nonce = generateNonce();
+    beginAuthChallenge(s, parsed.data.walletAddress, nonce);
+    return { message: buildChallengeMessage(parsed.data.walletAddress, nonce) };
+  });
 
-    // Reserve the spend and consume the proposal SYNCHRONOUSLY, before the await below.
-    // Node has no threads, so nothing can interleave between this check and this mutation --
-    // that's what makes it atomic. Doing this after the await (the old code) left a window
-    // where two concurrent /fill calls could both pass the budget check before either one's
-    // spend was recorded.
+  /**
+   * Step two: the Trader's wallet has signed the exact message /auth/challenge handed
+   * back. Verifying it here is what lets /fill/prepare later trust a walletAddress this
+   * session claims, instead of taking it on faith.
+   */
+  app.post("/auth/verify", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const parsed = AuthVerifyRequest.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "signature is required" });
+
+    const s = sessionFor(req.headers);
+    const pending = takeAuthChallenge(s);
+    if (!pending) {
+      reply.code(410).send({ error: "No challenge to verify, or it expired. Request a new one." });
+      return;
+    }
+    const message = buildChallengeMessage(pending.walletAddress, pending.nonce);
+    if (!verifyChallengeSignature(message, parsed.data.signature, pending.walletAddress)) {
+      reply.code(401).send({ error: "Signature does not match that wallet." });
+      return;
+    }
+    markWalletVerified(s, pending.walletAddress);
+    return { walletAddress: pending.walletAddress };
+  });
+
+  /**
+   * The Trader's own wallet signs the fill (ADR-0011). This route never signs or
+   * submits anything -- it re-checks the Risk Budget, reserves the spend, and returns
+   * the unsigned transaction(s) the connected wallet must send. `POST /fill/settle`
+   * finalizes or releases that reservation once the wallet reports what happened.
+   */
+  app.post("/fill/prepare", async (req, reply): Promise<PreparedFill | undefined> => {
+    if (!requireToken(req, reply)) return;
+    const parsed = FillPrepareRequest.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400).send({ error: "proposalId and a valid walletAddress are required", issues: parsed.error.issues });
+      return;
+    }
+    const { proposalId, walletAddress: trader } = parsed.data;
+
+    const s = sessionFor(req.headers);
+    if (!s.verifiedWallet || s.verifiedWallet.toLowerCase() !== trader.toLowerCase()) {
+      reply.code(401).send({ error: "Verify this wallet before confirming a fill." });
+      return;
+    }
+
+    const found = recallProposal(s, proposalId);
+    if (!found) {
+      reply.code(410).send({ error: "That quote has expired. Prices move -- ask for a fresh one." });
+      return;
+    }
+
     const remaining = remainingBudget(s);
-    if (found.proposal.maxLossUsdc > remaining)
-      return reply.code(403).send({
+    if (found.proposal.maxLossUsdc > remaining) {
+      reply.code(403).send({
         error: `This trade risks $${found.proposal.maxLossUsdc.toFixed(2)} but only $${remaining.toFixed(2)} of the Risk Budget remains.`,
       });
+      return;
+    }
+
+    // Reserve and consume the proposal SYNCHRONOUSLY, before the await below -- same
+    // reasoning the old single-call /fill handler documented: nothing can interleave
+    // between this check and this mutation, which is what makes it atomic.
     s.proposals.delete(proposalId);
-    s.spentUsdc += found.proposal.maxLossUsdc;
+    reservePendingFill(s, proposalId, found.proposal.maxLossUsdc);
 
     try {
-      const result = await executeFill(found.proposal, found.order, remainingBudget(s) + found.proposal.maxLossUsdc);
-      return { ...result, remainingUsdc: remainingBudget(s) };
+      const prepared = await prepareFillTx(found.proposal, found.order, trader);
+      return {
+        approveTx: prepared.approveTx,
+        fillTx: prepared.fillTx,
+        optionAddress: prepared.optionAddress,
+        explorerTxUrlBase: `${chain.explorerUrl}/tx/`,
+        remainingUsdc: remainingBudget(s),
+      };
     } catch (e: any) {
-      s.spentUsdc -= found.proposal.maxLossUsdc; // the fill never happened -- release the reservation
-      if (e instanceof RiskBudgetExceeded) return reply.code(403).send({ error: e.message });
-      if (e instanceof UnsafeOrder) return reply.code(403).send({ error: e.message });
-      // Raw ethers/RPC error text can carry the provider API key embedded in
-      // THETANUTS_RPC_URL -- never forward e.message to the caller. See errors.ts.
-      return reply.code(502).send(safeErrorResponse(req.log, e, "Fill failed. Try again, or ask for a fresh quote if this keeps happening."));
+      releasePendingFill(s, proposalId); // preparing failed -- give the reservation back
+      if (e instanceof UnsafeOrder) {
+        reply.code(403).send({ error: e.message });
+        return;
+      }
+      reply.code(502).send(safeErrorResponse(req.log, e, "Could not prepare that fill. Try again."));
+      return;
     }
+  });
+
+  /**
+   * Finalizes or releases a reservation `POST /fill/prepare` made. When a transaction
+   * hash is given, the chain -- not the caller -- decides the outcome (ADR-0012): the
+   * backend looks up the real receipt through its own RPC connection. No hash means
+   * nothing was ever sent (the wallet declined to sign), so there is nothing to check
+   * and the reservation is simply released.
+   */
+  app.post("/fill/settle", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const parsed = FillSettleRequest.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "proposalId is required" });
+    const { proposalId, txHash } = parsed.data;
+    const s = sessionFor(req.headers);
+
+    if (!txHash) {
+      const existed = releasePendingFill(s, proposalId);
+      if (!existed) return reply.code(410).send({ error: "No prepared fill found for that proposal." });
+      return { remainingUsdc: remainingBudget(s), confirmed: false };
+    }
+
+    try {
+      const verification = await verifyFillOnChain(txHash);
+      if (!verification.found) {
+        reply.code(425).send({ error: "That transaction is not visible yet. Try settling again shortly." });
+        return;
+      }
+      const existed = verification.succeeded ? confirmPendingFill(s, proposalId) : releasePendingFill(s, proposalId);
+      if (!existed) {
+        reply.code(410).send({ error: "No prepared fill found for that proposal." });
+        return;
+      }
+      return { remainingUsdc: remainingBudget(s), confirmed: verification.succeeded };
+    } catch (e) {
+      reply.code(502).send(safeErrorResponse(req.log, e, "Could not verify that transaction. Try again."));
+      return;
+    }
+  });
+
+  const PositionsQuery = z.object({
+    address: z.string().regex(/^0x[a-fA-F0-9]{40}$/, "must be a 0x-prefixed 20-byte address").optional(),
   });
 
   /**
    * The board: everything the Trader holds, real and practised, each labelled.
    *
-   * Real Positions come from the chain on every request -- there is no `positions`
-   * table and no balance cache, ever (ADR-0003). If this feels slow, the fix is a
-   * loading state, not a cache.
-   *
-   * It does not refuse without a wallet. A Trader who has only practised still has a
-   * board, and an empty page would teach them nothing.
+   * Reads holdings for whichever wallet the browser reports as connected (ADR-0011).
+   * With none given, it falls back to the operator's own configured wallet -- which is
+   * what keeps a wallet-less dev session and the CLI's single-wallet model working
+   * exactly as before. Gated on having an address, not on `canSign()` -- a non-custodial
+   * deployment never holds a signing key at all, and its board must still show whatever
+   * wallet the browser connected.
    */
   app.get("/positions", async (req, reply) => {
     if (!requireToken(req, reply)) return;
+    const parsedQuery = PositionsQuery.safeParse(req.query);
+    if (!parsedQuery.success) return reply.code(400).send({ error: parsedQuery.error.issues[0]?.message });
+
     const session = sessionFor(req.headers);
     // EVERY Underlying's spot, because the board can hold Positions on any of them. It
     // used to read ETH's and value all six against it, which marked a BTC holding at
     // `max(0, ETH_spot - BTC_strike)` -- zero, however deep in the money it really was.
     const prices = await spotPrices().catch(() => ({}) as Record<string, number>);
+    const address = parsedQuery.data.address ?? walletAddress();
 
-    const [real, address] = canSign() ? await realHoldings(prices) : [[], null];
+    const [real, resolvedAddress] = address ? await realHoldings(prices, address) : [[], null];
 
     return {
-      address,
+      address: resolvedAddress,
       // The headline price stays ETH's: it labels the tape, not any one holding.
       spotUsd: prices.ETH === undefined ? null : usd(prices.ETH),
       holdings: [...real, ...practiceHoldings(session, prices)],

@@ -101,7 +101,7 @@ test("callOpenAICompatible omits usage when the response doesn't include token c
 
 test("callAgentForJson parses and validates a well-formed response", async () => {
   const fakeCreate: AgentCreateFn = async () => ({ content: [{ type: "text", text: '{"greeting": "hello"}' }] });
-  const result = await callAgentForJson(schema, "system", "user", fakeCreate);
+  const result = await callAgentForJson(schema, "system", "user", "test", fakeCreate);
   assert.deepEqual(result, { greeting: "hello" });
 });
 
@@ -109,23 +109,23 @@ test("callAgentForJson extracts JSON embedded in surrounding prose", async () =>
   const fakeCreate: AgentCreateFn = async () => ({
     content: [{ type: "text", text: 'Sure, here you go:\n{"greeting": "hi"}\nHope that helps!' }],
   });
-  const result = await callAgentForJson(schema, "system", "user", fakeCreate);
+  const result = await callAgentForJson(schema, "system", "user", "test", fakeCreate);
   assert.deepEqual(result, { greeting: "hi" });
 });
 
 test("callAgentForJson throws ForecastGenerationFailed on invalid JSON", async () => {
   const fakeCreate: AgentCreateFn = async () => ({ content: [{ type: "text", text: "not json at all" }] });
-  await assert.rejects(() => callAgentForJson(schema, "system", "user", fakeCreate), ForecastGenerationFailed);
+  await assert.rejects(() => callAgentForJson(schema, "system", "user", "test", fakeCreate), ForecastGenerationFailed);
 });
 
 test("callAgentForJson throws ForecastGenerationFailed when schema validation fails", async () => {
   const fakeCreate: AgentCreateFn = async () => ({ content: [{ type: "text", text: '{"wrongKey": 1}' }] });
-  await assert.rejects(() => callAgentForJson(schema, "system", "user", fakeCreate), ForecastGenerationFailed);
+  await assert.rejects(() => callAgentForJson(schema, "system", "user", "test", fakeCreate), ForecastGenerationFailed);
 });
 
 test("callAgentForJson throws ForecastGenerationFailed when the create call itself rejects", async () => {
   const fakeCreate: AgentCreateFn = async () => { throw new Error("network down"); };
-  await assert.rejects(() => callAgentForJson(schema, "system", "user", fakeCreate), ForecastGenerationFailed);
+  await assert.rejects(() => callAgentForJson(schema, "system", "user", "test", fakeCreate), ForecastGenerationFailed);
 });
 
 test("callAgentForJson reports provider, tokens, and latency for a successful call", async () => {
@@ -136,7 +136,7 @@ test("callAgentForJson reports provider, tokens, and latency for a successful ca
     usage: { inputTokens: 10, outputTokens: 5 },
   });
 
-  await callAgentForJson(schema, "system", "user", fakeCreate, (event) => events.push(event));
+  await callAgentForJson(schema, "system", "user", "test", fakeCreate, (event) => events.push(event));
 
   assert.equal(events.length, 1);
   assert.equal(events[0].provider, "groq");
@@ -149,7 +149,7 @@ test("callAgentForJson reports provider 'unknown' and no token counts when the c
   const events: any[] = [];
   const fakeCreate: AgentCreateFn = async () => ({ content: [{ type: "text", text: '{"greeting": "hello"}' }] });
 
-  await callAgentForJson(schema, "system", "user", fakeCreate, (event) => events.push(event));
+  await callAgentForJson(schema, "system", "user", "test", fakeCreate, (event) => events.push(event));
 
   assert.equal(events[0].provider, "unknown");
   assert.equal(events[0].inputTokens, undefined);
@@ -161,7 +161,7 @@ test("callAgentForJson does not log a usage event when the create call fails", a
   const fakeCreate: AgentCreateFn = async () => { throw new Error("boom"); };
 
   await assert.rejects(
-    () => callAgentForJson(schema, "system", "user", fakeCreate, (event) => events.push(event)),
+    () => callAgentForJson(schema, "system", "user", "test", fakeCreate, (event) => events.push(event)),
     ForecastGenerationFailed
   );
 

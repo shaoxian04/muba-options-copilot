@@ -121,6 +121,7 @@ export async function synthesizeAnswer(
       "was provided for part of the question, say so plainly instead " +
       'of guessing. Never use the phrase "max loss". Output ONLY JSON: {"answer": string}.',
     `Question:\n"""\n${question}\n"""\n\nAsset: ${symbol}\n\n${describeContext(context)}`,
+    "synthesizeAnswer",
     create
   );
   assertNoForbiddenPhrase(model.answer);

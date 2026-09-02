@@ -14,7 +14,7 @@
  */
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { cards, fixtures, FORBIDDEN, stubApi, TEST_API_TOKEN } from "./stub";
+import { cards, fixtures, FORBIDDEN, installFakeWallet, stubApi, TEST_API_TOKEN } from "./stub";
 
 const agentCard = fixtures.proposeAgent.cardRef;
 const overrideCard = cards.find((c) => c.cardRef !== agentCard)!;
@@ -34,6 +34,15 @@ const deal = async (page: Page) => {
 const openConfirm = async (page: Page, cardRef: string) => {
   await page.locator(`[data-card-ref="${cardRef}"]`).click();
   await expect(page.getByTestId("confirm-modal")).toBeVisible();
+};
+
+/**
+ * Connects the fake wallet -- WalletConnect now lives inside `ConfirmModal` (issue #30
+ * moved Confirm there), so every journey that reaches it opens a confirmation first.
+ */
+const connectWallet = async (page: Page) => {
+  await page.getByTestId("connect-wallet").click();
+  await expect(page.getByTestId("wallet-address")).toBeVisible();
 };
 
 test.describe("selection, and who chose", () => {
@@ -493,7 +502,7 @@ test.describe("finishing, for real and for practice", () => {
     expect(styles[1]!.border).not.toContain("dashed");
   });
 
-  test("a Practice Run issues no request to /fill", async ({ page }) => {
+  test("a Practice Run issues no request to /fill/prepare", async ({ page }) => {
     const traffic = await stubApi(page);
     await page.goto("/");
     await deal(page);
@@ -504,7 +513,7 @@ test.describe("finishing, for real and for practice", () => {
 
     // Asserted on captured traffic, not on code shape: the surface may not even try.
     expect(traffic.paths()).toContain("/practice");
-    expect(traffic.paths()).not.toContain("/fill");
+    expect(traffic.paths()).not.toContain("/fill/prepare");
   });
 
   test("labels a practice holding as practice, three ways", async ({ page }) => {
@@ -569,22 +578,96 @@ test.describe("finishing, for real and for practice", () => {
 
   test("Confirm spends only on the Trader's own press", async ({ page }) => {
     const traffic = await stubApi(page);
+    await installFakeWallet(page);
+    await page.goto("/");
+    await deal(page);
+    await openConfirm(page, agentCard);
+    await connectWallet(page);
+
+    // Everything up to this point priced a real Order. Nothing has been signed.
+    expect(traffic.paths()).not.toContain("/fill/prepare");
+
+    await page.getByTestId("confirm").click();
+    await expect.poll(() => traffic.paths().filter((p) => p === "/fill/prepare").length).toBe(1);
+    await expect.poll(() => traffic.paths().filter((p) => p === "/fill/settle").length).toBe(1);
+  });
+
+  test("Confirm stays disabled until a wallet is connected", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await installFakeWallet(page);
     await page.goto("/");
     await deal(page);
     await openConfirm(page, agentCard);
 
-    // Everything up to this point priced a real Order. Nothing has been signed.
-    expect(traffic.paths()).not.toContain("/fill");
+    await expect(page.getByTestId("confirm")).toBeDisabled();
+    await expect(page.getByTestId("wallet-gate")).toBeVisible();
+    // Practice Run never needs a wallet, and stays pressable throughout.
+    await expect(page.getByTestId("practice")).toBeEnabled();
+
+    await page.getByTestId("confirm").click({ force: true }).catch(() => {});
+    expect(traffic.paths()).not.toContain("/fill/prepare");
+
+    await connectWallet(page);
+    await expect(page.getByTestId("confirm")).toBeEnabled();
+    await expect(page.getByTestId("wallet-gate")).toHaveCount(0);
+  });
+
+  test("shows a connecting state, then the connected address", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallet(page);
+    await page.goto("/");
+    await deal(page);
+    await openConfirm(page, agentCard);
+
+    const connect = page.getByTestId("connect-wallet");
+    await expect(connect).toHaveText("Connect wallet");
+    await connect.click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+    await expect(page.getByTestId("connect-wallet")).toHaveCount(0);
+  });
+
+  test("offers a Verify button when a wallet was already authorised before this page loaded", async ({ page }) => {
+    // installFakeWallet pre-authorises eth_accounts, simulating a wallet the browser
+    // already trusted from a previous visit -- connectedAddress() picks this up on
+    // mount without prompting, but verification is a fresh signature every page load.
+    await stubApi(page);
+    await installFakeWallet(page, { preAuthorised: true });
+    await page.goto("/");
+    await deal(page);
+    await openConfirm(page, agentCard);
+
+    await expect(page.getByTestId("wallet-address")).toHaveCount(0);
+    const verify = page.getByTestId("verify-wallet");
+    await expect(verify).toBeVisible();
+    await verify.click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+  });
+
+  test("recovers from a transaction the chain hasn't shown it yet", async ({ page }) => {
+    const traffic = await stubApi(page, "settle-pending-once");
+    await installFakeWallet(page);
+    await page.goto("/");
+    // The retry delay is a real setTimeout in confirm() -- let the page's clock run
+    // instead of the frozen one stubApi installs for the countdown timers, the same
+    // fix needed for the wallet-signing flow itself.
+    await page.clock.resume();
+    await deal(page);
+    await openConfirm(page, agentCard);
+    await connectWallet(page);
 
     await page.getByTestId("confirm").click();
-    await expect.poll(() => traffic.paths().filter((p) => p === "/fill").length).toBe(1);
+
+    await expect(page.getByTestId("receipt")).toBeVisible({ timeout: 10_000 });
+    await expect.poll(() => traffic.paths().filter((p) => p === "/fill/settle").length).toBe(2);
   });
 
   test("hands the Trader the transaction once real money has moved, with no celebration", async ({ page }) => {
     await stubApi(page);
+    await installFakeWallet(page);
     await page.goto("/");
     await deal(page);
     await openConfirm(page, agentCard);
+    await connectWallet(page);
     await expect(page.getByTestId("receipt")).toHaveCount(0);
 
     await page.getByTestId("confirm").click();
@@ -601,27 +684,72 @@ test.describe("finishing, for real and for practice", () => {
     }
   });
 
-  test("sends the bearer token /fill is gated on", async ({ page }) => {
+  test("still shows the receipt when reporting success back to the server fails", async ({ page }) => {
+    // The wallet has already broadcast and mined the transaction by the time the app
+    // tells the backend about it -- real money has moved, so a failure of THAT report
+    // must never be shown to the Trader as if their fill itself had failed.
+    await stubApi(page, "settle-fails");
+    await installFakeWallet(page);
+    await page.goto("/");
+    await deal(page);
+    await openConfirm(page, agentCard);
+    await connectWallet(page);
+
+    await page.getByTestId("confirm").click();
+
+    await expect(page.getByTestId("receipt")).toBeVisible();
+    await expect(page.getByTestId("refusal")).toHaveCount(0);
+  });
+
+  test("shows a failure and releases the reservation when the wallet's transaction fails on-chain", async ({
+    page,
+  }) => {
+    const traffic = await stubApi(page);
+    await installFakeWallet(page, { fail: true });
+    await page.goto("/");
+    await deal(page);
+    await openConfirm(page, agentCard);
+    await connectWallet(page);
+
+    const before = await page.getByTestId("risk-remaining").textContent();
+
+    await page.getByTestId("confirm").click();
+
+    await expect(page.getByTestId("receipt")).toHaveCount(0);
+    await expect(page.getByTestId("refusal")).toBeVisible();
+    await expect.poll(() => traffic.paths().filter((p) => p === "/fill/settle").length).toBe(1);
+    const settleBody = traffic.all.find((r) => new URL(r.url()).pathname === "/fill/settle")!.postDataJSON();
+    expect(settleBody.txHash).toBeUndefined(); // nothing to check -- the send itself never returned a hash
+
+    // The reservation was released -- the Risk Budget reads the same as before Confirm.
+    await expect(page.getByTestId("risk-remaining")).toHaveText(before!);
+  });
+
+  test("sends the bearer token /fill/prepare is gated on", async ({ page }) => {
     // `.env.example` states the contract: "The frontend sends it as `Authorization:
     // Bearer ...`". Without the header, Confirm answers 401 for anyone who followed the
     // documented security posture -- and it only breaks once a token is set, which is
     // exactly the configuration that most needs to work.
     const traffic = await stubApi(page);
+    await installFakeWallet(page);
     await page.goto("/");
     await deal(page);
     await openConfirm(page, agentCard);
+    await connectWallet(page);
     await page.getByTestId("confirm").click();
-    await expect.poll(() => traffic.paths().includes("/fill")).toBe(true);
+    await expect.poll(() => traffic.paths().includes("/fill/prepare")).toBe(true);
 
-    const request = traffic.all.find((r) => new URL(r.url()).pathname === "/fill")!;
+    const request = traffic.all.find((r) => new URL(r.url()).pathname === "/fill/prepare")!;
     expect(await request.headerValue("authorization")).toBe(`Bearer ${TEST_API_TOKEN}`);
   });
 
   test("surfaces a moved quote before the Trader confirms, not after", async ({ page }) => {
     const traffic = await stubApi(page);
+    await installFakeWallet(page);
     await page.goto("/");
     await deal(page);
     await openConfirm(page, agentCard);
+    await connectWallet(page);
     await expect(page.getByTestId("confirm")).toBeEnabled();
 
     // The book reprices under them while the proposal is on screen.
@@ -632,11 +760,12 @@ test.describe("finishing, for real and for practice", () => {
     await expect(page.getByTestId("confirm")).toBeDisabled();
     await expect(page.getByTestId("practice")).toBeDisabled();
     // Story 30: never filled at a price they did not see.
-    expect(traffic.paths()).not.toContain("/fill");
+    expect(traffic.paths()).not.toContain("/fill/prepare");
   });
 
   test("issue #32: a moved quote does not follow the Trader when they close and reopen for a different Card", async ({ page }) => {
     const traffic = await stubApi(page);
+    await installFakeWallet(page);
     await page.goto("/");
     await deal(page);
     await openConfirm(page, agentCard);
@@ -652,6 +781,7 @@ test.describe("finishing, for real and for practice", () => {
     // Trader was shown going stale, not a flag that sticks to the confirmation itself.
     await openConfirm(page, overrideCard.cardRef);
     await expect(page.getByTestId("quote-moved")).toHaveCount(0);
+    await connectWallet(page);
     await expect(page.getByTestId("confirm")).toBeEnabled();
   });
 });
@@ -677,7 +807,7 @@ test.describe("the Risk Budget refusing", () => {
     await page.getByTestId("confirm").click({ force: true }).catch(() => {});
     await page.getByTestId("practice").click({ force: true }).catch(() => {});
 
-    expect(traffic.paths()).not.toContain("/fill");
+    expect(traffic.paths()).not.toContain("/fill/prepare");
     expect(traffic.paths()).not.toContain("/practice");
   });
 });
@@ -699,7 +829,7 @@ test.describe("the halt states", () => {
     await expect(clashing).toHaveCount(fixtures.veto.clashingFields.length * 2);
     await expect(clashing.first()).toContainText("they disagree");
 
-    expect(traffic.paths()).not.toContain("/fill");
+    expect(traffic.paths()).not.toContain("/fill/prepare");
     expect(traffic.paths()).not.toContain("/practice");
   });
 
@@ -800,6 +930,7 @@ test.describe("the halt states", () => {
 test.describe("the golden path", () => {
   test("deal, override, confirm -- and nothing leaks on the way", async ({ page }) => {
     const traffic = await stubApi(page);
+    await installFakeWallet(page);
     await page.goto("/");
 
     // Dealt.
@@ -809,6 +940,7 @@ test.describe("the golden path", () => {
     // Overruled, and the confirmation opens for it.
     await openConfirm(page, overrideCard.cardRef);
     await expect(page.getByTestId("chosen-by")).toContainText("your pick, not the agent's");
+    await connectWallet(page);
 
     // The numbers came from the server, and they are the Card's.
     await expect(page.getByTestId("premium")).toHaveText(overrideCard.premiumUsdc.display);
@@ -816,14 +948,32 @@ test.describe("the golden path", () => {
 
     // Confirmed, by a press inside the confirmation -- the only Confirm in the product.
     await page.getByTestId("confirm").click();
-    await expect.poll(() => traffic.paths().filter((p) => p === "/fill").length).toBe(1);
+    await expect.poll(() => traffic.paths().filter((p) => p === "/fill/prepare").length).toBe(1);
+    await expect.poll(() => traffic.paths().filter((p) => p === "/fill/settle").length).toBe(1);
 
-    for (const body of traffic.bodies) {
+    // Every response EXCEPT /fill/prepare's own -- which legitimately carries the real
+    // transaction calldata the Trader's own wallet has to see to sign it (ADR-0011) --
+    // still carries none of this. /auth/challenge and /auth/verify are exempted too,
+    // for a different, narrower reason: they legitimately echo the TRADER'S OWN wallet
+    // address back (proving sign-in, not naming an Order), which happens to be the same
+    // 40-hex-character shape FORBIDDEN's generic address pattern watches for. None of
+    // these three are exempted from having been fetched -- only from the scan itself.
+    const exemptPaths = new Set(["/fill/prepare", "/auth/challenge", "/auth/verify"]);
+    const exemptIndexes = new Set(
+      traffic.all.flatMap((r, i) => (exemptPaths.has(new URL(r.url()).pathname) ? [i] : []))
+    );
+    expect(exemptIndexes.size).toBeGreaterThanOrEqual(3);
+    for (const [i, body] of traffic.bodies.entries()) {
+      if (exemptIndexes.has(i)) continue;
       for (const forbidden of FORBIDDEN) expect(body).not.toMatch(forbidden);
     }
+    // And /fill/prepare's body is exactly the fixture the real API produced -- not a
+    // hand-widened stub standing in for a contract nobody checked.
+    const prepareIndex = traffic.all.findIndex((r) => new URL(r.url()).pathname === "/fill/prepare");
+    expect(traffic.bodies[prepareIndex]).toBe(JSON.stringify(fixtures.fillPrepare));
   });
 
-  test("the same walk, ending in practice, never touches /fill", async ({ page }) => {
+  test("the same walk, ending in practice, never touches /fill/prepare", async ({ page }) => {
     const traffic = await stubApi(page);
     await page.goto("/");
 
@@ -833,7 +983,7 @@ test.describe("the golden path", () => {
     await page.getByTestId("practice").click();
     await expect(page.getByTestId("holding")).toHaveCount(1);
 
-    expect(traffic.paths()).not.toContain("/fill");
+    expect(traffic.paths()).not.toContain("/fill/prepare");
   });
 });
 
