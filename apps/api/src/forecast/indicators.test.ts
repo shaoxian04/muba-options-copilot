@@ -124,3 +124,30 @@ test("fetchIndicators leaves details undefined for an upstream 404", async () =>
     (e: unknown) => e instanceof IndicatorsUnavailable && e.details === undefined
   );
 });
+
+test("fetchIndicators turns a 200 with an unparseable body into IndicatorsUnavailable, not a raw SyntaxError", async () => {
+  await assert.rejects(
+    () => fetchIndicators("ETH", deps({
+      fetch: async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError("Unexpected token < in JSON at position 0"); } }),
+    })),
+    IndicatorsUnavailable
+  );
+});
+
+test("fetchIndicators keeps the JSON parser's message out of the public message for a bad body", async () => {
+  await assert.rejects(
+    () => fetchIndicators("ETH", deps({
+      fetch: async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError("Unexpected token < in JSON at position 0"); } }),
+    })),
+    (e: unknown) => e instanceof IndicatorsUnavailable && !e.message.includes("Unexpected token") && !!e.details?.includes("Unexpected token")
+  );
+});
+
+test("fetchIndicators leaves status undefined for a bad body -- a 200 isn't an upstream status failure", async () => {
+  await assert.rejects(
+    () => fetchIndicators("ETH", deps({
+      fetch: async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError("Unexpected token < in JSON at position 0"); } }),
+    })),
+    (e: unknown) => e instanceof IndicatorsUnavailable && e.status === undefined
+  );
+});
