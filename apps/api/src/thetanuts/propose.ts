@@ -14,7 +14,7 @@
  */
 import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
 import type { TradeIntent, TradeProposal, SettlementScenario, PayoffPoint } from "@copilot/shared";
-import { buyableOrders, CALL, PUT, daysToExpiry, orderIdentity, isEth } from "./orders.js";
+import { buyableOrders, CALL, PUT, daysToExpiry, orderIdentity, underlyingOf } from "./orders.js";
 import { payoffAt, priceOrder, StakeTooSmall, type OrderEconomics } from "./pricing.js";
 import { spotPrice } from "./market.js";
 import { usd } from "../format.js";
@@ -59,9 +59,21 @@ const RELOADS = "Maker liquidity renews around 09:00 UTC.";
 function assertExpressesIntent(order: OrderWithSignature, intent: TradeIntent): void {
   const wantType = intent.direction === "DOWN" ? PUT : CALL;
   if (order.order.optionType !== wantType)
-    throw new NoSuitableOrder(intent, `That contract does not express a ${intent.direction} view on ETH.`, false);
+    throw new NoSuitableOrder(
+      intent,
+      `That contract does not express a ${intent.direction} view on ${intent.underlying}.`,
+      false
+    );
 
-  if (!isEth(order)) throw new NoSuitableOrder(intent, "That contract is not on ETH.", false);
+  // The Order's own price feed, against the Underlying that was asked for. An Order whose
+  // feed is not on the registry fails this too, and must: we cannot say what it prices.
+  const on = underlyingOf(order);
+  if (!on || on.symbol !== intent.underlying)
+    throw new NoSuitableOrder(
+      intent,
+      `That contract is not on ${intent.underlying}${on ? ` -- it is on ${on.symbol}.` : "."}`,
+      false
+    );
 
   const days = daysToExpiry(order);
   if (days <= 0) throw new NoSuitableOrder(intent, "That contract has already expired.", false);
@@ -85,7 +97,10 @@ function selectOrder(orders: OrderWithSignature[], intent: TradeIntent): OrderWi
   const wantType = intent.direction === "DOWN" ? PUT : CALL;
   const matching = orders.filter((o) => o.order.optionType === wantType);
   if (!matching.length)
-    throw new NoSuitableOrder(intent, `Nothing on the book to express a ${intent.direction} view on ETH right now.`);
+    throw new NoSuitableOrder(
+      intent,
+      `Nothing on the book to express a ${intent.direction} view on ${intent.underlying} right now.`
+    );
 
   // Nearest expiry to the requested horizon, never already expired.
   const live = matching.filter((o) => daysToExpiry(o) > 0);
@@ -98,7 +113,7 @@ function selectOrder(orders: OrderWithSignature[], intent: TradeIntent): OrderWi
 }
 
 /**
- * A ladder of "if ETH settles here, you get this" rows.
+ * A ladder of "if it settles here, you get this" rows.
  *
  * This deliberately replaces any single predicted outcome. We state what is certain --
  * Max Loss and breakeven -- and draw the rest, rather than quoting an upside estimate
@@ -173,7 +188,7 @@ export async function proposeOrder(
     throw e;
   }
 
-  const spot = await spotPrice();
+  const spot = await spotPrice(intent.underlying);
 
   const proposal: TradeProposal = {
     intent,
@@ -219,7 +234,7 @@ export async function proposeChosenOrder(
 ): Promise<{ proposal: TradeProposal; order: OrderWithSignature; economics: OrderEconomics }> {
   // The same `orderIdentity` the reference was minted from -- these two must never
   // drift apart, which is why neither builds its own.
-  const fresh = (await buyableOrders()).find((o) => orderIdentity(o) === orderIdentity(chosen));
+  const fresh = (await buyableOrders(intent.underlying)).find((o) => orderIdentity(o) === orderIdentity(chosen));
   if (!fresh) throw new QuoteMoved();
 
   return proposeOrder(intent, fresh, "TRADER");
@@ -248,9 +263,9 @@ export class QuoteMoved extends Error {
 export async function proposeTrade(
   intent: TradeIntent
 ): Promise<{ proposal: TradeProposal; order: OrderWithSignature; economics: OrderEconomics }> {
-  const orders = await buyableOrders();
+  const orders = await buyableOrders(intent.underlying);
   if (!orders.length)
-    throw new NoSuitableOrder(intent, "The order book is empty right now.");
+    throw new NoSuitableOrder(intent, `Nothing is quoting on ${intent.underlying} right now.`);
 
   return proposeOrder(intent, selectOrder(orders, intent));
 }

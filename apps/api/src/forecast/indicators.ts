@@ -8,9 +8,15 @@ import { Indicators } from "@copilot/shared";
 import { agentsEndpoint } from "../env.js";
 import { fetchWithRetry } from "./marketData.js";
 
-/** The Python service is down or unreachable. Callers treat this as "no indicators", never as an error worth failing a whole answer over. */
+/**
+ * The Python service is down or unreachable, or sent a shape we don't recognize. Callers treat
+ * this as "no indicators", never as an error worth failing a whole answer over.
+ *
+ * `details` carries zod's message for schema-drift failures only -- log it server-side, never
+ * send it to the browser, since it describes the full Indicators shape.
+ */
 export class IndicatorsUnavailable extends Error {
-  constructor(message: string, readonly status?: number) {
+  constructor(message: string, readonly status?: number, readonly details?: string) {
     super(message);
   }
 }
@@ -43,6 +49,11 @@ export async function fetchIndicators(symbol: string, deps: IndicatorsDeps = def
   if (!res.ok) throw new IndicatorsUnavailable(`Agents service returned ${res.status} for ${trimmed}`, res.status);
 
   const parsed = Indicators.safeParse(await res.json());
-  if (!parsed.success) throw new IndicatorsUnavailable(`Agents service sent an unrecognized Indicators shape for ${trimmed}`);
+  if (!parsed.success)
+    throw new IndicatorsUnavailable(
+      `Agents service sent an unrecognized Indicators shape for ${trimmed}`,
+      undefined,
+      parsed.error.message
+    );
   return parsed.data;
 }

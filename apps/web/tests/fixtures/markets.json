@@ -1,0 +1,130 @@
+{
+  "markets": [
+    {
+      "symbol": "BTC",
+      "name": "Bitcoin",
+      "spotUsd": {
+        "value": 77882.14,
+        "display": "$77,882.14"
+      },
+      "callDepthUsdc": {
+        "value": 12000,
+        "display": "$12k"
+      },
+      "putDepthUsdc": {
+        "value": 500,
+        "display": "$500"
+      },
+      "callShare": 0.96,
+      "buyable": {
+        "value": 2,
+        "display": "2"
+      }
+    },
+    {
+      "symbol": "ETH",
+      "name": "Ethereum",
+      "spotUsd": {
+        "value": 2445.49,
+        "display": "$2,445.49"
+      },
+      "callDepthUsdc": {
+        "value": 1500,
+        "display": "$2k"
+      },
+      "putDepthUsdc": {
+        "value": 2500,
+        "display": "$3k"
+      },
+      "callShare": 0.375,
+      "buyable": {
+        "value": 8,
+        "display": "8"
+      }
+    },
+    {
+      "symbol": "SOL",
+      "name": "Solana",
+      "spotUsd": {
+        "value": 102.164,
+        "display": "$102.16"
+      },
+      "callDepthUsdc": {
+        "value": 9000,
+        "display": "$9k"
+      },
+      "putDepthUsdc": {
+        "value": 7000,
+        "display": "$7k"
+      },
+      "callShare": 0.5625,
+      "buyable": {
+        "value": 2,
+        "display": "2"
+      }
+    },
+    {
+      "symbol": "BNB",
+      "name": "BNB",
+      "spotUsd": {
+        "value": 685.89,
+        "display": "$685.89"
+      },
+      "callDepthUsdc": {
+        "value": 8000,
+        "display": "$8k"
+      },
+      "putDepthUsdc": {
+        "value": 8000,
+        "display": "$8k"
+      },
+      "callShare": 0.5,
+      "buyable": {
+        "value": 2,
+        "display": "2"
+      }
+    },
+    {
+      "symbol": "XRP",
+      "name": "XRP",
+      "spotUsd": {
+        "value": 1.3657,
+        "display": "$1.3657"
+      },
+      "callDepthUsdc": {
+        "value": 6000,
+        "display": "$6k"
+      },
+      "putDepthUsdc": {
+        "value": 0,
+        "display": "$0"
+      },
+      "callShare": 1,
+      "buyable": {
+        "value": 1,
+        "display": "1"
+      }
+    },
+    {
+      "symbol": "AVAX",
+      "name": "Avalanche",
+      "spotUsd": {
+        "value": 7.22,
+        "display": "$7.220"
+      },
+      "callDepthUsdc": {
+        "value": 0,
+        "display": "$0"
+      },
+      "putDepthUsdc": {
+        "value": 5000,
+        "display": "$5k"
+      },
+      "callShare": 0,
+      "buyable": {
+        "value": 1,
+        "display": "1"
+      }
+    }
+  ]
+}

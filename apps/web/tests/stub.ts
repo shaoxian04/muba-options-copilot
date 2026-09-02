@@ -19,6 +19,12 @@ import deckDown3 from "./fixtures/deck-down-3.json" with { type: "json" };
 import deckUp1 from "./fixtures/deck-up-1.json" with { type: "json" };
 import deckEmpty from "./fixtures/deck-empty.json" with { type: "json" };
 import deckCompressed from "./fixtures/deck-compressed.json" with { type: "json" };
+import deckSolDown1 from "./fixtures/deck-sol-down-1.json" with { type: "json" };
+import deckSolDown2 from "./fixtures/deck-sol-down-2.json" with { type: "json" };
+import deckSolUp1 from "./fixtures/deck-sol-up-1.json" with { type: "json" };
+import markets from "./fixtures/markets.json" with { type: "json" };
+import depthEth from "./fixtures/depth-eth.json" with { type: "json" };
+import depthEthMarked from "./fixtures/depth-eth-marked.json" with { type: "json" };
 import session from "./fixtures/session.json" with { type: "json" };
 import positionsEmpty from "./fixtures/positions-empty.json" with { type: "json" };
 import positionsAfterPractice from "./fixtures/positions-after-practice.json" with { type: "json" };
@@ -58,6 +64,10 @@ export const FIXTURE_NOW = Date.UTC(2026, 0, 15, 12, 0, 0);
 
 export const fixtures = {
   deckDown1,
+  deckSolDown1,
+  deckSolDown2,
+  deckSolUp1,
+  markets,
   deckUp1,
   deckCompressed,
   session,
@@ -68,11 +78,19 @@ export const fixtures = {
   positionsAfterPractice,
   fillPrepare,
   authChallenge,
+  depthEth,
+  depthEthMarked,
 };
 
 /** Longest shot first, so index 0 is the leftmost Card in the row. */
 export const cards = deckDown1.cards;
 
+/**
+ * "deep-budget" (issue #30): a Risk Budget generous enough that every fixture Card's
+ * $500 Maker Depth is the smaller of the two, so the confirmation's size cap binds on
+ * DEPTH instead of budget -- the opposite branch from every other scenario here, where
+ * the $5 default budget is always the tighter ceiling.
+ */
 export type Scenario =
   | "normal"
   | "veto"
@@ -81,7 +99,9 @@ export type Scenario =
   | "compressed"
   | "over-budget"
   | "settle-fails"
-  | "settle-pending-once";
+  | "settle-pending-once"
+  | "depth-marked"
+  | "deep-budget";
 
 export interface Traffic {
   /** Every request the page made to the API, in order. */
@@ -97,6 +117,17 @@ export interface Traffic {
    * with. The surface has to notice on its next poll and say so BEFORE they confirm.
    */
   moveTheQuote: () => void;
+  /**
+   * Issue #32 -- hold the NEXT response to `pathname` open until the test releases it.
+   *
+   * The loading states this ticket is about only exist for the width of one network
+   * round trip, which a local stub answers instantly -- too fast for Playwright to ever
+   * observe. This makes that window as wide as a test needs: the held request sits
+   * unanswered until the returned function is called, so a test can assert on the
+   * loading affordance in between. Only the next matching request is held; the one
+   * after it answers normally, the same way a real slow request eventually completes.
+   */
+  hold: (pathname: string) => () => void;
 }
 
 const json = (route: Route, body: unknown, traffic: Traffic, status = 200) => {
@@ -107,9 +138,21 @@ const json = (route: Route, body: unknown, traffic: Traffic, status = 200) => {
 
 const authorised = (request: Request) => request.headers()["authorization"] === `Bearer ${TEST_API_TOKEN}`;
 
+/**
+ * The Deck for whatever was asked for.
+ *
+ * Keyed on `asset` first, because the surface asking for the wrong Underlying and being
+ * handed an ETH Deck anyway is precisely the failure the required parameter exists to
+ * prevent -- a stub that ignored it would let that bug through.
+ */
 const deckFor = (url: URL) => {
+  const asset = url.searchParams.get("asset");
   const direction = url.searchParams.get("direction");
   const days = url.searchParams.get("horizonDays");
+  if (asset === "SOL") {
+    if (direction === "UP") return deckSolUp1;
+    return days === "2" ? deckSolDown2 : deckSolDown1;
+  }
   if (direction === "UP") return deckUp1;
   if (days === "2") return deckDown2;
   if (days === "3") return deckDown3;
@@ -126,6 +169,81 @@ const reprice = <T extends { cards: Array<{ premiumUsdc: { value: number; displa
   ...deck,
   cards: deck.cards.map((c) => ({ ...c, premiumUsdc: { ...c.premiumUsdc, display: "$2.15" } })),
 });
+
+/**
+ * A Risk Budget generous enough that Maker Depth binds the confirmation's size cap
+ * instead of the budget (issue #30, the "deep-budget" scenario). Every other scenario
+ * in this stub leaves the $5 default budget as the tighter of the two -- this is the
+ * one place the OTHER branch of "whichever binds first" is reachable.
+ */
+const deepBudget = (base: typeof session): typeof session => ({
+  ...base,
+  riskBudgetUsdc: 1000,
+  remainingUsdc: 1000,
+  figures: {
+    ...base.figures,
+    riskBudgetUsdc: { value: 1000, display: "$1,000.00" },
+    remainingUsdc: { value: 1000, display: "$1,000.00" },
+  },
+});
+
+/**
+ * Money, formatted the way `apps/api/src/format.ts` formats it -- two decimal places,
+ * a thousands separator. A duplicate on purpose: this is test infrastructure standing
+ * in for what the REAL server derives on a resize (issue #30's `priceOrder`), and
+ * `no-arithmetic.test.ts` does not reach `tests/`, so it may do this without being the
+ * violation it would be inside `apps/web/components/` or `apps/web/lib/`.
+ */
+const money = (v: number): string => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/**
+ * What the real POST /rfq answers: always 501, always echoing back the request. This
+ * mirrors `rfqRefusalMessage` in `apps/api/src/rfq.ts` -- test infrastructure standing
+ * in for the server, not the browser originating a figure. ETH spot is fixed at
+ * `deckDown1.spotUsd.value` ($2,445.49) across every fixture Deck.
+ */
+function rfqRefusal(body: { underlying: string; direction: "UP" | "DOWN"; strikeOffsetPct: number; horizonDays: number; sizeUsdc: number }) {
+  const spot = deckDown1.spotUsd.value;
+  const strike = money(spot * (1 + body.strikeOffsetPct / 100));
+  const directionWord = body.direction === "DOWN" ? "below" : "above";
+  return {
+    error:
+      "The sealed-bid RFQ backend is not built yet. Nothing was sent to a maker, nothing was signed, " +
+      "and no USDC moved. " +
+      `You asked for: ${body.underlying} ${directionWord} ${strike}, ${body.horizonDays} days, at most ${money(body.sizeUsdc)}.`,
+  };
+}
+
+/**
+ * What the real `/propose` does when a size changes: re-derive premium, Max Loss and
+ * the contract count for the SAME Order at the new stake. The fixture book quotes a
+ * fixed price per contract, so scaling the base answer by `sizeUsdc / baseSizeUsdc`
+ * reproduces exactly what `priceOrder` would answer -- this is standing in for the
+ * server, not the browser originating a figure.
+ */
+function resizeProposal(answer: any, sizeUsdc: number): any {
+  if (!answer || answer.kind !== "PROPOSAL") return answer;
+  const baseSize = answer.proposal.intent.sizeUsdc;
+  if (sizeUsdc === baseSize) return answer;
+  const scale = sizeUsdc / baseSize;
+  const premium = Number((answer.proposal.premiumUsdc * scale).toFixed(6));
+  const contractsValue = Number((answer.proposal.figures.contracts.value * scale).toFixed(6));
+  return {
+    ...answer,
+    proposal: {
+      ...answer.proposal,
+      intent: { ...answer.proposal.intent, sizeUsdc },
+      premiumUsdc: premium,
+      maxLossUsdc: premium,
+      figures: {
+        ...answer.proposal.figures,
+        premiumUsdc: { value: premium, display: money(premium) },
+        maxLossUsdc: { value: premium, display: money(premium) },
+        contracts: { value: contractsValue, display: contractsValue.toFixed(6) },
+      },
+    },
+  };
+}
 
 /**
  * Install the stub.
@@ -164,6 +282,12 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
     };
   };
 
+  // Issue #32's `hold`/`release` pair -- see `Traffic.hold` above for why this exists.
+  // Keyed by pathname; only ONE outstanding hold per path at a time, which is all any
+  // test here needs.
+  const gates = new Map<string, Promise<void>>();
+  const releasers = new Map<string, () => void>();
+
   const traffic: Traffic = {
     all: [],
     paths: () => traffic.all.map((r) => new URL(r.url()).pathname),
@@ -171,11 +295,28 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
     moveTheQuote: () => {
       moved = true;
     },
+    hold: (pathname: string) => {
+      const promise = new Promise<void>((resolve) => releasers.set(pathname, resolve));
+      gates.set(pathname, promise);
+      return () => {
+        releasers.get(pathname)?.();
+        gates.delete(pathname);
+        releasers.delete(pathname);
+      };
+    },
   };
 
   await page.route(`${API}/**`, async (route, request) => {
     traffic.all.push(request);
     const url = new URL(request.url());
+
+    // Block here, before the response is decided, so the request is genuinely in
+    // flight from the browser's point of view for as long as the test wants it to be.
+    const gate = gates.get(url.pathname);
+    if (gate) {
+      gates.delete(url.pathname);
+      await gate;
+    }
 
     switch (url.pathname) {
       case "/deck": {
@@ -184,8 +325,17 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         return json(route, moved ? reprice(deckFor(url)) : deckFor(url), traffic);
       }
 
+      case "/markets":
+        return json(route, markets, traffic);
+
+      case "/depth":
+        // The marked variant carries a held Position, a strike dimmed against the
+        // default horizon, and a nonzero excluded count -- three things the real
+        // fixture book does not happen to have, and `depth.spec.ts` asserts on.
+        return json(route, scenario === "depth-marked" ? depthEthMarked : depthEth, traffic);
+
       case "/session":
-        return json(route, sessionSnapshot(), traffic);
+        return json(route, scenario === "deep-budget" ? deepBudget(sessionSnapshot()) : sessionSnapshot(), traffic);
 
       case "/positions":
         return json(route, practised ? positionsAfterPractice : positionsEmpty, traffic);
@@ -198,15 +348,29 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         if (scenario === "empty" || scenario === "no-order") return json(route, noOrder, traffic);
         if (scenario === "over-budget") return json(route, refusal.body, traffic, refusal.status);
 
-        const body = request.postDataJSON() as { cardRef?: string };
+        const body = request.postDataJSON() as { cardRef?: string; sizeUsdc?: number };
         const answer = body.cardRef ? fixtures.proposeByCard[body.cardRef] : proposeAgent;
         if (!answer) return route.fulfill({ status: 410, contentType: "application/json", body: '{"error":"gone"}' });
-        return json(route, answer, traffic);
+        // Issue #30: a resize is a fresh round trip against the same `cardRef` at a
+        // different `sizeUsdc`. Standing in for what `priceOrder` would re-derive.
+        return json(route, resizeProposal(answer, body.sizeUsdc ?? answer.proposal.intent.sizeUsdc), traffic);
       }
 
       case "/practice":
         practised = true;
         return json(route, practiceResult, traffic);
+
+      /** Issue #31 -- always 501, the honest refusal, echoing back the request. */
+      case "/rfq": {
+        const body = request.postDataJSON() as {
+          underlying: string;
+          direction: "UP" | "DOWN";
+          strikeOffsetPct: number;
+          horizonDays: number;
+          sizeUsdc: number;
+        };
+        return json(route, rfqRefusal(body), traffic, 501);
+      }
 
       /*
        * Deliberately reachable, and deliberately gated.

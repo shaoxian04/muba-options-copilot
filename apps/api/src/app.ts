@@ -18,14 +18,19 @@ import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
-import { ProposeRequest, type ProposeResult } from "@copilot/shared";
+import { ProposeRequest, UnderlyingSymbol, MAX_HORIZON_DAYS, type ProposeResult } from "@copilot/shared";
 import { canSign, walletAddress, chain } from "./thetanuts/client.js";
-import { buyableOrders, impliedVol, daysToExpiry, orderIdentity, PUT } from "./thetanuts/orders.js";
-import { spotPrice } from "./thetanuts/market.js";
+import { buyableOrders, daysToExpiry, orderIdentity, PUT } from "./thetanuts/orders.js";
+import { impliedMovePct } from "./thetanuts/implied-move.js";
+import { spotPrice, spotPrices } from "./thetanuts/market.js";
+import { UnknownUnderlying } from "./thetanuts/underlyings.js";
 import { proposeTrade, proposeChosenOrder, NoSuitableOrder, QuoteMoved } from "./thetanuts/propose.js";
 import { buildDeck } from "./thetanuts/deck.js";
+import { buildDepth } from "./thetanuts/depth-view.js";
+import { marketOverview } from "./thetanuts/markets.js";
 import { reviewIntent } from "./agents/review.js";
 import { practiceRoutes, practiceHoldings } from "./practice.js";
+import { rfqRoutes } from "./rfq.js";
 import { safeErrorResponse } from "./errors.js";
 import { realHoldings } from "./thetanuts/holdings.js";
 import { prepareFillTx, UnsafeOrder } from "./thetanuts/prepareFill.js";
@@ -81,16 +86,39 @@ const apiToken = (): string | undefined => process.env.COPILOT_API_TOKEN || unde
  * repeat one that will drift.
  */
 export const COST_ROUTE_MAX_PER_MINUTE = 30;
+
+/** The period `/book` quotes its Implied Move over. A week reads as "the near future". */
+const BOOK_MOVE_DAYS = 7;
 const COST_ROUTE_LIMIT = { rateLimit: { max: COST_ROUTE_MAX_PER_MINUTE, timeWindow: "1 minute" } };
 
 /**
- * A query string arrives as strings, so numbers are coerced -- but only into the range
- * the book actually trades. ETH puts run to 3 days and no further.
+ * A query string arrives as strings, so numbers are coerced.
+ *
+ * `asset` is REQUIRED and has no default. A default of ETH is how an ETH-only assumption
+ * survives the migration meant to remove it -- the request succeeds, the Trader is shown
+ * ETH, and nothing reports a problem.
+ *
+ * The horizon was capped at 3 days, which was not a market fact: the live book runs ETH
+ * and BTC calls out to about 60. The cap was hiding most of the book. It is bounded, but
+ * by something absurd rather than by something wrong, and the response says which
+ * expiries actually exist.
  */
 const DeckQuery = z.object({
+  asset: UnderlyingSymbol,
   direction: z.enum(["UP", "DOWN"]),
-  horizonDays: z.coerce.number().int().min(1).max(3),
+  horizonDays: z.coerce.number().int().min(1).max(MAX_HORIZON_DAYS),
   sizeUsdc: z.coerce.number().positive().max(1000),
+});
+
+/**
+ * The depth chart answers for one Underlying and is filtered by nothing else.
+ *
+ * `horizonDays` is here and `direction` is deliberately NOT: the horizon labels one
+ * statistic, while a direction would filter the chart and turn it back into a Deck.
+ */
+const DepthQuery = z.object({
+  asset: UnderlyingSymbol,
+  horizonDays: z.coerce.number().int().min(1).max(MAX_HORIZON_DAYS).optional(),
 });
 
 /**
@@ -141,23 +169,35 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.get("/health", async () => ({ ok: true, canSign: canSign() }));
 
   /**
-   * What the market looks like right now. Read-only, safe to poll.
-   * `impliedMovePct` is an observation derived from live premiums, not a Forecast --
-   * see ADR-0005 for why that distinction is enforced rather than stylistic.
+   * Every market that is quoting, for the ticker rail. Read-only, safe to poll.
+   *
+   * One request rather than six. The rail is the first thing on the surface and six
+   * round trips to paint it would make the app feel broken before a Trader has acted.
+   */
+  app.get("/markets", async () => marketOverview());
+
+  /**
+   * The ETH book in detail. Read-only, safe to poll.
+   *
+   * Kept alongside `/markets` because it answers a different question -- how deep and
+   * how soon, on one Underlying -- and because `npm run explore` and the README both
+   * name it. `impliedMovePct` is an observation derived from live premiums, not a
+   * Forecast (ADR-0005).
    */
   app.get("/book", async () => {
     // Same `spotPrice` the Deck and the board read, so the tape and a Card can never
     // disagree about what ETH costs for any reason but the seconds between two polls.
-    const [orders, spot] = await Promise.all([buyableOrders(), spotPrice().catch(() => null)]);
-    const ivs = orders.map(impliedVol).filter((v): v is number => typeof v === "number");
-    const iv = ivs.length ? ivs.reduce((a, b) => a + b, 0) / ivs.length : undefined;
+    const [orders, spot] = await Promise.all([buyableOrders("ETH"), spotPrice("ETH").catch(() => null)]);
     return {
       spotUsd: spot,
       buyable: orders.length,
       puts: orders.filter((o) => o.order.optionType === PUT).length,
       calls: orders.filter((o) => o.order.optionType !== PUT).length,
       soonestExpiryDays: orders.length ? Math.min(...orders.map(daysToExpiry)) : null,
-      impliedMovePct: iv ? Number((iv * Math.sqrt(7 / 365) * 100).toFixed(1)) : null,
+      // Derived in `implied-move.ts` with every other reading of this idea, rather than
+      // inline here. This route and /depth quoting different numbers for "the Implied
+      // Move" is exactly what one home prevents.
+      impliedMovePct: impliedMovePct(orders, BOOK_MOVE_DAYS),
     };
   });
 
@@ -201,18 +241,52 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   /**
-   * The Deck: every Order the Trader may safely buy right now, for one direction and
-   * one expiry. Read-only and cheap -- `previewFillOrder` is synchronous and local, so
-   * pricing ten Cards costs one book fetch and no round trips.
+   * The Deck: every Order the Trader may safely buy right now, on one Underlying, for
+   * one direction and one expiry. Read-only.
    *
-   * ETH puts only ever run to 3 days, so the horizon is not an arbitrary range: it is
-   * the whole grid.
+   * A request without an `asset` is refused rather than answered about ETH -- see
+   * `DeckQuery`. The response also names which expiries this Underlying quotes in this
+   * direction, so the surface can render an empty chip as dead rather than hide it.
    */
   app.get("/deck", async (req, reply) => {
     const parsed = DeckQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid Deck request", issues: parsed.error.issues });
 
-    return buildDeck(sessionFor(req.headers), parsed.data);
+    try {
+      return await buildDeck(sessionFor(req.headers), parsed.data);
+    } catch (e) {
+      // Belt and braces: the query schema already rejects an unregistered symbol, but
+      // `buildDeck` refuses one too, and a refusal that names the asset asked for is a
+      // better 400 than a stack trace.
+      if (e instanceof UnknownUnderlying) return reply.code(400).send({ error: e.message });
+      throw e;
+    }
+  });
+
+  /**
+   * Where makers will actually trade on one Underlying. Read-only.
+   *
+   * NOT a Deck. Unfiltered by direction and unfiltered by expiry, deliberately: a chart
+   * that emptied the moment a Trader pressed a chip would just be the Deck again, drawn
+   * as bars, and would teach them nothing about the market they are standing in.
+   *
+   * `horizonDays` is optional and governs one statistic -- the expected move. Absent
+   * means that statistic is null rather than quoted over a horizon nobody chose.
+   *
+   * Not rate-limited alongside /propose: it costs no Thetanuts pricing calls. It IS slow
+   * -- the indexer hands back every Position it has ever recorded to count the live ones
+   * -- and the fix for that is a loading state, not a cache (ADR-0003).
+   */
+  app.get("/depth", async (req, reply) => {
+    const parsed = DepthQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid depth request", issues: parsed.error.issues });
+
+    try {
+      return await buildDepth(parsed.data);
+    } catch (e) {
+      if (e instanceof UnknownUnderlying) return reply.code(400).send({ error: e.message });
+      throw e;
+    }
   });
 
   /**
@@ -441,7 +515,9 @@ export async function buildApp(): Promise<FastifyInstance> {
    * Reads holdings for whichever wallet the browser reports as connected (ADR-0011).
    * With none given, it falls back to the operator's own configured wallet -- which is
    * what keeps a wallet-less dev session and the CLI's single-wallet model working
-   * exactly as before.
+   * exactly as before. Gated on having an address, not on `canSign()` -- a non-custodial
+   * deployment never holds a signing key at all, and its board must still show whatever
+   * wallet the browser connected.
    */
   app.get("/positions", async (req, reply) => {
     if (!requireToken(req, reply)) return;
@@ -449,12 +525,20 @@ export async function buildApp(): Promise<FastifyInstance> {
     if (!parsedQuery.success) return reply.code(400).send({ error: parsedQuery.error.issues[0]?.message });
 
     const session = sessionFor(req.headers);
-    const spot = await spotPrice().catch(() => null);
+    // EVERY Underlying's spot, because the board can hold Positions on any of them. It
+    // used to read ETH's and value all six against it, which marked a BTC holding at
+    // `max(0, ETH_spot - BTC_strike)` -- zero, however deep in the money it really was.
+    const prices = await spotPrices().catch(() => ({}) as Record<string, number>);
     const address = parsedQuery.data.address ?? walletAddress();
 
-    const [real, resolvedAddress] = address ? await realHoldings(spot, address) : [[], null];
+    const [real, resolvedAddress] = address ? await realHoldings(prices, address) : [[], null];
 
-    return { address: resolvedAddress, spotUsd: spot === null ? null : usd(spot), holdings: [...real, ...practiceHoldings(session, spot)] };
+    return {
+      address: resolvedAddress,
+      // The headline price stays ETH's: it labels the tape, not any one holding.
+      spotUsd: prices.ETH === undefined ? null : usd(prices.ETH),
+      holdings: [...real, ...practiceHoldings(session, prices)],
+    };
   });
 
   /**
@@ -495,7 +579,10 @@ export async function buildApp(): Promise<FastifyInstance> {
     try {
       return await fetchIndicators(symbol);
     } catch (e) {
-      if (e instanceof IndicatorsUnavailable) return reply.code(e.status === 404 ? 404 : 503).send({ error: e.message });
+      if (e instanceof IndicatorsUnavailable) {
+        if (e.details) req.log.error({ err: e, details: e.details }, "Indicators shape drift");
+        return reply.code(e.status === 404 ? 404 : 503).send({ error: e.message });
+      }
       return reply.code(502).send(safeErrorResponse(req.log, e, "Could not fetch indicators."));
     }
   });
@@ -522,6 +609,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   await app.register(practiceRoutes);
+  await app.register(rfqRoutes);
 
   return app;
 }

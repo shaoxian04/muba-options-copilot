@@ -59,7 +59,7 @@ describe("PROPOSAL", () => {
     const { cards } = (
       await app.inject({
         method: "GET",
-        url: "/deck?direction=DOWN&horizonDays=1&sizeUsdc=2",
+        url: "/deck?asset=ETH&direction=DOWN&horizonDays=1&sizeUsdc=2",
         headers: { "x-session-id": session },
       })
     ).json();
@@ -152,7 +152,7 @@ describe("VETO", () => {
     const { cards } = (
       await app.inject({
         method: "GET",
-        url: "/deck?direction=DOWN&horizonDays=1&sizeUsdc=2",
+        url: "/deck?asset=ETH&direction=DOWN&horizonDays=1&sizeUsdc=2",
         headers: { "x-session-id": session },
       })
     ).json();

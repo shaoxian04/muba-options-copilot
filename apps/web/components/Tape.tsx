@@ -1,7 +1,10 @@
 "use client";
 
 /**
- * The tape: what ETH costs, and when this expiry ends.
+ * The tape: what the selected Underlying costs, and when this expiry ends.
+ *
+ * The expiry CHIPS are not here -- they moved to `Chips.tsx` in issue #27, which puts
+ * direction and expiry in one row above the Deck. The tape reports; it does not choose.
  *
  * Two jobs, both about making the surface visibly connected to a live market rather
  * than a mockup. The price re-reads on every Deck poll, and the countdown runs against
@@ -14,21 +17,8 @@
 import { useEffect, useRef } from "react";
 import type { Deck } from "@copilot/shared";
 import { countdown, countdownWords } from "../lib/clock";
-import type { Horizon } from "../lib/surface";
 
-const HORIZONS: Horizon[] = [1, 2, 3];
-
-export function Tape({
-  deck,
-  horizonDays,
-  onHorizon,
-  now,
-}: {
-  deck: Deck | null;
-  horizonDays: Horizon;
-  onHorizon: (h: Horizon) => void;
-  now: number;
-}) {
+export function Tape({ deck, now }: { deck: Deck | null; now: number }) {
   const previous = useRef<number | null>(null);
   const spot = deck?.spotUsd ?? null;
 
@@ -45,12 +35,12 @@ export function Tape({
         <b className="hero" data-testid="spot">
           {spot ? spot.display : "—"}
         </b>
-        <span className="lbl">ETH</span>
+        <span className="lbl">{deck?.asset ?? ""}</span>
         <span className={`tick${rising ? " up" : ""}`} aria-hidden="true">
           {moved ? (rising ? "▴" : "▾") : ""}
         </span>
         <span className="sr" role="status">
-          {spot ? `ETH is ${spot.display}` : "Waiting for the market"}
+          {spot && deck ? `${deck.assetName} is ${spot.display}` : "Waiting for the market"}
         </span>
       </div>
 
@@ -67,19 +57,6 @@ export function Tape({
           </div>
         ) : null}
 
-        <div className="exp" role="group" aria-label="How long the contract runs">
-          {HORIZONS.map((d) => (
-            <button
-              key={d}
-              type="button"
-              aria-pressed={d === horizonDays}
-              onClick={() => onHorizon(d)}
-              data-testid={`horizon-${d}`}
-            >
-              {d} day{d === 1 ? "" : "s"}
-            </button>
-          ))}
-        </div>
       </div>
     </div>
   );

@@ -1,0 +1,91 @@
+{
+  "asset": "SOL",
+  "assetName": "Solana",
+  "direction": "DOWN",
+  "horizonDays": 1,
+  "sizeUsdc": 2,
+  "spotUsd": {
+    "value": 102.164,
+    "display": "$102.16"
+  },
+  "expiries": [
+    {
+      "horizonDays": 1,
+      "label": "1d",
+      "cards": 1,
+      "live": true
+    },
+    {
+      "horizonDays": 2,
+      "label": "2d",
+      "cards": 3,
+      "live": true
+    }
+  ],
+  "expiry": {
+    "value": 1768550400000,
+    "display": "16 Jan, 08:00 UTC"
+  },
+  "cards": [
+    {
+      "cardRef": "card-0",
+      "strike": {
+        "value": 100,
+        "display": "$100.00"
+      },
+      "distance": {
+        "needed": {
+          "value": 0.021181629536823163,
+          "display": "2.1%"
+        },
+        "alreadyPast": false,
+        "sentence": "must fall 2.1%"
+      },
+      "perContractUsd": {
+        "value": 0.71,
+        "display": "$0.71"
+      },
+      "contracts": {
+        "value": 2.816901,
+        "display": "2.816901"
+      },
+      "premiumUsdc": {
+        "value": 1.999999,
+        "display": "$2.00"
+      },
+      "maxLossUsdc": {
+        "value": 1.999999,
+        "display": "$2.00"
+      },
+      "breakevenPrice": {
+        "value": 99.29,
+        "display": "$99.29"
+      },
+      "impliedChance": {
+        "value": 0.27833038526917003,
+        "display": "28%"
+      },
+      "chanceLabel": "unlikely",
+      "chanceBand": 1,
+      "availableUsdc": {
+        "value": 10000,
+        "display": "$10,000.00"
+      },
+      "depthUsdc": {
+        "value": 20000,
+        "display": "$20k"
+      },
+      "depthOrders": {
+        "value": 2,
+        "display": "2"
+      },
+      "heldCount": null,
+      "expiry": {
+        "value": 1768550400000,
+        "display": "16 Jan, 08:00 UTC"
+      },
+      "payoutAsset": "USDC"
+    }
+  ],
+  "gradientLegible": false
+}

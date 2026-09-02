@@ -1,4 +1,6 @@
 {
+  "asset": "ETH",
+  "assetName": "Ethereum",
   "direction": "DOWN",
   "horizonDays": 3,
   "sizeUsdc": 2,
@@ -6,6 +8,20 @@
     "value": 2445.49,
     "display": "$2,445.49"
   },
+  "expiries": [
+    {
+      "horizonDays": 1,
+      "label": "1d",
+      "cards": 3,
+      "live": true
+    },
+    {
+      "horizonDays": 2,
+      "label": "2d",
+      "cards": 1,
+      "live": true
+    }
+  ],
   "expiry": null,
   "cards": [],
   "gradientLegible": false,

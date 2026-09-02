@@ -52,12 +52,25 @@ One Order in a Deck, together with the economics derived for the Trader's stake.
 carries a maker address or a signature -- only an opaque reference the backend can resolve.
 _Avoid_: tile, option (unqualified), row
 
+**Maker Depth**:
+How much cover market makers are collectively willing to sell at one strike, in USDC. It is
+what the depth chart's bars measure -- a budget, not a count: an Order's `availableAmount` is
+collateral a maker has set aside, so five Orders at one strike are one number of dollars, not
+five positions.
+_Avoid_: open interest, volume, liquidity (unqualified), order count
+
 **Practice Run**:
 A simulated Fill. It opens a Position that exists only in the session, spends nothing, and can
 never reach a signer. It is how a Trader learns the flow before any money is at stake.
 _Avoid_: paper trade, demo, simulation, dry run
 
 ### The protocol (terms we adopt from Thetanuts, not invent)
+
+**Underlying**:
+The asset a Position is priced against -- ETH, BTC, SOL, BNB, XRP or AVAX. It is named by its
+Chainlink price feed rather than by a token, because the four smaller ones are cash-settled
+and report no underlying token at all (ADR-0010).
+_Avoid_: asset (unqualified), coin, token, symbol
 
 **Order**:
 A market maker's resting offer on the OptionBook that a Trader can fill. Its `availableAmount`
@@ -78,6 +91,12 @@ A request for a custom option that market makers answer with sealed-bid offers, 
 suitable Order exists on the book. Slower than a Fill because a human-run market maker must
 respond.
 _Avoid_: auction, request, custom order
+
+**Offer**:
+A market maker's sealed bid to fill an RFQ. Offers stay encrypted until the reveal window
+opens, so no maker can see another's price before quoting. An Offer has a premium; the RFQ it
+answers does not, until one wins.
+_Avoid_: quote, bid, response, order
 
 ### Risk
 

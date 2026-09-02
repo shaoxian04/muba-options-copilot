@@ -14,7 +14,7 @@ import { vi } from "vitest";
 import { Wallet } from "ethers";
 import type { FastifyInstance } from "fastify";
 import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
-import { DEFAULT_BOOK, SPOT, previewFillOrder, calculatePayout } from "./fixtures.js";
+import { DEFAULT_BOOK, PRICES, previewFillOrder, calculatePayout } from "./fixtures.js";
 
 export const CHAIN_ID = 8453 as const;
 
@@ -23,12 +23,49 @@ export const chain = {
   contracts: { optionBook: "0x0000000000000000000000000000000000000B00" },
 } as any;
 
+interface StubState {
+  book: OrderWithSignature[];
+  /**
+   * Spot for every Underlying, as market data returns it. A test that deletes a key here
+   * is asking what happens when a feed quotes nothing -- which must be a refusal, never
+   * a guess.
+   */
+  prices: Record<string, number | undefined>;
+  /**
+   * ETH spot, for the tests written before the book had six Underlyings.
+   *
+   * An accessor over `prices.ETH` rather than a second field: two copies of one number
+   * is how a suite ends up asserting against a spot the code never read.
+   */
+  spot: number | null;
+  canSign: boolean;
+  positions: unknown[];
+  /**
+   * Every Position the indexer has ever recorded, as `getBookState` returns them --
+   * keyed by address, and mostly settled. Open interest is the `active` ones, which is
+   * the distinction a test that seeded "some positions" would miss.
+   */
+  bookPositions: Record<string, unknown>;
+  /** The wallet's current on-chain USDC allowance to the OptionBook, in 6 decimals. */
+  allowance: bigint;
+  /** What the stubbed provider says a transaction's receipt is. null = "not found yet". */
+  receipt: null | { status: number | null; to: string | null };
+}
+
 /** What the fake chain currently looks like. Reset between tests. */
-export const state = {
-  book: [...DEFAULT_BOOK] as OrderWithSignature[],
-  spot: SPOT as number | null,
+export const state: StubState = {
+  book: [...DEFAULT_BOOK],
+  prices: { ...PRICES },
+  get spot() {
+    return this.prices.ETH ?? null;
+  },
+  set spot(v: number | null) {
+    if (v === null) delete this.prices.ETH;
+    else this.prices.ETH = v;
+  },
   canSign: false,
   positions: [] as unknown[],
+  bookPositions: {},
   /** The wallet's current on-chain USDC allowance to the OptionBook, in 6 decimals. */
   allowance: 0n as bigint,
   /** What the stubbed provider says a transaction's receipt is. null = "not found yet". */
@@ -40,7 +77,7 @@ export const spies = {
   fillOrder: vi.fn(async (_o: OrderWithSignature, _amount: bigint) => ({ hash: "0xTXHASH" })),
   ensureAllowance: vi.fn(async (_token: string, _spender: string, _amount: bigint) => undefined),
   fetchOrders: vi.fn(async () => state.book),
-  getMarketData: vi.fn(async () => ({ prices: { ETH: state.spot } })),
+  getMarketData: vi.fn(async () => ({ prices: { ...state.prices } })),
   previewFillOrder: vi.fn(previewFillOrder),
   getAllowance: vi.fn(async (_token: string, _owner: string, _spender: string) => state.allowance),
   // Real hex, not a readable placeholder: this calldata is captured into the browser
@@ -60,9 +97,10 @@ export const spies = {
 
 export function resetStub(): void {
   state.book = [...DEFAULT_BOOK];
-  state.spot = SPOT;
+  state.prices = { ...PRICES };
   state.canSign = false;
   state.positions = [];
+  state.bookPositions = {};
   state.allowance = 0n;
   state.receipt = null;
   for (const spy of Object.values(spies)) spy.mockClear();
@@ -74,6 +112,7 @@ export function getClient(): any {
       fetchOrders: spies.fetchOrders,
       getMarketData: spies.getMarketData,
       getUserPositionsFromIndexer: async () => state.positions,
+      getBookState: async () => ({ positions: state.bookPositions }),
     },
     optionBook: {
       previewFillOrder: spies.previewFillOrder,
