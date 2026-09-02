@@ -64,14 +64,14 @@ export default function Page() {
     <main className="app">
       <Chat log={s.log} seeds={seeds} busy={s.busy} />
 
-      <WalletConnect
-        address={s.walletAddress}
-        connecting={s.walletConnecting}
-        error={s.walletError}
-        onConnect={() => void s.connectWallet()}
-      />
-
       <div className="rig">
+        <WalletConnect
+          address={s.walletAddress}
+          connecting={s.walletConnecting}
+          error={s.walletError}
+          onConnect={() => void s.connectWallet()}
+        />
+
         <Tape deck={s.deck} horizonDays={s.horizonDays} onHorizon={s.setHorizon} now={now} />
 
         {s.result?.kind === "VETO" ? (

@@ -370,8 +370,14 @@ export function useSurface(): Surface {
       await refreshMoney();
     } catch (e) {
       // Only settle(false) if prepare actually succeeded -- there is nothing to release
-      // if the reservation was never made.
-      if (prepared) await settleFill(p.proposalId, { succeeded: false }).catch(() => {});
+      // if the reservation was never made. /fill/prepare reserves the Risk Budget
+      // synchronously on the server the moment it runs, so the display has to catch up
+      // here too -- not just on the success path -- or a Trader sees a budget that
+      // still looks untouched while a reservation sits released behind it.
+      if (prepared) {
+        await settleFill(p.proposalId, { succeeded: false }).catch(() => {});
+        await refreshMoney();
+      }
       if (e instanceof ApiRefusal) setRefusal(e.message);
       else setRefusal(e instanceof Error ? e.message : "The wallet could not complete this fill.");
     } finally {

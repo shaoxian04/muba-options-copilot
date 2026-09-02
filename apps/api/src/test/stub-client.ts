@@ -39,13 +39,17 @@ export const spies = {
   getMarketData: vi.fn(async () => ({ prices: { ETH: state.spot } })),
   previewFillOrder: vi.fn(previewFillOrder),
   getAllowance: vi.fn(async (_token: string, _owner: string, _spender: string) => state.allowance),
+  // Real hex, not a readable placeholder: this calldata is captured into the browser
+  // suite's fixtures and fed to a REAL `ethers.sendTransaction` there, which validates
+  // `data` as actual bytes -- "0xapprove:..." passed every backend assertion here but
+  // broke on arrival in a real wallet call, which is exactly the gap that caught it.
   encodeApprove: vi.fn((token: string, spender: string, amount: bigint) => ({
     to: token,
-    data: `0xapprove:${spender}:${amount}`,
+    data: `0x095ea7b3${spender.replace(/^0x/, "").padStart(64, "0")}${amount.toString(16).padStart(64, "0")}`,
   })),
-  encodeFillOrder: vi.fn((order: OrderWithSignature, amount: bigint) => ({
+  encodeFillOrder: vi.fn((_order: OrderWithSignature, amount: bigint) => ({
     to: chain.contracts.optionBook,
-    data: `0xfillorder:${order.makerAddress}:${amount}`,
+    data: `0x12345678${amount.toString(16).padStart(64, "0")}`,
   })),
 };
 
