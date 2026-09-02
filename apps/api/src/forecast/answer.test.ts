@@ -158,6 +158,23 @@ test("synthesizeAnswer says so plainly when no indicator has enough history", as
   assert.match(c.seen(), /No indicator has enough history yet\./);
 });
 
+test("synthesizeAnswer names the available indicator set alongside the values", async () => {
+  const c = capture();
+  await synthesizeAnswer("is ETH oversold?", "ETH", { indicators }, c.create);
+  assert.match(c.seen(), /Only RSI, SMA and EMA are computed; no other indicator is available\./);
+});
+
+test("synthesizeAnswer names the available indicator set even during warm-up", async () => {
+  const c = capture();
+  await synthesizeAnswer(
+    "is it oversold?",
+    "ETH",
+    { indicators: { ...indicators, rsi14: null, sma20: null, ema20: null } },
+    c.create
+  );
+  assert.match(c.seen(), /Only RSI, SMA and EMA are computed; no other indicator is available\./);
+});
+
 test("synthesizeAnswer carries indicators for the other coins in a comparison", async () => {
   const c = capture();
   await synthesizeAnswer(
