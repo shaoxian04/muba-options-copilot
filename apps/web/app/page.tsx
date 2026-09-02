@@ -15,6 +15,7 @@
  * `ConfirmModal`, which holds the only Confirm in the product -- so the Deck section
  * below is the one place left that can put a Trader in front of it.
  */
+import { AccountControl } from "../components/AccountControl";
 import { Board } from "../components/Board";
 import { Chat, type Seed } from "../components/Chat";
 import { Chips } from "../components/Chips";
@@ -70,6 +71,16 @@ export default function Page() {
       <Chat log={s.log} seeds={seeds} busy={s.busy} />
 
       <div className="rig">
+        <AccountControl
+          account={s.account}
+          walletAddress={s.walletAddress}
+          connecting={s.walletConnecting}
+          verified={s.walletVerified}
+          verifying={s.walletVerifying}
+          error={s.walletError}
+          onConnect={() => void s.connectWallet()}
+          onVerify={() => void s.verifyWallet()}
+        />
         <Rail markets={s.markets} asset={s.asset} loading={s.marketsLoading} onPick={s.setAsset} />
         <Tape deck={s.deck} now={now} />
 
@@ -265,17 +276,10 @@ export default function Page() {
               receipt={s.receipt}
               practiceDone={s.practiceDone}
               gates={agentGate(s.result)}
-              walletAddress={s.walletAddress}
-              walletConnecting={s.walletConnecting}
-              walletVerified={s.walletVerified}
-              walletVerifying={s.walletVerifying}
-              walletError={s.walletError}
               onResize={(usdc) => void s.setSize(usdc)}
               onConfirm={() => void s.confirm()}
               onPractice={() => void s.runPractice()}
               onClose={s.closeConfirm}
-              onConnectWallet={() => void s.connectWallet()}
-              onVerifyWallet={() => void s.verifyWallet()}
             />
           </>
         )}
