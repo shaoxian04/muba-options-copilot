@@ -47,9 +47,12 @@ export default function Page() {
   const seeds: Seed[] = [
     {
       said: "I think ETH drops before Friday",
-      run: () => void s.deal("I think ETH drops before Friday", "DOWN"),
+      run: () => void s.deal("I think ETH drops before Friday", { direction: "DOWN" }),
     },
-    { said: "What if it goes up instead?", run: () => void s.deal("What if it goes up instead?", "UP") },
+    {
+      said: "What if it goes up instead?",
+      run: () => void s.deal("What if it goes up instead?", { direction: "UP" }),
+    },
     {
       said: "What is this, in one line?",
       run: () =>

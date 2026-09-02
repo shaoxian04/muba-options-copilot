@@ -11,6 +11,7 @@
  * same id.
  */
 import type { Card, ConversationTurn, CoinAskResult, Deck, Figure, Holding, ProposeResult } from "@copilot/shared";
+import { ownerId } from "./owner";
 
 export type { Card, ConversationTurn, CoinAskResult, Deck, Figure, Holding, ProposeResult };
 
@@ -98,6 +99,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     headers: {
       "content-type": "application/json",
       "x-session-id": sessionId(),
+      "x-copilot-owner": ownerId(),
       ...(init?.headers ?? {}),
     },
   });

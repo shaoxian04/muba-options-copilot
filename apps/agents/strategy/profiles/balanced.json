@@ -4,7 +4,7 @@
     "owner_id": "seed",
     "name": "Balanced — weak market",
     "enabled": true,
-    "notes": "RSI(14) under 35 is real weakness, not just a soft week, so this buys a moderately larger cover over a moderate window.",
+    "notes": "RSI(14) under 35 is real weakness, not just a soft week, so this buys a moderately larger cover over a moderate window -- the same size and length a conservative holder keeps on hand even in a calm market, which is intended, not a coincidence.",
     "when": [
       {
         "left": { "source": "INDICATOR", "kind": "RSI", "period": 14 },
@@ -16,7 +16,7 @@
       "underlying": "ETH",
       "direction": "DOWN",
       "sizeUsdc": 1.5,
-      "horizonDays": 5
+      "horizonDays": 2
     }
   },
   {
@@ -24,7 +24,7 @@
     "owner_id": "seed",
     "name": "Balanced — calm market",
     "enabled": true,
-    "notes": "RSI(14) over 35 is an ordinary market, so this holds a smaller, shorter cover rather than none. An RSI reading of exactly 35 matches neither band -- a known, accepted gap, not a bug.",
+    "notes": "RSI(14) over 35 is an ordinary market, so this holds a smaller, shorter cover rather than none -- one day, the shortest window balanced ever holds. An RSI reading of exactly 35 matches neither band -- a known, accepted gap, not a bug.",
     "when": [
       {
         "left": { "source": "INDICATOR", "kind": "RSI", "period": 14 },
@@ -36,7 +36,7 @@
       "underlying": "ETH",
       "direction": "DOWN",
       "sizeUsdc": 1,
-      "horizonDays": 3
+      "horizonDays": 1
     }
   }
 ]

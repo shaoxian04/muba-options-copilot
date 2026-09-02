@@ -27,6 +27,29 @@ EXPECTED_THRESHOLDS = {
     "aggressive": 30,
 }
 
+# Pins the `then` block of every seed band -- a JSON edit that changes a
+# size or horizon must fail here, not slip through silent. sizeUsdc and
+# horizonDays are the two values a profile remap actually changes.
+EXPECTED_THEN = {
+    ("conservative", "weak"): {"sizeUsdc": 2, "horizonDays": 3},
+    ("conservative", "calm"): {"sizeUsdc": 1.5, "horizonDays": 2},
+    ("balanced", "weak"): {"sizeUsdc": 1.5, "horizonDays": 2},
+    ("balanced", "calm"): {"sizeUsdc": 1, "horizonDays": 1},
+    ("aggressive", "weak"): {"sizeUsdc": 1, "horizonDays": 1},
+    ("aggressive", "calm"): {"sizeUsdc": 0.5, "horizonDays": 1},
+}
+
+
+def _band_of(strategy):
+    """"weak" or "calm" from the strategy's own name, e.g. "Balanced --
+    weak market" -- robust to load_profile's on-disk ordering."""
+    name = strategy.name.lower()
+    if "weak" in name:
+        return "weak"
+    if "calm" in name:
+        return "calm"
+    raise AssertionError(f"strategy name names neither band: {strategy.name!r}")
+
 
 @pytest.fixture(autouse=True)
 def clear_profile_cache():
@@ -139,3 +162,42 @@ def test_every_seed_strategy_is_enabled_and_covers_eth_down(name):
         assert strategy.enabled is True
         assert strategy.then.underlying == "ETH"
         assert strategy.then.direction == "DOWN"
+
+
+@pytest.mark.parametrize("name,band", list(EXPECTED_THEN))
+def test_a_bands_size_and_horizon_match_the_seeded_values(name, band):
+    strategies = load_profile(name)
+    strategy = next(s for s in strategies if _band_of(s) == band)
+    expected = EXPECTED_THEN[(name, band)]
+
+    assert strategy.then.sizeUsdc == expected["sizeUsdc"]
+    assert strategy.then.horizonDays == expected["horizonDays"]
+
+
+@pytest.mark.parametrize("name", PROFILE_NAMES)
+def test_within_a_profile_the_weak_band_covers_at_least_as_much_as_calm(name):
+    strategies = load_profile(name)
+    weak = next(s for s in strategies if _band_of(s) == "weak")
+    calm = next(s for s in strategies if _band_of(s) == "calm")
+
+    assert weak.then.sizeUsdc >= calm.then.sizeUsdc
+    assert weak.then.horizonDays >= calm.then.horizonDays
+
+
+@pytest.mark.parametrize("band", ["weak", "calm"])
+def test_across_profiles_conservative_covers_at_least_as_much_as_balanced_and_aggressive(band):
+    conservative = next(s for s in load_profile("conservative") if _band_of(s) == band)
+    balanced = next(s for s in load_profile("balanced") if _band_of(s) == band)
+    aggressive = next(s for s in load_profile("aggressive") if _band_of(s) == band)
+
+    assert conservative.then.sizeUsdc >= balanced.then.sizeUsdc >= aggressive.then.sizeUsdc
+    assert conservative.then.horizonDays >= balanced.then.horizonDays >= aggressive.then.horizonDays
+
+
+@pytest.mark.parametrize("name", PROFILE_NAMES)
+def test_every_bands_horizon_stays_inside_the_tapes_three_dealable_days(name):
+    # apps/web/lib/surface.ts types Horizon as 1 | 2 | 3 and the Tape only
+    # offers those three -- a Suggestion outside this range can't be dealt.
+    # Widen deliberately (and update the Tape) if this ever needs to change.
+    for strategy in load_profile(name):
+        assert strategy.then.horizonDays in (1, 2, 3)

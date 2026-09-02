@@ -96,9 +96,9 @@ JSON array of exactly two StrategyDefinitions that partition RSI(14) at a thresh
 
 | Profile | Threshold | Weak band (`<`) | Calm band (`>`) |
 |---|---|---|---|
-| conservative | 40 | sizeUsdc 2, horizonDays 7 | sizeUsdc 1, horizonDays 5 |
-| balanced | 35 | sizeUsdc 1.5, horizonDays 5 | sizeUsdc 1, horizonDays 3 |
-| aggressive | 30 | sizeUsdc 1, horizonDays 3 | sizeUsdc 1, horizonDays 1 |
+| conservative | 40 | sizeUsdc 2, horizonDays 3 | sizeUsdc 1.5, horizonDays 2 |
+| balanced | 35 | sizeUsdc 1.5, horizonDays 2 | sizeUsdc 1, horizonDays 1 |
+| aggressive | 30 | sizeUsdc 1, horizonDays 1 | sizeUsdc 0.5, horizonDays 1 |
 
 Weaker markets (RSI under the threshold) get fuller, longer protection; calm markets (RSI
 over it) get a smaller, shorter one. The `Operator` enum has no `>=`, so the two bands use

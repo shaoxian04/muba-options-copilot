@@ -43,6 +43,21 @@ const DECK_POLL_MS = 6000;
 export type Direction = "UP" | "DOWN";
 export type Horizon = 1 | 2 | 3;
 
+const HORIZON_VALUES: readonly Horizon[] = [1, 2, 3];
+const isHorizon = (h: number): h is Horizon => (HORIZON_VALUES as readonly number[]).includes(h);
+
+/**
+ * A full Trade Intent -- what a Suggestion carries, and what `deal` can now accept
+ * instead of just a direction. Every field is optional on the way in: whatever is
+ * omitted holds at its current value, so a caller that only wants to flip direction
+ * does not have to restate the stake and horizon it did not mean to touch.
+ */
+export interface TradeIntent {
+  direction: Direction;
+  sizeUsdc: number;
+  horizonDays: Horizon;
+}
+
 export interface ChatLine {
   // The Copilot, never a "bot" -- CONTEXT.md keeps "trading bot" off the agents, and
   // the thing speaking on the left is the Copilot itself.
@@ -55,6 +70,7 @@ export type GateState = "idle" | "pass" | "wait" | "fail";
 export interface Surface {
   direction: Direction;
   horizonDays: Horizon;
+  stakeUsdc: number;
   deck: Deck | null;
   deckError: string | null;
   loading: boolean;
@@ -76,7 +92,7 @@ export interface Surface {
 
   setDirection: (d: Direction) => void;
   setHorizon: (h: Horizon) => void;
-  deal: (line?: string, switchTo?: Direction) => Promise<void>;
+  deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<void>;
   pick: (cardRef: string) => Promise<void>;
   confirm: () => Promise<void>;
   runPractice: () => Promise<void>;
@@ -135,6 +151,7 @@ export function agentGate(result: ProposeResult | null): Array<{ label: string; 
 export function useSurface(): Surface {
   const [direction, setDirectionState] = useState<Direction>("DOWN");
   const [horizonDays, setHorizonState] = useState<Horizon>(1);
+  const [stakeUsdc, setStakeState] = useState<number>(STAKE_USDC);
   const [deck, setDeck] = useState<Deck | null>(null);
   const [deckError, setDeckError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -170,10 +187,10 @@ export function useSurface(): Surface {
   const shownQuote = useRef<{ ref: string | null; premium: string | null }>({ ref: null, premium: null });
 
   const loadDeck = useCallback(
-    async (d: Direction, h: Horizon, { spinner = false } = {}): Promise<Deck | null> => {
+    async (d: Direction, h: Horizon, stake: number, { spinner = false } = {}): Promise<Deck | null> => {
       if (spinner) setLoading(true);
       try {
-        const next = await getDeck({ direction: d, horizonDays: h, sizeUsdc: STAKE_USDC });
+        const next = await getDeck({ direction: d, horizonDays: h, sizeUsdc: stake });
         setDeck(next);
         setDeckError(null);
 
@@ -195,8 +212,8 @@ export function useSurface(): Surface {
 
   // First paint, and whenever the Trader changes what they are looking at.
   useEffect(() => {
-    void loadDeck(direction, horizonDays, { spinner: true });
-  }, [direction, horizonDays, loadDeck]);
+    void loadDeck(direction, horizonDays, stakeUsdc, { spinner: true });
+  }, [direction, horizonDays, stakeUsdc, loadDeck]);
 
   useEffect(() => {
     void refreshMoney();
@@ -204,9 +221,9 @@ export function useSurface(): Surface {
 
   // The tape is only honest if it keeps asking. Cheap: /deck is read-only and local.
   useEffect(() => {
-    const timer = setInterval(() => void loadDeck(direction, horizonDays), DECK_POLL_MS);
+    const timer = setInterval(() => void loadDeck(direction, horizonDays, stakeUsdc), DECK_POLL_MS);
     return () => clearInterval(timer);
-  }, [direction, horizonDays, loadDeck]);
+  }, [direction, horizonDays, stakeUsdc, loadDeck]);
 
   const clearSelection = useCallback(() => {
     setSelectedRef(null);
@@ -243,12 +260,17 @@ export function useSurface(): Surface {
    * here -- the server answers with `chosenBy`, and the surface marks what it is told.
    */
   const ask = useCallback(
-    async (cardRef: string | undefined, asking: Direction = direction) => {
+    async (
+      cardRef: string | undefined,
+      asking: Direction = direction,
+      askingHorizon: Horizon = horizonDays,
+      askingStake: number = stakeUsdc
+    ) => {
       setBusy(true);
       setRefusal(null);
       setReceipt(null);
       try {
-        const answer = await propose({ direction: asking, horizonDays, sizeUsdc: STAKE_USDC, cardRef });
+        const answer = await propose({ direction: asking, horizonDays: askingHorizon, sizeUsdc: askingStake, cardRef });
         setResult(answer);
         setQuoteMoved(false);
 
@@ -272,22 +294,46 @@ export function useSurface(): Surface {
         setBusy(false);
       }
     },
-    [direction, horizonDays]
+    [direction, horizonDays, stakeUsdc]
   );
 
+  /**
+   * Deal, optionally against a full Trade Intent rather than just today's state.
+   *
+   * A Suggestion carries `{ direction, sizeUsdc, horizonDays }` together, and all three
+   * have to land together or not at all -- a direction taken with the size silently
+   * left behind is the exact bug this exists to prevent. Whatever the intent omits
+   * holds at its current value.
+   *
+   * `horizonDays` outside 1|2|3 is refused loudly (thrown), not clamped or dropped: a
+   * Suggestion could in principle carry a bad value, and silently coercing it would
+   * mean dealing a horizon nobody asked for.
+   */
   const deal = useCallback(
-    async (line?: string, switchTo?: Direction) => {
+    async (line?: string, intent?: Partial<TradeIntent>) => {
       if (line) heard(line);
 
-      let row = deck;
-      const asking = switchTo ?? direction;
-      if (switchTo && switchTo !== direction) {
-        clearSelection();
-        setDirectionState(switchTo);
-        row = await loadDeck(switchTo, horizonDays, { spinner: true });
+      if (intent?.horizonDays !== undefined && !isHorizon(intent.horizonDays)) {
+        throw new Error(
+          `deal: horizonDays must be 1, 2 or 3 -- got ${intent.horizonDays}. Refusing to guess.`
+        );
       }
 
-      const answer = await ask(undefined, asking);
+      const asking = intent?.direction ?? direction;
+      const askingHorizon: Horizon = intent?.horizonDays ?? horizonDays;
+      const askingStake = intent?.sizeUsdc ?? stakeUsdc;
+
+      let row = deck;
+      const changed = asking !== direction || askingHorizon !== horizonDays || askingStake !== stakeUsdc;
+      if (changed) {
+        clearSelection();
+        setDirectionState(asking);
+        setHorizonState(askingHorizon);
+        setStakeState(askingStake);
+        row = await loadDeck(asking, askingHorizon, askingStake, { spinner: true });
+      }
+
+      const answer = await ask(undefined, asking, askingHorizon, askingStake);
       if (answer?.kind === "PROPOSAL") {
         const f = answer.proposal.figures;
         const card = row?.cards.find((c) => c.cardRef === answer.cardRef);
@@ -300,7 +346,7 @@ export function useSurface(): Surface {
         say(answer.message);
       }
     },
-    [ask, clearSelection, deck, direction, heard, horizonDays, loadDeck, say]
+    [ask, clearSelection, deck, direction, heard, horizonDays, loadDeck, say, stakeUsdc]
   );
 
   const pick = useCallback(
@@ -362,14 +408,15 @@ export function useSurface(): Surface {
 
   const reset = useCallback(() => {
     clearSelection();
-    void loadDeck(direction, horizonDays, { spinner: true });
-  }, [clearSelection, loadDeck, direction, horizonDays]);
+    void loadDeck(direction, horizonDays, stakeUsdc, { spinner: true });
+  }, [clearSelection, loadDeck, direction, horizonDays, stakeUsdc]);
 
   const selectedCard = deck?.cards.find((c) => c.cardRef === selectedRef) ?? null;
 
   return {
     direction,
     horizonDays,
+    stakeUsdc,
     deck,
     deckError,
     loading,
