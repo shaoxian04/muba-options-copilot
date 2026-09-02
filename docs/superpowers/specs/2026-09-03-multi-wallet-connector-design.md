@@ -31,7 +31,11 @@ selected and connected*, not what happens once one is.
   picked from our custom list — reusing WalletConnect's proven, actively-maintained QR
   screen for that one step rather than reimplementing pairing-URI rendering, deep links,
   and expiry/cancel handling ourselves. The picker itself (the list a Trader sees first)
-  is fully custom; only the QR-specific sub-screen is WalletConnect's own.
+  is fully custom; only the QR-specific sub-screen is WalletConnect's own. That modal
+  comes with a searchable list of every wallet WalletConnect supports built in already
+  (a search bar to filter by name, plus one-tap deep links for the popular ones,
+  alongside the QR code) -- this is standard behavior of the official modal, not
+  something this design needs to build.
 - **A fiat/bank/e-wallet on-ramp is explicitly out of scope.** Signing a Base transaction
   requires a private key; a bank account or e-wallet (Touch 'n Go, GrabPay, a bank) has
   no such capability and cannot bridge to one directly. A fiat-to-USDC on-ramp (MoonPay,
