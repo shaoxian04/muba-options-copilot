@@ -35,7 +35,6 @@ function CardTile({
   card,
   direction,
   asset,
-  assetName,
   horizonDays,
   selected,
   dealt,
@@ -47,7 +46,6 @@ function CardTile({
   card: Card;
   direction: Deck["direction"];
   asset: Deck["asset"];
-  assetName: Deck["assetName"];
   horizonDays: Deck["horizonDays"];
   selected: boolean;
   dealt: boolean;
@@ -97,7 +95,6 @@ function CardTile({
           // down, never re-derived or formatted anew.
           const payload: DroppedCard = {
             underlying: asset,
-            assetName,
             direction,
             horizonDays,
             strikeValue: card.strike.value,
@@ -238,7 +235,6 @@ export function DeckRow({
             card={card}
             direction={deck.direction}
             asset={deck.asset}
-            assetName={deck.assetName}
             horizonDays={deck.horizonDays}
             selected={card.cardRef === selectedRef}
             dealt={card.cardRef === dealtRef}

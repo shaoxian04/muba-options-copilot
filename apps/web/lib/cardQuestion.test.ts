@@ -3,7 +3,6 @@ import { buildCardQuestion, type DroppedCard } from "./cardQuestion";
 
 const card: DroppedCard = {
   underlying: "BTC",
-  assetName: "Bitcoin",
   direction: "DOWN",
   horizonDays: 3,
   strikeValue: 73000,
@@ -13,9 +12,19 @@ const card: DroppedCard = {
 };
 
 describe("buildCardQuestion", () => {
-  it("names the underlying, the real strike, and the direction as a fall", () => {
+  it("names the underlying as the bare symbol, the real strike, and the direction as a fall", () => {
     const q = buildCardQuestion(card);
-    expect(q).toContain("Bitcoin (BTC)");
+    // The bare symbol only -- not "Bitcoin (BTC)". The real /forecast/ask pipeline
+    // extracts a `coin` string from this text with an LLM (apps/api/src/forecast/
+    // ask.ts's extractChatQuery) and looks it up case-insensitively against the
+    // THETANUTS_MAJORS symbol list (apps/api/src/forecast/marketData.ts) -- a glued
+    // "Name (SYMBOL)" phrase was extracted whole and never matched, so every card-drop
+    // question failed with "Unrecognized symbol: Ethereum (ETH)" against the real
+    // backend (the Playwright suite's stub always answers regardless of the question,
+    // so this never surfaced there). A bare symbol at the start of the sentence is
+    // what the extractor reliably captures.
+    expect(q.startsWith("BTC ")).toBe(true);
+    expect(q).not.toContain("(BTC)");
     expect(q).toContain("at or below $73,000.00");
     expect(q).toContain("3 days");
     expect(q).toContain("7%");
