@@ -90,7 +90,7 @@ function CardTile({
         aria-pressed={selected}
         disabled={disabled}
         onClick={onPick}
-        draggable
+        draggable={!disabled}
         onDragStart={(e) => {
           // The drop target (Task 4) rebuilds its question from these fields alone --
           // every value here is already on `card`/`direction` or the Deck props passed

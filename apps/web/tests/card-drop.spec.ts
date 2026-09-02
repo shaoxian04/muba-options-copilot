@@ -6,6 +6,7 @@
  * (no keyboard/screen-reader fallback either, same trade-off, same reason: see the
  * plan this implements). So this whole spec skips under `isMobile`.
  */
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import { cards, fixtures, stubApi } from "./stub";
 
@@ -38,6 +39,25 @@ test.describe("dragging a card into the chat panel", () => {
     await expect(answer).toContainText("Risk / benefit");
     await expect(answer).toContainText("Indicators");
     await expect(page.getByTestId("strike-outlook")).toBeVisible();
+
+    const { violations } = await new AxeBuilder({ page }).include(".chat").analyze();
+    const bad = violations.filter((v) => v.impact === "critical" || v.impact === "serious");
+    expect(
+      bad.map((v) => `${v.impact}: ${v.id} -- ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`)
+    ).toEqual([]);
+  });
+
+  test("a typed question shows the detail sections but never the strike-outlook comparison", async ({ page }) => {
+    await page.goto("/insights");
+
+    await page.getByRole("textbox", { name: "Ask a question" }).fill("What about ETH?");
+    await page.getByRole("button", { name: "Ask" }).click();
+
+    const answer = page.locator(".coin-answer").first();
+    await expect(answer).toContainText("Price outlook");
+    await expect(answer).toContainText("Risk / benefit");
+    await expect(answer).toContainText("Indicators");
+    await expect(page.getByTestId("strike-outlook")).toHaveCount(0);
   });
 
   test("leaves the Deck's own click-to-select working after a drag", async ({ page }) => {
@@ -54,12 +74,14 @@ test.describe("dragging a card into the chat panel", () => {
     await page.goto("/");
     const dataTransferKeys = await page.evaluate(async () => {
       const card = document.querySelector('[data-testid="card"]') as HTMLElement;
-      const chat = document.querySelector(".chat") as HTMLElement;
       const dt = new DataTransfer();
       card.dispatchEvent(new DragEvent("dragstart", { dataTransfer: dt, bubbles: true }));
-      chat.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true }));
       return dt.getData("application/x-copilot-card");
     });
+    // Assert positively first that the payload actually carries real data -- otherwise
+    // an empty string (e.g. drag wiring silently broken) would pass the negative match
+    // below vacuously.
+    expect(dataTransferKeys).toContain(cards[0]!.strike.display);
     expect(dataTransferKeys).not.toMatch(/maker|nonce|signature|orderId/i);
   });
 });

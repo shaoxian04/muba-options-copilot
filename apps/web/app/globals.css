@@ -1885,7 +1885,12 @@ button[disabled] {
   gap: 1px;
 }
 .chat .from-copilot .disclaimer {
-  color: var(--ink-3);
+  /*
+    `--ink-2`, not `--ink-3`: at 11px, `--ink-3` fails WCAG AA on this surface --
+    axe-core flagged it here the same way the comment above `.depth .st small`
+    already documents for the same variable at a nearby size.
+  */
+  color: var(--ink-2);
   font-size: 11px;
   margin-top: 2px;
 }

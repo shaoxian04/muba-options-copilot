@@ -134,13 +134,14 @@ export function Chat({
   }, [insightsPending, hydrated]);
 
   const runInsightsQuestion = useCallback(
-    async (question: string, cardContext?: InsightsLine["cardContext"]) => {
+    async (question: string, cardContext?: InsightsLine["cardContext"], skipPending = false) => {
       const fragment = question.trim();
       if (!fragment || insightsBusy) return;
+      if (skipPending) setInsightsPending(null);
       setInsightsLog((prev) => [...prev, { who: "trader", text: fragment }]);
       setInsightsBusy(true);
 
-      const combined = insightsPending ? `${insightsPending} ${fragment}` : fragment;
+      const combined = !skipPending && insightsPending ? `${insightsPending} ${fragment}` : fragment;
       const history = deriveHistory(insightsLog);
 
       try {
@@ -170,12 +171,16 @@ export function Chat({
         return;
       }
       selectEngine("insights");
-      void runInsightsQuestion(buildCardQuestion(card), {
-        underlying: card.underlying,
-        strikeValue: card.strikeValue,
-        strikeDisplay: card.strikeDisplay,
-        direction: card.direction,
-      });
+      void runInsightsQuestion(
+        buildCardQuestion(card),
+        {
+          underlying: card.underlying,
+          strikeValue: card.strikeValue,
+          strikeDisplay: card.strikeDisplay,
+          direction: card.direction,
+        },
+        true
+      );
     },
     [runInsightsQuestion]
   );
@@ -235,7 +240,7 @@ function TradeEngine({
 
   return (
     <>
-      <div className="log" ref={logRef} role="log" aria-live="polite" aria-label="Conversation">
+      <div className="log" ref={logRef} role="log" aria-live="polite" aria-label="Conversation" tabIndex={0}>
         {log.length === 0 ? (
           <p className="from-copilot">
             The Deck is on the right — every option you could buy right now, cheapest long shots first. Have a
@@ -301,7 +306,7 @@ function InsightsEngine({
 
   return (
     <>
-      <div className="log" ref={logRef} role="log" aria-live="polite" aria-label="Insights conversation">
+      <div className="log" ref={logRef} role="log" aria-live="polite" aria-label="Insights conversation" tabIndex={0}>
         {log.length === 0 ? (
           <p className="from-copilot">
             Ask about any coin — current price, news, a forward-looking view, risk/benefit, or compare a few
@@ -357,11 +362,24 @@ function InsightsEngine({
 
                       {outlook && outlook.position !== "unavailable" && cardContext ? (
                         <div className="coin-detail" data-testid="strike-outlook">
-                          {outlook.position === "inside"
-                            ? `${cardContext.strikeDisplay} sits inside the AI's own predicted range for this horizon.`
-                            : outlook.position === "below-range"
-                              ? `${cardContext.strikeDisplay} sits below the AI's own predicted range for this horizon.`
-                              : `${cardContext.strikeDisplay} sits above the AI's own predicted range for this horizon.`}
+                          {(() => {
+                            // Purely factual: restates the card's own payout condition from
+                            // `cardContext.direction` -- never an interpretive judgment about
+                            // whether the strike looks likely or unlikely to hit.
+                            const payoutCondition =
+                              cardContext.direction === "DOWN"
+                                ? `falls to or below that level`
+                                : `rises to or above that level`;
+
+                            if (outlook.position === "inside") {
+                              return `${cardContext.strikeDisplay} sits inside the AI's own predicted range for this horizon.`;
+                            }
+                            const rangeWord = outlook.position === "below-range" ? "below" : "above";
+                            return (
+                              `${cardContext.strikeDisplay} sits ${rangeWord} the AI's own predicted range for this ` +
+                              `horizon — this card pays if ${cardContext.underlying} ${payoutCondition}.`
+                            );
+                          })()}
                         </div>
                       ) : null}
 
