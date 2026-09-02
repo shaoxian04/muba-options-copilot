@@ -11,9 +11,17 @@ import type { Figure } from "@copilot/shared";
 const usdFmt = (dp: number) =>
   new Intl.NumberFormat("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
 
-/** `$2,445.49`. Prices and premiums. */
+/**
+ * `$2,445.49`, or `-$12.00` below zero. Prices and premiums -- including a payoff
+ * curve's `returnUsdc` below breakeven, which is legitimately negative.
+ *
+ * The sign has to move outside the `$`: `usdFmt` puts a bare minus on the number
+ * itself, so naively prepending `$` reads `$-12.00`, a shape no Trader's bank ever
+ * shows them. Every negative dollar figure on the surface goes through this.
+ */
 export function usd(value: number, dp = 2): Figure {
-  return { value, display: `$${usdFmt(dp).format(value)}` };
+  const sign = value < 0 ? "-" : "";
+  return { value, display: `${sign}$${usdFmt(dp).format(Math.abs(value))}` };
 }
 
 /**
