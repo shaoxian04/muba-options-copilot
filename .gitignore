@@ -23,3 +23,5 @@ apps/agents/data/
 .claude
 .worktrees/
 .mcp.json
+# playwright-mcp writes screenshots and snapshots here
+.playwright-mcp/

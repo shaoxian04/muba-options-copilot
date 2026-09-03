@@ -1,0 +1,46 @@
+[
+  {
+    "id": "profile-aggressive-weak-v1",
+    "owner_id": "seed",
+    "name": "Aggressive, in a weak market",
+    "enabled": true,
+    "notes": "RSI(14) under 30 is the textbook oversold line -- by then the drop is already priced, so this buys a small cover for a single day rather than staying uncovered.",
+    "summary": "A modest cover, held briefly.",
+    "band": "weak",
+    "when": [
+      {
+        "left": { "source": "INDICATOR", "kind": "RSI", "period": 14 },
+        "operator": "<",
+        "right": { "source": "CONSTANT", "value": 30 }
+      }
+    ],
+    "then": {
+      "underlying": "ETH",
+      "direction": "DOWN",
+      "sizeUsdc": 1,
+      "horizonDays": 1
+    }
+  },
+  {
+    "id": "profile-aggressive-calm-v1",
+    "owner_id": "seed",
+    "name": "Aggressive, in a calm market",
+    "enabled": true,
+    "notes": "RSI(14) over 30 is most of the time, so this holds the smallest cover of the six bands, for a single day, and accepts the most risk in between. An RSI reading of exactly 30 matches neither band -- a known, accepted gap, not a bug.",
+    "summary": "The least cover we suggest, held briefly. Cost over safety.",
+    "band": "calm",
+    "when": [
+      {
+        "left": { "source": "INDICATOR", "kind": "RSI", "period": 14 },
+        "operator": ">",
+        "right": { "source": "CONSTANT", "value": 30 }
+      }
+    ],
+    "then": {
+      "underlying": "ETH",
+      "direction": "DOWN",
+      "sizeUsdc": 0.5,
+      "horizonDays": 1
+    }
+  }
+]

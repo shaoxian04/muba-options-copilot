@@ -149,7 +149,7 @@ describe("assess: what it refuses, and why it says so", () => {
     expect(assess(demoLoan({ thetanutsPrice: 2403.3 })).ok).toBe(true);
 
     // cbETH ($2,735.56) read where WETH was meant: 13.8% apart, and every number downstream
-    // would have looked perfectly plausible. (ADR-0013)
+    // would have looked perfectly plausible. (ADR-0015)
     const r = assess(demoLoan({ thetanutsPrice: 2735.56 }));
     expect(r.ok).toBe(false);
     if (r.ok) return;

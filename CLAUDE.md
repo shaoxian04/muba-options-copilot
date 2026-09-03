@@ -21,11 +21,16 @@ built and tested (issues #3-#8): `GET /deck`, Implied Chance, the `cardRef` indi
 `PROPOSAL | VETO | NO_ORDER`, and `POST /practice`. **The trading surface is built**
 (issues #9-#14): the Deck, selection and override, the payoff strip, the commit bar, Practice
 Run, the board, and both halt states. The three agents (Trade, Review, Strategy) are a
-separate Python service (`apps/agents`, `npm run agents`) that is up and serving the Strategy
-Agent's indicator half over loopback HTTP (`GET /indicators`, consumed by the Node backend) —
-the Trade and Strategy Agents still have no HTTP surface for proposals or suggestions, the
-Review Agent is stubbed as always-agreeing, and the surface's only way to ask for a proposal is
-still the seed prompts on the left.
+separate Python service (`apps/agents`, `npm run agents`) that serves the Strategy Agent's
+indicator and Suggestion halves over loopback HTTP (`GET /indicators`, `GET /suggest`); the
+Node backend fronts those with five routes over two Supabase tables (`GET|PUT /risk-profile`,
+`GET /suggestion`, `POST /decisions`, `GET /decisions/stats`), all five keyed on the wallet
+the session proved rather than a browser-minted id (ADR-0013) — the Trade Agent still has no
+HTTP surface, and the Review Agent is stubbed as always-agreeing. The Insights tab now carries a
+Risk Profile picker and the Suggestion it drives (`SuggestionCard.tsx`), both gated behind a
+connected and verified wallet; accepting one deals a
+Deck, but the Trade tab's only way to ask for a proposal directly is still the seed prompts on
+the left.
 
 **Liquidation Cover reads but does not yet buy.** `apps/api/src/insurance/` holds `loan.ts`
 (Aave V3 on Base, single-collateral only), `liquidation.ts` (the arithmetic, pure and unit
@@ -33,7 +38,7 @@ tested) and `http.ts` (`GET /cover/quote`), with the surface at `/cover`. It com
 Liquidation Price, the Target Strike and the full hedge for any address, and refuses in
 words otherwise. The RFQ money path -- request, wait out `offerEndTimestamp`, settle on a
 second human confirmation -- is NOT built, and `POST /rfq` is still the honest 501 of issue
-#31. See ADR-0013 and ADR-0014 for the decisions taken while building the read half.
+#31. See ADR-0015 and ADR-0016 for the decisions taken while building the read half.
 
 **The book is multi-asset** (issues #23-#27): six Underlyings — BTC, ETH, SOL, BNB, XRP,
 AVAX — keyed by Chainlink **price feed**, never by underlying token (four of them are
@@ -72,6 +77,7 @@ the stack), `apps/web` (the Next.js surface).
 | Tests | `npm test` | Vitest, then `node:test`, then Playwright. No network, no chain, no wallet |
 | Unit tests only | `npm run test:unit` | Vitest alone — seconds, no browser |
 | Forecast tests | `npm run test:node` | The `node:test` suites, under `tsx --test` |
+| Agents tests | `npm run test:py` | pytest, against the venv in `apps/agents/.venv` |
 | Browser tests | `npm run test:e2e` | Playwright + axe. Builds the app first |
 | API fixtures | `npm run fixtures` | Regenerate what the browser suite stubs against |
 | Typecheck | `npm run typecheck` | Both workspaces |
@@ -142,6 +148,13 @@ These are needed on every task. Violating one silently breaks the product's cent
   a client's own claim of success or failure is never taken at face value.
 - **A cardRef selects; it never supplies a value.** The Order is re-fetched off the live book
   and every number re-derived, so an override passes every check an agent-chosen Card does.
+- **A Suggestion crosses the Strategy Agent boundary as a nested Trade Intent and nothing
+  else** — no name, no reasoning, no confidence. Enforced by `extra="forbid"` in
+  `apps/agents/strategy/schema.py` (ADR-0005).
+- **A Risk Profile and a Decision belong to a wallet, never to a browser.** `owner_id` is
+  the address the session proved under ADR-0012, lowercased — read off the session, never
+  off a header. No client-supplied value may name an owner, and there is no fallback
+  identity for a caller with no proven wallet. (ADR-0013)
 - **Practice can never spend.** `/practice` is a separate route, not a flag, and its module
   imports nothing that can sign. A test walks the import graph. (Issue #8)
 - **The book has one door.** Everything reaches Orders through the single buyable filter, where

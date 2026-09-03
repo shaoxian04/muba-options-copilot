@@ -52,9 +52,14 @@ export default function Page() {
   const seeds: Seed[] = [
     {
       said: `I think ${s.asset} drops before Friday`,
-      run: () => void s.deal(`I think ${s.asset} drops before Friday`, "DOWN"),
+      // No `underlying` in the intent, deliberately: a seed follows the picker, so it
+      // deals whatever the rail already has selected and never moves it.
+      run: () => void s.deal(`I think ${s.asset} drops before Friday`, { direction: "DOWN" }),
     },
-    { said: "What if it goes up instead?", run: () => void s.deal("What if it goes up instead?", "UP") },
+    {
+      said: "What if it goes up instead?",
+      run: () => void s.deal("What if it goes up instead?", { direction: "UP" }),
+    },
     {
       said: "What is this, in one line?",
       run: () =>
@@ -67,7 +72,7 @@ export default function Page() {
 
   return (
     <main className="app">
-      <Chat log={s.log} seeds={seeds} busy={s.busy} />
+      <Chat log={s.log} seeds={seeds} busy={s.busy} deal={s.deal} walletVerified={s.walletVerified} />
 
       <div className="rig">
         <Rail markets={s.markets} asset={s.asset} loading={s.marketsLoading} onPick={s.setAsset} />

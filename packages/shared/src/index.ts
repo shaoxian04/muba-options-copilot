@@ -678,7 +678,7 @@ export const CoverQuote = z.object({
   /**
    * AAVE's price, not the options market's. The Liquidation Price is a fact about Aave, so
    * it is derived from the price Aave liquidates on. The two are cross-checked and a
-   * divergence refuses rather than picking one. (ADR-0013)
+   * divergence refuses rather than picking one. (ADR-0015)
    */
   spot: Figure,
   loan: z.object({
@@ -696,7 +696,7 @@ export const CoverQuote = z.object({
     /**
      * The hedge that matches the Loan exactly: `collateralAmount * liquidationThreshold`.
      * What a Cover SHOULD be. What it can actually buy is decided when a maker answers,
-     * and the gap between the two is the Coverage. (ADR-0014)
+     * and the gap between the two is the Coverage. (ADR-0016)
      */
     requiredContracts: Figure,
     tenorDays: Figure,
@@ -718,5 +718,15 @@ export const CoverQuoteResult = z.discriminatedUnion("status", [
 export type CoverQuoteResult = z.infer<typeof CoverQuoteResult>;
 
 export * from "./forecast.js";
+
+import { strategySchemas, RiskProfileName, RiskProfileResponse, DecisionStatsResponse } from "./strategy.js";
+export { RiskProfileName, RiskProfileResponse, DecisionStatsResponse };
+
+// Built here, not in strategy.ts, so TradeIntent is reused (never redeclared) without
+// a circular import back into this file -- see the comment on strategySchemas.
+export const { SuggestionResponse, DecisionRequest } = strategySchemas(TradeIntent);
+export type SuggestionResponse = z.infer<typeof SuggestionResponse>;
+export type DecisionRequest = z.infer<typeof DecisionRequest>;
+
 export * from "./fill.js";
 export * from "./auth.js";

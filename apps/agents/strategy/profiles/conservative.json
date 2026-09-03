@@ -1,0 +1,46 @@
+[
+  {
+    "id": "profile-conservative-weak-v1",
+    "owner_id": "seed",
+    "name": "Conservative, in a weak market",
+    "enabled": true,
+    "notes": "RSI(14) under 40 is only mildly weak, but a cautious holder wants cover before the fall is obvious -- so this fires early, buys the largest cover of the six bands, and holds it for 3 days.",
+    "summary": "The most cover we suggest, held the longest. Safety over cost.",
+    "band": "weak",
+    "when": [
+      {
+        "left": { "source": "INDICATOR", "kind": "RSI", "period": 14 },
+        "operator": "<",
+        "right": { "source": "CONSTANT", "value": 40 }
+      }
+    ],
+    "then": {
+      "underlying": "ETH",
+      "direction": "DOWN",
+      "sizeUsdc": 2,
+      "horizonDays": 3
+    }
+  },
+  {
+    "id": "profile-conservative-calm-v1",
+    "owner_id": "seed",
+    "name": "Conservative, in a calm market",
+    "enabled": true,
+    "notes": "RSI(14) over 40 is not weak, but a cautious holder still wants a smaller, shorter cover in place rather than none at all -- the same size and length that a balanced holder uses when the market turns weak, which is intended, not a coincidence. An RSI reading of exactly 40 matches neither band -- a known, accepted gap, not a bug.",
+    "summary": "More cover than usual, held a little longer.",
+    "band": "calm",
+    "when": [
+      {
+        "left": { "source": "INDICATOR", "kind": "RSI", "period": 14 },
+        "operator": ">",
+        "right": { "source": "CONSTANT", "value": 40 }
+      }
+    ],
+    "then": {
+      "underlying": "ETH",
+      "direction": "DOWN",
+      "sizeUsdc": 1.5,
+      "horizonDays": 2
+    }
+  }
+]
