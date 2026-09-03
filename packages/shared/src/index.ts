@@ -718,3 +718,5 @@ export const CoverQuoteResult = z.discriminatedUnion("status", [
 export type CoverQuoteResult = z.infer<typeof CoverQuoteResult>;
 
 export * from "./forecast.js";
+export * from "./fill.js";
+export * from "./auth.js";

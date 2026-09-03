@@ -17,6 +17,7 @@ export async function fetchNews(symbol: string, create?: AgentCreateFn): Promise
       'Output ONLY a JSON object: {"headlines": [{"text": string, "sentiment": "bullish"|"bearish"|"neutral", "source": "simulated"}]}. ' +
       'Produce exactly 4 headlines. Every headline\'s "source" field must be the literal string "simulated".',
     `Invent 4 fictional but plausible recent headlines about ${symbol}.`,
+    "fetchNews",
     create
   );
   return headlines;
@@ -37,6 +38,7 @@ export async function analyzeNews(scenario: MarketScenario, create?: AgentCreate
     'You analyze simulated crypto news headlines and produce a sentiment read. ' +
       'Output ONLY JSON: {"overallSentiment": "bullish"|"bearish"|"neutral", "summary": string (2-3 sentences)}.',
     `Symbol: ${scenario.symbol}\nHeadlines:\n${scenario.headlines.map((h) => `- ${h.text}`).join("\n")}`,
+    "analyzeNews",
     create
   );
   assertNoForbiddenPhrase(model.summary);

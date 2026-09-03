@@ -56,6 +56,7 @@ export async function predictPrice(
       `24h volume: $${marketData.volume24h}\n` +
       indicatorLines(indicators) +
       `Headlines:\n${scenario.headlines.map((h) => `- ${h.text}`).join("\n")}`,
+    "predictPrice",
     create
   );
   assertNoForbiddenPhrase(model.rationale);

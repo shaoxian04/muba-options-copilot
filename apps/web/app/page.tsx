@@ -265,10 +265,17 @@ export default function Page() {
               receipt={s.receipt}
               practiceDone={s.practiceDone}
               gates={agentGate(s.result)}
+              walletAddress={s.walletAddress}
+              walletConnecting={s.walletConnecting}
+              walletVerified={s.walletVerified}
+              walletVerifying={s.walletVerifying}
+              walletError={s.walletError}
               onResize={(usdc) => void s.setSize(usdc)}
               onConfirm={() => void s.confirm()}
               onPractice={() => void s.runPractice()}
               onClose={s.closeConfirm}
+              onConnectWallet={() => void s.connectWallet()}
+              onVerifyWallet={() => void s.verifyWallet()}
             />
           </>
         )}

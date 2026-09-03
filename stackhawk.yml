@@ -3,9 +3,10 @@ app:
   env: ${APP_ENV:Development}
   host: ${APP_HOST:http://127.0.0.1:3001}
 
-  # POST /fill is the only route that spends real USDC on Base mainnet. It is
-  # deliberately excluded from both the OpenAPI spec below and here, belt-and-braces,
-  # so a scan can never reach it even if something else on the surface links to it.
+  # A literal POST /fill (the old, custodial, backend-signs-it route) no longer exists
+  # -- ADR-0011 replaced it with /fill/prepare (returns unsigned calldata only) and
+  # /fill/settle (reads a receipt back). Kept as belt-and-braces in case that route name
+  # is ever reintroduced; matches nothing today.
   excludePaths:
     - "^/fill$"
 
