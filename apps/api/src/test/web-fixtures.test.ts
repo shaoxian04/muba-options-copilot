@@ -192,7 +192,7 @@ const postAsOwner = async (url: string, payload: Record<string, unknown>) =>
 
 beforeAll(async () => {
   resetStub();
-  registerUser(ACCOUNT_TOKEN, { id: "fixture-user", email: "fixture@example.com" });
+  registerUser(ACCOUNT_TOKEN, { id: "cccccccc-0000-4000-8000-000000000003", email: "fixture@example.com" });
   app = await buildApp();
 
   // --- the ordinary surface -------------------------------------------------

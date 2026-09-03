@@ -28,9 +28,9 @@ let app: FastifyInstance;
 // other's row -- same reasoning the old file gave for two wallets, now for two
 // accounts (ADR-0017).
 const ACCOUNT_A_TOKEN = "acct-token-a";
-const ACCOUNT_A_ID = "user-a";
+const ACCOUNT_A_ID = "aaaaaaaa-0000-4000-8000-000000000001";
 const ACCOUNT_B_TOKEN = "acct-token-b";
-const ACCOUNT_B_ID = "user-b";
+const ACCOUNT_B_ID = "bbbbbbbb-0000-4000-8000-000000000002";
 
 beforeEach(async () => {
   resetStub();

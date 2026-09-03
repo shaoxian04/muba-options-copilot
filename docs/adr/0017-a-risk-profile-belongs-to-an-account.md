@@ -28,9 +28,10 @@ feature that has nothing to do with spending money.
 `owner_id` on both tables is now the account id (`auth.users.id`) a request's
 `x-account-token` resolves to via `requireAccount` (`apps/api/src/account.ts`) -- the
 same helper `/account/*`, `/auth/verify`, and `/fill/prepare` already trust.
-`ownerFor(sessionFor(req.headers))`, the wallet-based lookup ADR-0013 introduced, is
-no longer called from these five routes (it remains in place for the routes that are
-genuinely about a wallet, like `/fill/prepare`).
+`ownerFor(sessionFor(req.headers))`, the wallet-based lookup ADR-0013 introduced, has
+been deleted entirely: these five routes were its only call sites, and `/fill/prepare`
+(which is genuinely about a wallet) already used `requireAccount` directly, never
+`ownerFor`.
 
 This does not reopen the hole ADR-0013 closed. That vulnerability was that an owner id
 was a bare, unverified client claim. An account id is not: `requireAccount` only

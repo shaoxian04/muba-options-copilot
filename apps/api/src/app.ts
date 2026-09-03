@@ -791,8 +791,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     const parsed = DecisionRequest.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid decision", issues: parsed.error.issues });
     try {
-      // The owner is the Trader's wallet address now, and the browser has no use for it
-      // back -- echoing it would put a 40-hex address on the wire for nothing.
+      // The owner is the Trader's account id now (a UUID), and the browser has no use
+      // for it back -- echoing it would put an id on the wire for nothing.
       const { ownerId: _ownerId, ...row } = await recordDecision(owner, parsed.data);
       return row;
     } catch (e) {

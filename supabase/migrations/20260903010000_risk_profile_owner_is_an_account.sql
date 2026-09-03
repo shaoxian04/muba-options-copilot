@@ -15,6 +15,13 @@
 -- lowercase (the CHECK constraint being replaced below enforced that) -- so the join
 -- lowercases wallet_address explicitly rather than assuming it already matches.
 
+-- Dropped first because Postgres has no "add constraint if not exists", and this gets
+-- applied by hand in the SQL editor where a second run is likely. These two must also
+-- run before either UPDATE below: the old wallet-shaped CHECK constraint they drop is
+-- still active on a first run, and would reject the UPDATE's UUID-shaped owner_id.
+alter table risk_profiles drop constraint if exists risk_profiles_owner_is_wallet;
+alter table decisions drop constraint if exists decisions_owner_is_wallet;
+
 update risk_profiles
 set owner_id = linked.user_id::text
 from linked_wallets linked
@@ -31,14 +38,10 @@ where owner_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 delete from decisions
 where owner_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
 
--- Dropped first because Postgres has no "add constraint if not exists", and this gets
--- applied by hand in the SQL editor where a second run is likely.
-alter table risk_profiles drop constraint if exists risk_profiles_owner_is_wallet;
 alter table risk_profiles drop constraint if exists risk_profiles_owner_is_account;
 alter table risk_profiles add constraint risk_profiles_owner_is_account
   check (owner_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
 
-alter table decisions drop constraint if exists decisions_owner_is_wallet;
 alter table decisions drop constraint if exists decisions_owner_is_account;
 alter table decisions add constraint decisions_owner_is_account
   check (owner_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');

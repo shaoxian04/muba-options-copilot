@@ -31,7 +31,7 @@ let app: FastifyInstance;
 
 /** The one fake account this file signs in as (ADR-0017). */
 const ACCOUNT_TOKEN = "acct-token-1";
-const ACCOUNT_ID = "user-1";
+const ACCOUNT_ID = "aaaaaaaa-0000-4000-8000-000000000001";
 
 beforeEach(async () => {
   resetStub();

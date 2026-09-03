@@ -200,7 +200,7 @@ linked wallet, Practice history) without reopening the hole -- an account id is 
 handed back after Supabase itself verifies the bearer token, exactly as unforgeable as the
 wallet signature it replaces.
 
-That header is what the Insights tab's card is keyed on. `apps/web/components/SuggestionCard.tsx`
+That account id is what the Insights tab's card is keyed on. `apps/web/components/SuggestionCard.tsx`
 sits between the Insights log and the ask-row: it is the Risk Profile picker and the
 Suggestion it drives, as one card, and shows no figures at all — no size, no cost, no days.
 At ≤900px `globals.css` collapses the layout to one column and `.commit` is
