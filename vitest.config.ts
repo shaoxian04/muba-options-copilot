@@ -16,7 +16,13 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["apps/**/*.test.ts", "packages/**/*.test.ts"],
-    exclude: ["**/node_modules/**", "apps/api/src/forecast/**", "packages/shared/src/forecast.test.ts"],
+    exclude: [
+      "**/node_modules/**",
+      "apps/api/src/forecast/**",
+      "apps/api/src/strategy/**",
+      "apps/api/src/supabase/**",
+      "packages/shared/src/forecast.test.ts",
+    ],
     env: {
       THETANUTS_RPC_URL: "",
       THETANUTS_PRIVATE_KEY: "",

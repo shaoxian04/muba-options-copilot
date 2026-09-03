@@ -542,6 +542,76 @@ export function clampSizeUsdc(value: number, min: number, cap: number): number {
   return Math.min(cap, Math.max(min, value));
 }
 
+/* ==================================================================================
+ * The Cover price line (issue #44).
+ *
+ * Liquidation price, cover strike and spot on one horizontal axis, ascending left to
+ * right, to scale. The caller renders three dots and a danger band; this function turns
+ * three raw numeric prices into the CSS percentage offsets and band geometry they need.
+ *
+ * Why this lives here: coordinates and never text. A caller who wanted to write "78%
+ * from today" still gets that from the server's `strikeDistanceFromSpot.display` --
+ * this function only positions the dots.
+ * ================================================================================== */
+
+/** A single point on the Cover price line: its left offset as a CSS percentage. */
+export interface CoverPriceLinePoint {
+  /** Left offset, 0–100, as a CSS percentage of the axis's own width. */
+  x: number;
+}
+
+export interface CoverPriceLine {
+  liquidation: CoverPriceLinePoint;
+  strike: CoverPriceLinePoint;
+  spot: CoverPriceLinePoint;
+  /**
+   * The danger band -- always from the liquidation point to the strike point.
+   *
+   * `targetStrike` is always `liquidationPrice × (1 + STRIKE_BUFFER)` in
+   * `apps/api/src/insurance/liquidation.ts`, so liquidation < strike always holds
+   * structurally. Spot does NOT always sit above strike: a Loan close to its
+   * liquidation threshold produces a strike above today's price (the `cover-tight`
+   * fixture is exactly this). `danger.left` and `danger.width` are safe to use as
+   * CSS left/width regardless of where spot falls.
+   */
+  danger: { left: number; width: number };
+}
+
+/**
+ * Lay out three prices on a single horizontal axis, to scale.
+ *
+ * The plotted range is padded 18% beyond the actual min/max on each side -- matching
+ * the framing constant the prototype used -- so the extreme dots never land on the
+ * very edge of the axis. The fallback pad handles the degenerate case where all three
+ * values coincide, so division by zero is impossible.
+ *
+ * Robustness requirement: all three x values must land within [0, 100] and the danger
+ * band must have a non-negative width, for every valid fixture -- including `cover-tight`
+ * where strike (2473.90) exceeds spot (2445.49). Verified against real fixture values.
+ */
+export function coverPriceLine(liquidation: number, strike: number, spot: number): CoverPriceLine {
+  const values = [liquidation, strike, spot];
+  const rawLo = Math.min(...values);
+  const rawHi = Math.max(...values);
+  const span = rawHi - rawLo;
+  // 18% padding on each side, matching the prototype's own framing constant. Fallback
+  // for the degenerate all-equal case so the axis never divides by zero.
+  const pad = span > 0 ? span * 0.18 : Math.max(1, rawHi * 0.02);
+  const lo = rawLo - pad;
+  const hi = rawHi + pad;
+  const x = (v: number) => ((v - lo) / (hi - lo)) * 100;
+  const liqX = x(liquidation);
+  const stkX = x(strike);
+  return {
+    liquidation: { x: liqX },
+    strike: { x: stkX },
+    spot: { x: x(spot) },
+    // liquidation < strike always holds (see JSDoc above), so left is always liqX.
+    // Math.min/abs guards against floating-point surprises.
+    danger: { left: Math.min(liqX, stkX), width: Math.abs(stkX - liqX) },
+  };
+}
+
 /**
  * Which payoff-curve sample lands nearest the price the Implied Move points to -- the
  * confirmation's "what it pays if it lands on the expected move" row. An INDEX,

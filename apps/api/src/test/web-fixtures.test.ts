@@ -17,6 +17,25 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 
 vi.mock("../thetanuts/client.js", async () => await import("./stub-client.js"));
 vi.mock("../supabase.js", async () => await import("./stub-supabase.js"));
+vi.mock("../insurance/loan.js", async () => await import("./stub-loan.js"));
+
+// The Risk Profile / Suggestion / Decision routes reach Supabase and the agents
+// service -- neither exists in this test process, so they're mocked at the same
+// module boundary suggestion.test.ts mocks them at. See the comment above
+// `generated["risk-profile-unset"]` below for which of these fixtures that makes a
+// mocked-passthrough capture versus genuine server code.
+vi.mock("../supabase/riskProfiles.js", () => ({
+  getRiskProfile: vi.fn(),
+  setRiskProfile: vi.fn(),
+}));
+vi.mock("../strategy/suggest.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../strategy/suggest.js")>();
+  return { ...actual, fetchSuggestion: vi.fn() };
+});
+vi.mock("../supabase/decisions.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../supabase/decisions.js")>();
+  return { ...actual, recordDecision: vi.fn() };
+});
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -25,7 +44,16 @@ import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
 import { resetStub, state, chain, TRADER_ADDRESS, proveWallet } from "./stub-client.js";
 import { registerUser } from "./stub-supabase.js";
-import { NOW, DEFAULT_BOOK, makeOrder } from "./fixtures.js";
+import { resetStub as resetLoanStub, state as loanState } from "./stub-loan.js";
+import { NOW, DEFAULT_BOOK, makeOrder, SPOT, PRICES } from "./fixtures.js";
+import { getRiskProfile, setRiskProfile } from "../supabase/riskProfiles.js";
+import { fetchSuggestion } from "../strategy/suggest.js";
+import { recordDecision } from "../supabase/decisions.js";
+
+const mockedGetProfile = vi.mocked(getRiskProfile);
+const mockedSetProfile = vi.mocked(setRiskProfile);
+const mockedFetchSuggestion = vi.mocked(fetchSuggestion);
+const mockedRecordDecision = vi.mocked(recordDecision);
 
 vi.useFakeTimers({ toFake: ["Date"] });
 vi.setSystemTime(NOW);
@@ -37,7 +65,7 @@ const WRITE = process.env.WRITE_FIXTURES === "1";
 /** The session every fixture is generated under, so its cardRefs resolve against each other. */
 const SESSION = "fixtures";
 
-/** The one signed-in account every fixture needing one (ADR-0013) is generated under. */
+/** The one signed-in account every fixture needing one (ADR-0014) is generated under. */
 const ACCOUNT_TOKEN = "fixture-account-token";
 
 /**
@@ -72,6 +100,24 @@ const NAMES = [
   "no-order",
   "refusal",
   "account",
+  // --- Liquidation Cover surface -----------------------------------------------
+  // Four QUOTE fixtures: the states the Cover surface has to render.
+  "cover-healthy",
+  "cover-tight",
+  "cover-cbbtc",
+  "cover-far-strike",
+  // Five REFUSED fixtures: every refusal path the surface must handle gracefully.
+  "cover-refused-multi-collateral",
+  "cover-refused-no-debt",
+  "cover-refused-already-liquidatable",
+  "cover-refused-unsupported-collateral",
+  "cover-refused-no-collateral",
+  "risk-profile-unset",
+  "risk-profile-balanced",
+  "suggestion-unset",
+  "suggestion-eth",
+  "suggestion-no-signal",
+  "decisions-accepted",
 ] as const;
 
 /**
@@ -126,7 +172,23 @@ const post = async (url: string, payload: Record<string, unknown>, session = SES
   });
 
 const DOWN_1 = "/deck?asset=ETH&direction=DOWN&horizonDays=1&sizeUsdc=2";
-const intent = { underlying: "ETH", direction: "DOWN", sizeUsdc: 2, horizonDays: 1 };
+const intent = { underlying: "ETH", direction: "DOWN", sizeUsdc: 2, horizonDays: 1 } as const;
+
+// The Risk Profile / Suggestion / Decision routes now key on the session's own proven
+// wallet (ADR-0012), not a caller-named header -- so these fixtures need a session that
+// has actually been through /auth/challenge + /auth/verify, same as SESSION above once
+// proveWallet(app, SESSION) runs. OWNER is what that verification resolves to: the
+// TRADER_ADDRESS stub-client.ts's proveWallet proves, lowercased.
+const OWNER = TRADER_ADDRESS.toLowerCase();
+
+const getAsOwner = async (url: string) =>
+  (await app.inject({ method: "GET", url, headers: { "x-session-id": SESSION } })).json();
+
+const putAsOwner = async (url: string, payload: Record<string, unknown>) =>
+  (await app.inject({ method: "PUT", url, headers: { "x-session-id": SESSION }, payload })).json();
+
+const postAsOwner = async (url: string, payload: Record<string, unknown>) =>
+  (await app.inject({ method: "POST", url, headers: { "x-session-id": SESSION }, payload })).json();
 
 beforeAll(async () => {
   resetStub();
@@ -179,7 +241,7 @@ beforeAll(async () => {
   generated["positions-after-practice"] = await get("/positions");
 
   // Proving wallet ownership -- the sign-in challenge (ADR-0012), which now also
-  // requires a signed-in account (ADR-0013). The nonce is a fresh random value every
+  // requires a signed-in account (ADR-0014). The nonce is a fresh random value every
   // run (that is the point of it), so it is normalized to a fixed placeholder here
   // rather than through the shared `stabilise` below, which only replaces a whole
   // matching field value, not a value embedded inside a sentence.
@@ -190,7 +252,7 @@ beforeAll(async () => {
   await proveWallet(app, SESSION, TRADER_ADDRESS, ACCOUNT_TOKEN);
 
   // A prepared fill, and settling it -- the non-custodial, chain-verified, account-gated
-  // contract (ADR-0011, ADR-0012, ADR-0013).
+  // contract (ADR-0011, ADR-0012, ADR-0014).
   const forFill = (await post("/propose", intent)).json() as { proposalId: string };
   generated["fill-prepare"] = (
     await post("/fill/prepare", { proposalId: forFill.proposalId, walletAddress: TRADER_ADDRESS }, SESSION, ACCOUNT_TOKEN)
@@ -253,6 +315,268 @@ beforeAll(async () => {
   await post("/session/budget", { riskBudgetUsdc: 1 }, "broke-session");
   const refused = await post("/propose", intent, "broke-session");
   generated["refusal"] = { status: refused.statusCode, body: refused.json() };
+
+  // --- Liquidation Cover surface --------------------------------------------
+  //
+  // GET /cover/quote drives `readLoan` (stubbed) then `assess()` (real), then the
+  // route's own formatters. Every number in these fixtures is a real server output --
+  // only the RPC read is replaced, matching the ticket's "highest point at which the
+  // chain can be removed while keeping everything worth testing".
+  //
+  // `totalCollateralUsd` is set to `collateralAmount * aavePrice` exactly so the
+  // MULTI_COLLATERAL identity check inside `assess()` always passes on QUOTE fixtures.
+  // `aavePrice === thetanutsPrice` for the same reason: the PRICE_DIVERGENCE check is
+  // the very first gate, and a 0% spread clears it without any rounding risk.
+
+  // WETH, healthy loan -- health factor ~1.22. A calm position, nothing to warn about.
+  loanState.next = {
+    ok: true,
+    loan: {
+      collateral: "WETH",
+      underlying: "ETH",
+      collateralAmount: 1.5,
+      totalCollateralUsd: 1.5 * SPOT,   // 3668.235 -- exact, passes the collateral identity
+      totalDebtUsd: 2500,
+      liquidationThreshold: 0.83,
+      healthFactor: (1.5 * SPOT * 0.83) / 2500,  // ≈ 1.218
+      aavePrice: SPOT,
+      thetanutsPrice: SPOT,
+    },
+  };
+  generated["cover-healthy"] = await get("/cover/quote?address=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+  resetLoanStub();
+
+  // WETH, tight loan -- health factor ~1.09. The strike lands just above spot (+1.2%),
+  // so the "distance" figure reads as a small positive move rather than a fall.
+  // This is also the case that motivates the signed distance: a positive distance means
+  // "must rise to be struck", which a borrower needs to understand.
+  loanState.next = {
+    ok: true,
+    loan: {
+      collateral: "WETH",
+      underlying: "ETH",
+      collateralAmount: 1.5,
+      totalCollateralUsd: 1.5 * SPOT,
+      totalDebtUsd: 2800,
+      liquidationThreshold: 0.83,
+      healthFactor: (1.5 * SPOT * 0.83) / 2800,  // ≈ 1.087
+      aavePrice: SPOT,
+      thetanutsPrice: SPOT,
+    },
+  };
+  generated["cover-tight"] = await get("/cover/quote?address=0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+  resetLoanStub();
+
+  // cbBTC collateral -- exercises the BTC price path and cbBTC's 8-decimal tokenAmount
+  // formatter, which differs from WETH's 6-decimal one. Health factor ~1.52.
+  loanState.next = {
+    ok: true,
+    loan: {
+      collateral: "cbBTC",
+      underlying: "BTC",
+      collateralAmount: 0.05,
+      totalCollateralUsd: 0.05 * PRICES.BTC,   // 3894.107
+      totalDebtUsd: 2000,
+      liquidationThreshold: 0.78,
+      healthFactor: (0.05 * PRICES.BTC * 0.78) / 2000,  // ≈ 1.519
+      aavePrice: PRICES.BTC,
+      thetanutsPrice: PRICES.BTC,
+    },
+  };
+  generated["cover-cbbtc"] = await get("/cover/quote?address=0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
+  resetLoanStub();
+
+  // WETH, large health factor (~5.07) -- strike lands 78% below spot, which trips the
+  // far-strike warning in `assess()`. The warning threshold is `strikeDistanceFromSpot < -0.4`:
+  //   liquidationPrice = 800 / (2.0 * 0.83) = 481.93
+  //   targetStrike     = 481.93 * 1.1      = 530.12
+  //   distance         = 530.12 / 2445.49 - 1 = -0.783 < -0.4  ✓
+  loanState.next = {
+    ok: true,
+    loan: {
+      collateral: "WETH",
+      underlying: "ETH",
+      collateralAmount: 2.0,
+      totalCollateralUsd: 2.0 * SPOT,   // 4890.98
+      totalDebtUsd: 800,
+      liquidationThreshold: 0.83,
+      healthFactor: (2.0 * SPOT * 0.83) / 800,  // ≈ 5.074
+      aavePrice: SPOT,
+      thetanutsPrice: SPOT,
+    },
+  };
+  generated["cover-far-strike"] = await get("/cover/quote?address=0x90F79bf6EB2c4f870365E785982E1f101E93b906");
+  resetLoanStub();
+
+  // REFUSED: two assets held -- WETH and cbBTC together. On the real chain-reading
+  // path this is detected inside `readLoan` itself, before `assess()` runs. The stub
+  // mirrors that control flow by returning `ok: false` directly, with the same message
+  // template `loan.ts` uses, filled in with concrete plausible numbers.
+  loanState.next = {
+    ok: false,
+    refusal: {
+      code: "MULTI_COLLATERAL",
+      message:
+        "This Loan holds both WETH and cbBTC. A Cover can only be priced for a " +
+        "single-collateral Loan -- with a mix, Aave's blended threshold makes the liquidation price wrong " +
+        "by tens of percent and nothing on screen would show it.",
+    },
+  };
+  generated["cover-refused-multi-collateral"] = await get("/cover/quote?address=0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65");
+  resetLoanStub();
+
+  // REFUSED: no debt. The stub returns a valid WETH loan with `totalDebtUsd: 0`, which
+  // real `assess()` catches at its second check and refuses with NO_DEBT. `healthFactor`
+  // is Infinity, matching what `loan.ts` sets when Aave returns 2^256-1 for a debt-free
+  // position -- `assess()` never reads it for this path, so it never reaches the formatter.
+  loanState.next = {
+    ok: true,
+    loan: {
+      collateral: "WETH",
+      underlying: "ETH",
+      collateralAmount: 1.0,
+      totalCollateralUsd: SPOT,
+      totalDebtUsd: 0,
+      liquidationThreshold: 0.83,
+      healthFactor: Infinity,
+      aavePrice: SPOT,
+      thetanutsPrice: SPOT,
+    },
+  };
+  generated["cover-refused-no-debt"] = await get("/cover/quote?address=0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc");
+  resetLoanStub();
+
+  // REFUSED: health factor below 1 -- the loan can already be liquidated. The stub
+  // returns debt > 0 and a plausible sub-1 health factor; real `assess()` catches it
+  // at its fourth check (after PRICE_DIVERGENCE, NO_DEBT, MULTI_COLLATERAL all pass).
+  loanState.next = {
+    ok: true,
+    loan: {
+      collateral: "WETH",
+      underlying: "ETH",
+      collateralAmount: 1.0,
+      totalCollateralUsd: SPOT,   // collateralAmount * aavePrice exactly -- MULTI_COLLATERAL passes
+      totalDebtUsd: 3000,
+      liquidationThreshold: 0.83,
+      healthFactor: 0.947,
+      aavePrice: SPOT,
+      thetanutsPrice: SPOT,
+    },
+  };
+  generated["cover-refused-already-liquidatable"] = await get("/cover/quote?address=0x976EA74026E726554dB657fA54763abd0C3a0aa9");
+  resetLoanStub();
+
+  // REFUSED: unsupported collateral (wstETH). On the real path, `readLoan` detects that
+  // no supported aToken has a balance, names the held asset via `nameUnsupportedCollateral`,
+  // and refuses. The stub returns the refusal directly with the real message template,
+  // filled in with wstETH -- the most common case that Aave borrowers on Base hit.
+  loanState.next = {
+    ok: false,
+    refusal: {
+      code: "UNSUPPORTED_COLLATERAL",
+      message:
+        "This Loan is collateralised with wstETH, which a Cover cannot hedge. Only WETH and cbBTC are " +
+        "supported. wstETH, cbETH and weETH are deliberately excluded: they drift against ETH over time, " +
+        "so an ETH put under-hedges them by a margin that grows.",
+    },
+  };
+  generated["cover-refused-unsupported-collateral"] = await get("/cover/quote?address=0x14dC79964da2C08b23698B3D3cc7Ca32193d9955");
+  resetLoanStub();
+
+  // REFUSED: nothing supplied to Aave at all. On the real path, `totalCollateralUsd <= 0`
+  // and no aToken balance is held, so `readLoan` refuses with NO_COLLATERAL. The address
+  // in the message matches the one used in the get() call below -- that is what the real
+  // route does: it embeds the address that was asked about.
+  loanState.next = {
+    ok: false,
+    refusal: {
+      code: "NO_COLLATERAL",
+      message:
+        "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f has nothing supplied to Aave V3 on Base, " +
+        "so there is no Loan to cover. Check you are on Base and not another network.",
+    },
+  };
+  generated["cover-refused-no-collateral"] = await get("/cover/quote?address=0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f");
+  resetLoanStub();
+
+  // --- Risk Profile / Suggestion / Decisions --------------------------------
+  //
+  // Two different kinds of fixture here, and the difference matters:
+  //
+  // "risk-profile-unset" and "suggestion-unset" are GENUINE server code: with no
+  // saved profile, GET /risk-profile answers `{ profile: null }` and GET /suggestion
+  // builds its own all-null object (app.ts, "No saved profile" branch) without ever
+  // calling the agents service. Nothing about the ROUTE is mocked for those two --
+  // only the Supabase accessor beneath it, the same way the fixture book stands in
+  // for the chain elsewhere in this file.
+  //
+  // "risk-profile-balanced", "suggestion-eth", "suggestion-no-signal" and
+  // "decisions-accepted" are mocked-passthrough captures: the value returned is
+  // whatever this file told the mock to return, not something the server derived.
+  // What they're actually worth is capturing the ENVELOPE the route builds around
+  // that value -- so a route rename or a response-shape change still breaks
+  // generation loudly, even though the payload inside is fabricated here rather
+  // than computed by real Supabase or Python code.
+  mockedGetProfile.mockResolvedValueOnce(null);
+  generated["risk-profile-unset"] = await getAsOwner("/risk-profile");
+
+  mockedGetProfile.mockResolvedValueOnce(null);
+  generated["suggestion-unset"] = await getAsOwner("/suggestion");
+
+  mockedSetProfile.mockResolvedValueOnce({
+    ownerId: OWNER,
+    profile: "balanced",
+    createdAt: "2026-09-01T00:00:00Z",
+    updatedAt: "2026-09-01T00:00:00Z",
+  });
+  generated["risk-profile-balanced"] = await putAsOwner("/risk-profile", { profile: "balanced" });
+
+  mockedGetProfile.mockResolvedValueOnce("balanced");
+  mockedFetchSuggestion.mockResolvedValueOnce({
+    profile: "balanced",
+    strategyId: "rsi-oversold-eth",
+    strategyName: "RSI oversold bounce",
+    firedAt: "2026-01-14T00:00:00Z",
+    coverSummary: "Buys a modest cover and holds it only briefly.",
+    marketBand: "weak",
+    intent,
+    asOf: "2026-01-15T00:00:00Z",
+  });
+  generated["suggestion-eth"] = await getAsOwner("/suggestion");
+
+  // A saved profile, but the Strategy Agent's RSI check did not fire -- the "nothing
+  // to suggest" case, distinct from an unset profile (which never calls Python at
+  // all, per the comment above).
+  mockedGetProfile.mockResolvedValueOnce("balanced");
+  mockedFetchSuggestion.mockResolvedValueOnce({
+    profile: "balanced",
+    strategyId: null,
+    strategyName: null,
+    firedAt: null,
+    coverSummary: null,
+    marketBand: null,
+    intent: null,
+    asOf: "2026-01-15T00:00:00Z",
+  });
+  generated["suggestion-no-signal"] = await getAsOwner("/suggestion");
+
+  mockedRecordDecision.mockResolvedValueOnce({
+    id: "decision-1",
+    ownerId: OWNER,
+    strategyId: "rsi-oversold-eth",
+    strategyName: "RSI oversold bounce",
+    firedAt: "2026-01-14T00:00:00Z",
+    then: intent as any,
+    decision: "ACCEPTED",
+    decidedAt: "2026-01-15T00:00:05Z",
+  });
+  generated["decisions-accepted"] = await postAsOwner("/decisions", {
+    strategyId: "rsi-oversold-eth",
+    strategyName: "RSI oversold bounce",
+    firedAt: "2026-01-14T00:00:00Z",
+    intent,
+    decision: "ACCEPTED",
+  });
 });
 
 /**

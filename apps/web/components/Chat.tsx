@@ -7,21 +7,23 @@
  * chatbox stays mounted and only which backend a submitted message reaches changes.
  *
  * "Trade" is the Copilot that proposes and explains -- it cannot spend, nothing in this
- * mode can reach `/fill` or `/practice`. There is no free-text-to-trade backend yet (the
- * Trade, Review and Strategy Agents are a separate Python service that has not been
- * started, ADR-0007), so a typed message is logged and answered honestly rather than
- * pretending to be read -- picking a Card off the Deck is still the only way to price
- * and buy something. "Insights" is the Forecast subsystem (ADR-0005): real market data,
- * news, price predictions, risk/benefit views, and comparisons across coins, answered
- * from a free-text question.
+ * mode can reach `/fill` or `/practice`, and the only thing a seed does is ask the
+ * server for a proposal, which signs nothing. There is no free-text-to-trade backend yet
+ * (the Trade, Review and Strategy Agents are a separate Python service that has not been
+ * started, ADR-0007) -- a text box would imply that layer exists, so the seed prompts
+ * stand in for it instead of a dead input. "Insights" is the Forecast subsystem
+ * (ADR-0005): real market data, news, price predictions, risk/benefit views, and
+ * comparisons across coins, answered from a free-text question. It also carries the
+ * Risk Profile picker and the Suggestion it drives (`SuggestionCard.tsx`), gated behind
+ * a verified wallet -- accepting one deals a Deck and switches back to the Trade tab.
  *
  * Dropping a Deck card (DeckRow.tsx is the drag source) anywhere on this panel is a
  * third way into Insights: it builds one precise, strike-anchored question from the
  * card's own real fields (`buildCardQuestion`, apps/web/lib/cardQuestion.ts) and runs
  * it through the exact same `askForecast()` call a typed question uses -- no new
- * backend route, no new AI prompt. The question-running logic used to live inside the
- * Insights tab's own input; it is lifted to this level so a drop reaching the panel
- * while the Trade tab is showing can reach it too.
+ * backend route, no new AI prompt. The question-running logic lives at this level (not
+ * inside the Insights tab's own input) so a drop reaching the panel while the Trade tab
+ * is showing can reach it too.
  *
  * The Insights conversation (and the question a "please specify..." reply is still
  * completing) lives here in `Chat`, not inside the Insights view itself -- that view
@@ -47,11 +49,18 @@
  */
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { usePathname } from "next/navigation";
-import type { ChatLine } from "../lib/surface";
+import type { ChatLine, TradeIntent } from "../lib/surface";
+import type { ProposeResult } from "../lib/api";
 import { askForecast } from "../lib/api";
 import { deriveHistory, type InsightsLine } from "../lib/insightsHistory";
 import { buildCardQuestion, CARD_DRAG_MIME, type DroppedCard } from "../lib/cardQuestion";
 import { compareStrikeToRange } from "../lib/strikeOutlook";
+import { SuggestionCard } from "./SuggestionCard";
+
+export interface Seed {
+  said: string;
+  run: () => void;
+}
 
 type Engine = "trade" | "insights";
 
@@ -79,13 +88,23 @@ function loadInsightsPending(): string | null {
 
 export function Chat({
   log,
+  seeds,
   busy,
-  submitTradeMessage,
+  deal,
+  walletVerified,
 }: {
   log: ChatLine[];
+  seeds: Seed[];
   busy: boolean;
-  submitTradeMessage: (text: string) => void;
+  /** Same signature as `Surface.deal` -- threaded down to Suggestion for Accept. */
+  deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
+  /** Whether the session has proven wallet ownership (ADR-0012) -- gates the Risk Profile. */
+  walletVerified: boolean;
 }) {
+  // The route this page happened to load from decides the starting tab (so a direct
+  // hit or refresh on /insights opens there) -- but switching tabs afterward never
+  // navigates through Next's router, only updates the address bar directly (below).
+  // That keeps this component, and everything above it, mounted exactly once.
   const pathname = usePathname();
   const [engine, setEngine] = useState<Engine>(pathname === "/insights" ? "insights" : "trade");
 
@@ -99,6 +118,8 @@ export function Chat({
     window.history.pushState(null, "", next === "insights" ? "/insights" : "/");
   }
 
+  // The browser's own back/forward buttons move the address bar without React ever
+  // hearing about it -- this is what makes the tab follow along when they're used.
   useEffect(() => {
     function onPopState() {
       setEngine(window.location.pathname === "/insights" ? "insights" : "trade");
@@ -213,24 +234,22 @@ export function Chat({
       </div>
 
       {engine === "trade" ? (
-        <TradeEngine log={log} busy={busy} submitTradeMessage={submitTradeMessage} />
+        <TradeEngine log={log} seeds={seeds} busy={busy} />
       ) : (
-        <InsightsEngine log={insightsLog} busy={insightsBusy} onAsk={(q) => void runInsightsQuestion(q)} />
+        <InsightsEngine
+          log={insightsLog}
+          busy={insightsBusy}
+          onAsk={(q) => void runInsightsQuestion(q)}
+          deal={deal}
+          walletVerified={walletVerified}
+          onAccepted={() => selectEngine("trade")}
+        />
       )}
     </div>
   );
 }
 
-function TradeEngine({
-  log,
-  busy,
-  submitTradeMessage,
-}: {
-  log: ChatLine[];
-  busy: boolean;
-  submitTradeMessage: (text: string) => void;
-}) {
-  const [message, setMessage] = useState("");
+function TradeEngine({ log, seeds, busy }: { log: ChatLine[]; seeds: Seed[]; busy: boolean }) {
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -255,34 +274,20 @@ function TradeEngine({
         )}
       </div>
 
+      <div className="seeds">
+        {seeds.map((seed) => (
+          <button key={seed.said} type="button" onClick={seed.run} disabled={busy}>
+            {seed.said}
+          </button>
+        ))}
+      </div>
+
       {/*
-        There is no free-text-to-trade backend yet -- the Trade, Review and Strategy
-        Agents are a separate Python service that has not been started (ADR-0007) -- so
-        this logs what was typed and replies honestly rather than pretending to read it.
-        Picking a Card off the Deck is still the only way to price and buy something.
+        A text box would imply the language layer exists for trading. It does not yet --
+        the Trade, Review and Strategy Agents are a separate Python service that has not
+        been started (ADR-0007) -- and a dead input is a worse lie than an honest note.
       */}
-      <form
-        className="ask-row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          const text = message.trim();
-          if (!text || busy) return;
-          setMessage("");
-          submitTradeMessage(text);
-        }}
-      >
-        <input
-          type="text"
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          placeholder="Say something…"
-          disabled={busy}
-          aria-label="Say something to the Copilot"
-        />
-        <button type="submit" disabled={busy || !message.trim()}>
-          Send
-        </button>
-      </form>
+      <p className="box">Typing arrives with the agents service. Until then the prompts above stand in for it.</p>
     </>
   );
 }
@@ -291,10 +296,16 @@ function InsightsEngine({
   log,
   busy,
   onAsk,
+  deal,
+  walletVerified,
+  onAccepted,
 }: {
   log: InsightsLine[];
   busy: boolean;
   onAsk: (question: string) => void;
+  deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
+  walletVerified: boolean;
+  onAccepted: () => void;
 }) {
   const [question, setQuestion] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
@@ -398,6 +409,8 @@ function InsightsEngine({
         {busy ? <p className="from-copilot">Asking…</p> : null}
       </div>
 
+      <SuggestionCard deal={deal} walletVerified={walletVerified} onAccepted={onAccepted} />
+
       <form
         className="ask-row"
         onSubmit={(e) => {
@@ -414,8 +427,8 @@ function InsightsEngine({
           disabled={busy}
           aria-label="Ask a question"
         />
-        <button type="submit" disabled={busy || !question.trim()}>
-          Ask
+        <button type="submit" className="ask-submit" disabled={busy || !question.trim()}>
+          <span aria-hidden="true">→</span> Ask
         </button>
       </form>
     </>

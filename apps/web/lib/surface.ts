@@ -119,6 +119,23 @@ const DECK_POLL_MS = 6000;
 export type Direction = "UP" | "DOWN";
 
 /**
+ * A full Trade Intent -- what a Suggestion carries, and what `deal` accepts instead of
+ * just a direction. Every field is optional on the way in: whatever is omitted holds at
+ * its current value, so a caller that only wants to flip direction does not have to
+ * restate the size and horizon it did not mean to touch.
+ *
+ * Deliberately shaped like `TradeIntent` in `@copilot/shared` (this is the browser's
+ * partial view of the same thing) but with `horizonDays: number`, because the surface
+ * takes its expiries from the live book rather than a fixed grid.
+ */
+export interface TradeIntent {
+  underlying: UnderlyingSymbol;
+  direction: Direction;
+  sizeUsdc: number;
+  horizonDays: number;
+}
+
+/**
  * The Underlying the surface opens on.
  *
  * ETH because it is the deepest book. NOT a fallback: every request names an asset, and
@@ -257,7 +274,7 @@ export interface Surface {
   busy: boolean;
   log: ChatLine[];
 
-  /** The signed-in account, if any (ADR-0013). Null means: browsing anonymously. */
+  /** The signed-in account, if any (ADR-0014). Null means: browsing anonymously. */
   account: { userId: string; email: string; avatarUrl: string | null } | null;
   signOut: () => void;
   walletAddress: string | null;
@@ -277,6 +294,7 @@ export interface Surface {
   setAsset: (a: UnderlyingSymbol) => void;
   setDirection: (d: Direction) => void;
   setHorizon: (h: number) => void;
+  deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
   /** Clicking a Card. Opens the confirmation (issue #30) as well as pricing the pick. */
   pick: (cardRef: string) => Promise<void>;
   /**
@@ -303,7 +321,6 @@ export interface Surface {
   closeRfq: () => void;
 
   say: (text: string) => void;
-  submitTradeMessage: (text: string) => void;
   reset: () => void;
 }
 
@@ -515,7 +532,7 @@ export function useSurface(): Surface {
   };
 
   // Picks up an existing sign-in on first paint, then reacts to every sign-in/sign-out
-  // from then on -- including the redirect back from /login (ADR-0013).
+  // from then on -- including the redirect back from /login (ADR-0014).
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) setAccount(accountFrom(data.session));
@@ -535,20 +552,6 @@ export function useSurface(): Surface {
   const say = useCallback((text: string) => setLog((l) => [...l, { who: "copilot", text }]), []);
   const heard = useCallback((text: string) => setLog((l) => [...l, { who: "trader", text }]), []);
 
-  /**
-   * The Trade tab's chat input. There is no free-text-to-trade backend yet (ADR-0007)
-   * -- the Trade Agent that would read this line has no HTTP surface -- so this only
-   * logs what was typed and answers with a fixed, honest reply. It never calls
-   * `propose`, never derives a number, and never opens a Card: picking one directly
-   * off the Deck is still the only way to price and buy something.
-   */
-  const submitTradeMessage = useCallback(
-    (text: string) => {
-      heard(text);
-      say("I can't read free text yet — pick straight off the Deck on the right.");
-    },
-    [heard, say]
-  );
 
   /**
    * The board, and the Risk Budget it sits beside, together -- but only the board has
@@ -566,7 +569,7 @@ export function useSurface(): Surface {
 
   /**
    * First paint: check whether a Trader has ever connected a wallet through this app
-   * before, so the picker can offer it as a one-press "reconnect" option (ADR-0013 --
+   * before, so the picker can offer it as a one-press "reconnect" option (ADR-0014 --
    * a Trader always makes this choice explicitly; the surface never silently reconnects
    * or skips straight to Verify on their behalf, even when it safely could).
    */
@@ -976,19 +979,25 @@ export function useSurface(): Surface {
    * `size` is always passed explicitly rather than read off `sizeUsdc` state -- a
    * caller that just called `setSizeUsdcState` cannot rely on this callback's own
    * closure having seen that update yet, and a stale size sent to the one call that
-   * prices the Order is exactly the bug ADR-0006 exists to prevent.
+   * prices the Order is exactly the bug ADR-0006 exists to prevent. `on` says the same
+   * for the Underlying and the horizon, which `deal` now also moves in the same tick.
    */
   const ask = useCallback(
-    async (cardRef: string | undefined, asking: Direction, size: number) => {
+    async (
+      cardRef: string | undefined,
+      asking: Direction,
+      size: number,
+      on: { underlying?: UnderlyingSymbol; horizonDays?: number } = {}
+    ) => {
       setBusy(true);
       setRefusal(null);
       setReceipt(null);
       setPracticeDone(false);
       try {
         const answer = await propose({
-          underlying: asset,
+          underlying: on.underlying ?? asset,
           direction: asking,
-          horizonDays,
+          horizonDays: on.horizonDays ?? horizonDays,
           sizeUsdc: size,
           cardRef,
         });
@@ -1016,6 +1025,76 @@ export function useSurface(): Surface {
       }
     },
     [asset, horizonDays]
+  );
+
+  /**
+   * Deal, optionally against a full Trade Intent rather than just today's state.
+   *
+   * A Suggestion carries `{ underlying, direction, sizeUsdc, horizonDays }` together and
+   * all four have to land together or not at all -- a direction taken with the size
+   * silently left behind, or an ETH Suggestion dealt against whichever Underlying the
+   * rail happens to have selected, is the exact bug this exists to prevent. Whatever the
+   * intent omits holds at its current value.
+   *
+   * This is NOT the chat driving the picker: `setAsset`'s comment rules out reading an
+   * asset name out of a sentence, which would be a model originating a selection. An
+   * intent's `underlying` is a structured field the Strategy Agent chose deterministically,
+   * and honouring it is the only way the trade dealt is the trade suggested.
+   *
+   * A horizon that is not a whole number of days is refused loudly rather than clamped or
+   * dropped -- silently coercing one would deal an expiry nobody asked for. A horizon that
+   * is well-formed but has nothing behind it needs no guard here: `loadDeck` already moves
+   * a Trader off a chip that answers with nothing.
+   */
+  const deal = useCallback(
+    async (line?: string, intent?: Partial<TradeIntent>) => {
+      if (line) heard(line);
+
+      if (intent?.horizonDays !== undefined && !Number.isInteger(intent.horizonDays)) {
+        throw new Error(
+          `deal: horizonDays must be a whole number of days -- got ${intent.horizonDays}. Refusing to guess.`
+        );
+      }
+
+      const askingAsset = intent?.underlying ?? asset;
+      const asking = intent?.direction ?? direction;
+      const askingHorizon = intent?.horizonDays ?? horizonDays;
+      const askingSize = intent?.sizeUsdc ?? STAKE_USDC;
+
+      let row = deck;
+      if (askingAsset !== asset || asking !== direction || askingHorizon !== horizonDays) {
+        clearSelection();
+        // An intent that names a horizon chose it; anything else leaves `loadDeck` free
+        // to open on the fullest expiry, exactly as a direction switch does today.
+        expiryChosen.current = intent?.horizonDays !== undefined;
+        setAssetState(askingAsset);
+        setDirectionState(asking);
+        setHorizonState(askingHorizon);
+        row = await loadDeck(askingAsset, asking, askingHorizon, { spinner: true });
+      }
+
+      setSizeUsdcState(askingSize);
+      const answer = await ask(undefined, asking, askingSize, {
+        underlying: askingAsset,
+        horizonDays: askingHorizon,
+      });
+      if (answer?.kind === "PROPOSAL") {
+        const f = answer.proposal.figures;
+        const card = row?.cards.find((c) => c.cardRef === answer.cardRef);
+        say(
+          `Dealt the ${f.strike.display} — ${card ? `${card.impliedChance.display} chance, ${card.chanceLabel}, ` : ""}` +
+            `${f.contracts.display} contracts for ${f.premiumUsdc.display}. Ends ${f.expiry.display}. ` +
+            `Flick to another if you disagree with me.`
+        );
+      } else if (answer?.kind === "NO_ORDER") {
+        say(answer.message);
+      }
+      // Handed back so a caller can tell a dealt proposal from a VETO, a NO_ORDER or a
+      // refusal `ask` already swallowed. Callers that only wanted the side effects --
+      // the seed prompts -- can keep ignoring it.
+      return answer;
+    },
+    [ask, asset, clearSelection, deck, direction, heard, horizonDays, loadDeck, say]
   );
 
   /**
@@ -1187,6 +1266,7 @@ export function useSurface(): Surface {
     setAsset,
     setDirection,
     setHorizon,
+    deal,
     pick,
     setSize,
     confirm,
@@ -1199,7 +1279,6 @@ export function useSurface(): Surface {
     submitRfq,
     closeRfq,
     say,
-    submitTradeMessage,
     reset,
   };
 }

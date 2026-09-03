@@ -42,7 +42,7 @@ const deal = async (page: Page) => {
 };
 
 /**
- * Signs in (ADR-0013) and connects the fake wallet through the picker (the multi-wallet
+ * Signs in (ADR-0014) and connects the fake wallet through the picker (the multi-wallet
  * connector). `AccountControl` is a persistent, always-visible control -- NOT inside
  * `ConfirmModal` -- so this must run before any confirmation opens: the modal's
  * `.scrim` covers the full viewport at a higher z-index, and would make the button
@@ -787,7 +787,7 @@ test.describe("finishing, for real and for practice", () => {
   });
 });
 
-test.describe("sign-in gates the wallet, not the Deck (ADR-0013)", () => {
+test.describe("sign-in gates the wallet, not the Deck (ADR-0014)", () => {
   test("Deck browsing and Practice Run work with no account at all", async ({ page }) => {
     await stubApi(page);
     await page.goto("/");

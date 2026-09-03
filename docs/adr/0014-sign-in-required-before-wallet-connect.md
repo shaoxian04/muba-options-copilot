@@ -1,4 +1,4 @@
-# 0013: Sign-in is required before wallet-connect or Confirm
+# 0014: Sign-in is required before wallet-connect or Confirm
 
 ## Status
 

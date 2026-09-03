@@ -18,7 +18,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
-import { ProposeRequest, UnderlyingSymbol, MAX_HORIZON_DAYS, type ProposeResult } from "@copilot/shared";
+import { ProposeRequest, UnderlyingSymbol, MAX_HORIZON_DAYS, type ProposeResult, RiskProfileName, DecisionRequest } from "@copilot/shared";
 import { canSign, walletAddress, chain } from "./thetanuts/client.js";
 import { buyableOrders, daysToExpiry, orderIdentity, PUT } from "./thetanuts/orders.js";
 import { impliedMovePct } from "./thetanuts/implied-move.js";
@@ -31,6 +31,7 @@ import { marketOverview } from "./thetanuts/markets.js";
 import { reviewIntent } from "./agents/review.js";
 import { practiceRoutes, practiceHoldings, type PracticePosition } from "./practice.js";
 import { rfqRoutes } from "./rfq.js";
+import { coverRoutes } from "./insurance/http.js";
 import { safeErrorResponse } from "./errors.js";
 import { realHoldings } from "./thetanuts/holdings.js";
 import { prepareFillTx, UnsafeOrder } from "./thetanuts/prepareFill.js";
@@ -61,6 +62,9 @@ import { assessRiskBenefit } from "./forecast/riskBenefit.js";
 import { parseForecastQuery, parseAskBody, forecastErrorStatus } from "./forecast/http.js";
 import { answerQuestion } from "./forecast/ask.js";
 import { fetchIndicators, IndicatorsUnavailable } from "./forecast/indicators.js";
+import { fetchSuggestion, SuggestionUnavailable } from "./strategy/suggest.js";
+import { getRiskProfile, setRiskProfile } from "./supabase/riskProfiles.js";
+import { recordDecision, decisionStats } from "./supabase/decisions.js";
 
 /**
  * This process holds a funded key and exposes routes that spend money or cost real API
@@ -145,6 +149,15 @@ function requireToken(req: any, reply: any): boolean {
   reply.code(401).send({ error: "Unauthorized" });
   return false;
 }
+
+/**
+ * Who a row belongs to: the wallet this session proved it holds (ADR-0012), lowercased
+ * so one Trader is one key whatever case their wallet reports.
+ *
+ * Nothing the client says is involved. The old x-copilot-owner header let any caller name
+ * any owner and read or overwrite that owner's row; this cannot be asserted, only proven.
+ */
+const ownerFor = (s: Session): string | null => s.verifiedWallet?.toLowerCase() ?? null;
 
 /**
  * A Card reference, resolved back to the Order it names.
@@ -563,7 +576,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    * connected.
    *
    * Practice Run holdings come from the account's persisted history when signed in
-   * (ADR-0013), or the in-memory session otherwise -- never both, so a Practice Run
+   * (ADR-0014), or the in-memory session otherwise -- never both, so a Practice Run
    * opened this session while signed in is not double-counted.
    */
   app.get("/positions", async (req, reply) => {
@@ -660,6 +673,124 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
   });
 
+  /**
+   * The Trader's saved Risk Profile. Not an error when unset -- the surface then asks
+   * them to choose one, same as an empty board is not an error.
+   */
+  app.get("/risk-profile", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const owner = ownerFor(sessionFor(req.headers));
+    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    try {
+      return { profile: await getRiskProfile(owner) };
+    } catch (e) {
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not load your Risk Profile."));
+    }
+  });
+
+  app.put("/risk-profile", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const owner = ownerFor(sessionFor(req.headers));
+    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    const parsed = RiskProfileName.safeParse((req.body as any)?.profile);
+    if (!parsed.success) return reply.code(400).send({ error: "profile must be one of conservative, balanced, aggressive" });
+    try {
+      const row = await setRiskProfile(owner, parsed.data);
+      return { profile: row.profile };
+    } catch (e) {
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not save your Risk Profile."));
+    }
+  });
+
+  /**
+   * ETH Suggestion for the Trader's saved profile, from the Strategy Agent. Reaches
+   * a live exchange through the agents service, so it is gated like /forecast/indicators:
+   * token-gated and rate-limited, and 503 (not 502) when that service is down (ADR-0007).
+   */
+  app.get("/suggestion", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const owner = ownerFor(sessionFor(req.headers));
+    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+
+    let profile;
+    try {
+      profile = await getRiskProfile(owner);
+    } catch (e) {
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not load your Risk Profile."));
+    }
+    // No saved profile -- the surface asks them to choose one, not a guessed default.
+    // Every key SuggestionResponse names, so this branch and the fired one are one shape.
+    if (!profile)
+      return {
+        profile: null, strategyId: null, strategyName: null, firedAt: null,
+        coverSummary: null, marketBand: null, intent: null, asOf: null,
+      };
+
+    try {
+      return await fetchSuggestion(profile);
+    } catch (e) {
+      if (e instanceof SuggestionUnavailable) {
+        if (e.details) req.log.error({ err: e, details: e.details }, "Suggestion shape drift");
+        // e.status is the Python service's own status when it answered (undefined
+        // means it never answered at all -- unreachable, or a body we couldn't read).
+        // A 4xx from Python is permanent -- a bad profile (400) or an unknown symbol
+        // (404) -- and RETRYABLE_STATUS in marketData.ts does not retry 4xx, so mapping
+        // either to 503 would be dishonest AND (for the 500 case below) costly: 500 IS
+        // in RETRYABLE_STATUS, and Python's "more than one strategy fired" seed-data bug
+        // answers 500 for something that will never succeed on retry. So: 404 stays 404
+        // (an unrecognized symbol, same as /forecast/indicators); any other 4xx becomes
+        // 502 (this backend built a request Python rejected -- not the Trader's fault,
+        // not an outage); 5xx, and no status at all (unreachable / bad body), stay 503
+        // per ADR-0007, since those genuinely are "the service is down."
+        const status = e.status;
+        const mapped = status === 404 ? 404 : status !== undefined && status >= 400 && status < 500 ? 502 : 503;
+        return reply.code(mapped).send({ error: e.message });
+      }
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not fetch a Suggestion."));
+    }
+  });
+
+  /**
+   * Records what the Trader did with a Suggestion. Spends nothing and signs nothing --
+   * it's a note about their choice, not an act on their behalf. Token-gated like the
+   * other DB-touching routes, since it writes via the Supabase SERVICE ROLE key.
+   *
+   * Rate-limited like the /forecast/* and /suggestion routes -- not because a Decision
+   * write costs a paid API call (it doesn't), but because it is the one route here that
+   * writes an unbounded number of rows per caller with only a token (which may be
+   * unset) standing between it and storage abuse. GET /risk-profile, PUT /risk-profile
+   * and GET /decisions/stats stay unlimited: they're a single row per owner (a PUT
+   * overwrites, it doesn't accumulate) or a read, so there's nothing here for a rate
+   * limit to bound.
+   */
+  app.post("/decisions", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const owner = ownerFor(sessionFor(req.headers));
+    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    const parsed = DecisionRequest.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid decision", issues: parsed.error.issues });
+    try {
+      // The owner is the Trader's wallet address now, and the browser has no use for it
+      // back -- echoing it would put a 40-hex address on the wire for nothing.
+      const { ownerId: _ownerId, ...row } = await recordDecision(owner, parsed.data);
+      return row;
+    } catch (e) {
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not record that decision."));
+    }
+  });
+
+  app.get("/decisions/stats", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const owner = ownerFor(sessionFor(req.headers));
+    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    const strategyId = typeof (req.query as any)?.strategyId === "string" ? (req.query as any).strategyId : undefined;
+    try {
+      return await decisionStats(owner, strategyId);
+    } catch (e) {
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not load decision stats."));
+    }
+  });
+
   await app.register(practiceRoutes, {
     onOpened: (position: PracticePosition, req: unknown) => {
       void (async () => {
@@ -671,6 +802,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
   });
   await app.register(rfqRoutes);
+  await app.register(coverRoutes);
 
   /**
    * The signed-in account's saved settings and linked wallet, if any -- what

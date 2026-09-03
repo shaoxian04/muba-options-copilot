@@ -139,23 +139,15 @@ test.describe("the ticker rail", () => {
   });
 });
 
-test.describe("the Copilot follows the picker", () => {
-  test("typing in the chat never moves the asset selection", async ({ page }) => {
-    await stubApi(page);
-    await page.goto("/");
-    await page.getByTestId("rail-SOL").click();
-    await expect(page.getByTestId("rail-SOL")).toHaveAttribute("aria-pressed", "true");
-
-    // Free text is only logged and answered with a fixed reply (ADR-0007) -- reading an
-    // asset out of a sentence is the Trade Agent's job and that service does not exist,
-    // so naming a different asset here must never originate a selection.
-    await page.getByRole("textbox", { name: "Say something to the Copilot" }).fill("I think BTC drops before Friday");
-    await page.getByRole("button", { name: "Send" }).click();
-
-    await expect(page.getByTestId("rail-SOL")).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByTestId("rail-BTC")).toHaveAttribute("aria-pressed", "false");
-  });
-});
+// "The Copilot follows the picker" used to have a test here: typing a sentence naming
+// a different asset into the Trade tab's free-text input must never move the rail's
+// selection (ADR-0007 -- reading an asset out of a sentence is the Trade Agent's job,
+// and that service does not exist). The Trade tab's redesign removed that free-text
+// input entirely, replacing it with seed prompts whose own wording always names
+// whichever asset is ALREADY selected (`I think ${asset} drops before Friday`) -- there
+// is no longer any input through which a Trader could name a *different* asset at all.
+// The invariant now holds structurally, by construction, rather than needing a runtime
+// test: the rail is the only thing that can ever change `asset` (see `lib/surface.ts`).
 
 test.describe("a cash-settled Underlying", () => {
   test("never tells a Trader a SOL call pays out in WETH", async ({ page }) => {

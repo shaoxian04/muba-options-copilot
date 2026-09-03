@@ -176,7 +176,7 @@ export const RfqTenorDays = z.union([z.literal(7), z.literal(14), z.literal(30),
 export type RfqTenorDays = z.infer<typeof RfqTenorDays>;
 
 /**
- * What POST /rfq accepts.
+ * POST /rfq, the trading door's own member -- unchanged in every field from before the union.
  *
  * Deliberately NOT a TradeIntent: there is no Order behind this, so there is no
  * `sizeUsdc.max(1000)`-shaped economics to price and nothing a `cardRef` could select.
@@ -184,8 +184,15 @@ export type RfqTenorDays = z.infer<typeof RfqTenorDays>;
  * spot, signed, exactly as felt on the slider -- and it is never resolved to a dollar
  * strike anywhere in the browser (issue #31): only the server, which alone holds live
  * spot, may do that arithmetic, and only inside the 501 refusal's echoed sentence.
+ *
+ * `strikeOffsetPct` is bounded to ±30 and must stay that way. A Cover's strike distance
+ * is routinely outside it -- a healthy Loan sits around -73% -- so forcing Cover through
+ * this member would refuse exactly the Loans most people have, and widening the band to
+ * fit would loosen validation on this door for no reason. That is why a second member
+ * exists.
  */
-export const RfqRequest = z.object({
+export const RfqTraderRequest = z.object({
+  kind: z.literal("TRADER"),
   underlying: UnderlyingSymbol,
   direction: z.enum(["UP", "DOWN"]),
   /** Percent distance from spot the slider names, signed, in half-percent steps across +/-30%. */
@@ -194,6 +201,32 @@ export const RfqRequest = z.object({
   /** The reserve price a future Offer would have to respect -- not a premium, because none exists yet. */
   sizeUsdc: z.number().positive().max(1000),
 });
+export type RfqTraderRequest = z.infer<typeof RfqTraderRequest>;
+
+/**
+ * POST /rfq's Cover door (issue #43): a selector, never a value.
+ *
+ * A COVER request carries an address and nothing else. The server re-reads the Loan off
+ * Aave, re-derives strike, size and cap through the existing single path, and answers
+ * from what it derived -- exactly the way a cardRef selects an Order and never supplies
+ * its economics (ADR-0006). A stale or tampered browser cannot change what is actually
+ * requested.
+ *
+ * No figure travels in the request. `strikeOffsetPct` is bounded to ±30 and Cover's
+ * distances sit well outside it; having a second member avoids loosening validation on
+ * the Trader door to fit the Borrower's very different range.
+ */
+export const RfqCoverRequest = z.object({
+  kind: z.literal("COVER"),
+  address: z.string().trim().min(1),
+});
+export type RfqCoverRequest = z.infer<typeof RfqCoverRequest>;
+
+/**
+ * What POST /rfq accepts: a discriminated union so the trading door and the Cover door
+ * share one endpoint without sharing one schema or one validation range.
+ */
+export const RfqRequest = z.discriminatedUnion("kind", [RfqTraderRequest, RfqCoverRequest]);
 export type RfqRequest = z.infer<typeof RfqRequest>;
 
 export const FillResult = z.object({
@@ -601,7 +634,93 @@ export const RouterResult = z.discriminatedUnion("kind", [
 ]);
 export type RouterResult = z.infer<typeof RouterResult>;
 
+/**
+ * Liquidation Cover -- the wire shape of a Cover quote.
+ *
+ * A different context from everything above it (see CONTEXT-MAP.md): the vocabulary is
+ * Borrower, Loan, Cover and Lapse, not Trader, Order and Position. It shares the Figure
+ * discipline and nothing else.
+ */
+export const COVER_COLLATERAL = ["WETH", "cbBTC"] as const;
+export const CoverCollateral = z.enum(COVER_COLLATERAL);
+export type CoverCollateral = z.infer<typeof CoverCollateral>;
+
+/**
+ * Why a Cover was not priced. Always accompanied by a sentence a Borrower can act on --
+ * a Cover declined without a reason is indistinguishable from one that is broken.
+ */
+export const CoverRefusal = z.object({
+  code: z.enum([
+    "BAD_ADDRESS",
+    "NO_COLLATERAL",
+    "UNSUPPORTED_COLLATERAL",
+    "MULTI_COLLATERAL",
+    "NO_DEBT",
+    "ALREADY_LIQUIDATABLE",
+    "PRICE_DIVERGENCE",
+  ]),
+  message: z.string(),
+});
+export type CoverRefusal = z.infer<typeof CoverRefusal>;
+
+export const CoverQuote = z.object({
+  address: z.string(),
+  collateral: CoverCollateral,
+  /** The Underlying whose puts hedge this collateral. WETH -> ETH, cbBTC -> BTC. */
+  underlying: UnderlyingSymbol,
+  /**
+   * AAVE's price, not the options market's. The Liquidation Price is a fact about Aave, so
+   * it is derived from the price Aave liquidates on. The two are cross-checked and a
+   * divergence refuses rather than picking one. (ADR-0015)
+   */
+  spot: Figure,
+  loan: z.object({
+    collateralAmount: Figure,
+    collateralUsd: Figure,
+    debtUsd: Figure,
+    liquidationThreshold: Figure,
+    healthFactor: Figure,
+  }),
+  cover: z.object({
+    liquidationPrice: Figure,
+    targetStrike: Figure,
+    /** SIGNED. Negative is below spot. `Math.abs` here writes the sentence backwards. */
+    strikeDistanceFromSpot: Figure,
+    /**
+     * The hedge that matches the Loan exactly: `collateralAmount * liquidationThreshold`.
+     * What a Cover SHOULD be. What it can actually buy is decided when a maker answers,
+     * and the gap between the two is the Coverage. (ADR-0016)
+     */
+    requiredContracts: Figure,
+    tenorDays: Figure,
+    /** The Lapse. The loudest thing on a Cover. (ADR-0008) */
+    expiry: Figure,
+    premiumCapUsdc: Figure,
+  }),
+  /** True, unwelcome, and not disqualifying. */
+  warnings: z.array(z.string()),
+  /** States plainly that nothing has been requested and nothing signed. */
+  disclaimer: z.string(),
+});
+export type CoverQuote = z.infer<typeof CoverQuote>;
+
+export const CoverQuoteResult = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("QUOTE"), quote: CoverQuote }),
+  z.object({ status: z.literal("REFUSED"), refusal: CoverRefusal }),
+]);
+export type CoverQuoteResult = z.infer<typeof CoverQuoteResult>;
+
 export * from "./forecast.js";
+
+import { strategySchemas, RiskProfileName, RiskProfileResponse, DecisionStatsResponse } from "./strategy.js";
+export { RiskProfileName, RiskProfileResponse, DecisionStatsResponse };
+
+// Built here, not in strategy.ts, so TradeIntent is reused (never redeclared) without
+// a circular import back into this file -- see the comment on strategySchemas.
+export const { SuggestionResponse, DecisionRequest } = strategySchemas(TradeIntent);
+export type SuggestionResponse = z.infer<typeof SuggestionResponse>;
+export type DecisionRequest = z.infer<typeof DecisionRequest>;
+
 export * from "./fill.js";
 export * from "./auth.js";
 export * from "./account.js";

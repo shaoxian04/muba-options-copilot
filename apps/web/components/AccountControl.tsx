@@ -5,7 +5,7 @@
  * used to render inside `ConfirmModal`. Walks three states in order: signed out ("Sign
  * in / Sign up", linking to `/login`) -> signed in, no wallet ("Connect wallet") ->
  * verified (the address). `ConfirmModal` no longer has its own wallet section at all --
- * it just reads whatever this control already established (ADR-0013).
+ * it just reads whatever this control already established (ADR-0014).
  *
  * The avatar sits alongside those three states, not in place of them -- it is purely
  * an identity/logout affordance and has no bearing on wallet gating.
