@@ -182,7 +182,9 @@ apps/web              the trading surface. Next.js, UI only -- no SDK, no key, n
   components/         Tape, DeckRow, PayoffStrip, CommitBar, Board, Halt, Chat
   lib/api.ts          the only way this app talks to anything
   lib/surface.ts      the whole surface as one state machine
-  lib/wallet.ts       the only place this app touches a browser wallet (ADR-0011)
+  lib/wallet.ts       the only place this app touches a browser wallet (ADR-0011) --
+                      multiple extensions (via EIP-6963) plus WalletConnect, picked
+                      through WalletPicker.tsx, not a single assumed window.ethereum
   lib/clock.ts        the ONE place a number becomes text in the browser. Durations only
   lib/geometry.ts     coordinates and widths. Never text
   tests/              Playwright + axe, stubbed from fixtures the real API generated
