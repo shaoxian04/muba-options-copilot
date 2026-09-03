@@ -24,9 +24,11 @@ Run, the board, and both halt states. The three agents (Trade, Review, Strategy)
 separate Python service (`apps/agents`, `npm run agents`) that serves the Strategy Agent's
 indicator and Suggestion halves over loopback HTTP (`GET /indicators`, `GET /suggest`); the
 Node backend fronts those with five routes over two Supabase tables (`GET|PUT /risk-profile`,
-`GET /suggestion`, `POST /decisions`, `GET /decisions/stats`) — the Trade Agent still has no
+`GET /suggestion`, `POST /decisions`, `GET /decisions/stats`), all five keyed on the wallet
+the session proved rather than a browser-minted id (ADR-0013) — the Trade Agent still has no
 HTTP surface, and the Review Agent is stubbed as always-agreeing. The Insights tab now carries a
-Risk Profile picker and the Suggestion it drives (`SuggestionCard.tsx`); accepting one deals a
+Risk Profile picker and the Suggestion it drives (`SuggestionCard.tsx`), both gated behind a
+connected and verified wallet; accepting one deals a
 Deck, but the Trade tab's only way to ask for a proposal directly is still the seed prompts on
 the left. Cover has a glossary and an ADR but no code.
 
@@ -141,6 +143,10 @@ These are needed on every task. Violating one silently breaks the product's cent
 - **A Suggestion crosses the Strategy Agent boundary as a nested Trade Intent and nothing
   else** — no name, no reasoning, no confidence. Enforced by `extra="forbid"` in
   `apps/agents/strategy/schema.py` (ADR-0005).
+- **A Risk Profile and a Decision belong to a wallet, never to a browser.** `owner_id` is
+  the address the session proved under ADR-0012, lowercased — read off the session, never
+  off a header. No client-supplied value may name an owner, and there is no fallback
+  identity for a caller with no proven wallet. (ADR-0013)
 - **Practice can never spend.** `/practice` is a separate route, not a flag, and its module
   imports nothing that can sign. A test walks the import graph. (Issue #8)
 - **The book has one door.** Everything reaches Orders through the single buyable filter, where

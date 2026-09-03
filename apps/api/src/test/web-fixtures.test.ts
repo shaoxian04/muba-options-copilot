@@ -143,17 +143,21 @@ const post = async (url: string, payload: Record<string, unknown>, session = SES
 const DOWN_1 = "/deck?asset=ETH&direction=DOWN&horizonDays=1&sizeUsdc=2";
 const intent = { underlying: "ETH", direction: "DOWN", sizeUsdc: 2, horizonDays: 1 } as const;
 
-/** The owner these routes key on, standing in for `x-copilot-owner` the way SESSION stands in for `x-session-id`. */
-const OWNER = "fixtures-owner";
+// The Risk Profile / Suggestion / Decision routes now key on the session's own proven
+// wallet (ADR-0012), not a caller-named header -- so these fixtures need a session that
+// has actually been through /auth/challenge + /auth/verify, same as SESSION above once
+// proveWallet(app, SESSION) runs. OWNER is what that verification resolves to: the
+// TRADER_ADDRESS stub-client.ts's proveWallet proves, lowercased.
+const OWNER = TRADER_ADDRESS.toLowerCase();
 
 const getAsOwner = async (url: string) =>
-  (await app.inject({ method: "GET", url, headers: { "x-copilot-owner": OWNER } })).json();
+  (await app.inject({ method: "GET", url, headers: { "x-session-id": SESSION } })).json();
 
 const putAsOwner = async (url: string, payload: Record<string, unknown>) =>
-  (await app.inject({ method: "PUT", url, headers: { "x-copilot-owner": OWNER }, payload })).json();
+  (await app.inject({ method: "PUT", url, headers: { "x-session-id": SESSION }, payload })).json();
 
 const postAsOwner = async (url: string, payload: Record<string, unknown>) =>
-  (await app.inject({ method: "POST", url, headers: { "x-copilot-owner": OWNER }, payload })).json();
+  (await app.inject({ method: "POST", url, headers: { "x-session-id": SESSION }, payload })).json();
 
 beforeAll(async () => {
   resetStub();

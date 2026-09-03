@@ -10,12 +10,36 @@
  */
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { FORBIDDEN, stubApi } from "./stub";
+import { FORBIDDEN, fixtures, installFakeWallet, stubApi } from "./stub";
+
+const agentCard = fixtures.proposeAgent.cardRef;
+
+/**
+ * The Risk Profile is now keyed by the wallet address a session proved under
+ * ADR-0012, not the old forgeable owner header -- so every journey below has to
+ * connect and verify a wallet before the picker will do anything. WalletConnect
+ * only lives inside ConfirmModal (issue #30), so this deals a Card, opens the
+ * confirmation to reach it, connects, then closes back out -- `walletVerified` is
+ * surface state, so it survives the modal closing.
+ */
+const connectWallet = async (page: Page) => {
+  await page.getByRole("button", { name: "I think ETH drops before Friday" }).click();
+  await expect(page.getByTestId("chosen-by")).toBeVisible();
+  await page.locator(`[data-card-ref="${agentCard}"]`).click();
+  await expect(page.getByTestId("confirm-modal")).toBeVisible();
+  await page.getByTestId("connect-wallet").click();
+  await expect(page.getByTestId("wallet-address")).toBeVisible();
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByTestId("confirm-modal")).toHaveCount(0);
+};
 
 /** Opens the Insights tab. The profile picker (and, once a profile exists, the
  * Suggestion body) render under this same tab -- no navigation, just a local switch. */
 const openInsights = async (page: Page) => {
+  // installFakeWallet must run before the first navigation -- it's an init script.
+  await installFakeWallet(page);
   await page.goto("/");
+  await connectWallet(page);
   await page.getByRole("tab", { name: "Insights" }).click();
   await expect(page.getByRole("radiogroup", { name: "Choose a Risk Profile" })).toBeVisible();
 };
@@ -24,6 +48,18 @@ const pickBalanced = async (page: Page) => {
   await page.getByRole("radio", { name: /Balanced/ }).click();
   await expect(page.getByRole("radio", { name: /Balanced/ })).toHaveAttribute("aria-checked", "true");
 };
+
+test.describe("no wallet connected", () => {
+  test("shows a connect prompt instead of the picker, and calls /risk-profile never", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await page.getByRole("tab", { name: "Insights" }).click();
+
+    await expect(page.getByText("Connect your wallet to save a Risk Profile.")).toBeVisible();
+    await expect(page.getByRole("radiogroup", { name: "Choose a Risk Profile" })).toHaveCount(0);
+    expect(traffic.paths()).not.toContain("/risk-profile");
+  });
+});
 
 test.describe("the Risk Profile picker", () => {
   test("opening Insights renders the picker and issues no 404", async ({ page }) => {
@@ -139,7 +175,17 @@ test.describe("quality bar", () => {
     await page.getByRole("button", { name: "See what this buys" }).click();
     await expect(page.getByTestId("chosen-by")).toBeVisible();
 
-    for (const body of traffic.bodies) {
+    // /auth/challenge and /auth/verify are exempt from the scan, not from being fetched:
+    // they echo the TRADER'S OWN address back to prove sign-in, which is the same 40-hex
+    // shape FORBIDDEN watches for. journeys.spec.ts exempts the same two for the same
+    // reason. Every other body still carries none of it.
+    const exempt = new Set(["/auth/challenge", "/auth/verify"]);
+    const exemptIndexes = new Set(
+      traffic.all.flatMap((r, i) => (exempt.has(new URL(r.url()).pathname) ? [i] : []))
+    );
+    expect(exemptIndexes.size).toBeGreaterThanOrEqual(2);
+    for (const [i, body] of traffic.bodies.entries()) {
+      if (exemptIndexes.has(i)) continue;
       for (const forbidden of FORBIDDEN) expect(body).not.toMatch(forbidden);
     }
   });

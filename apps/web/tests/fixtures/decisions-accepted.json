@@ -1,6 +1,5 @@
 {
   "id": "decision-1",
-  "ownerId": "fixtures-owner",
   "strategyId": "rsi-oversold-eth",
   "strategyName": "RSI oversold bounce",
   "firedAt": "2026-01-14T00:00:00Z",

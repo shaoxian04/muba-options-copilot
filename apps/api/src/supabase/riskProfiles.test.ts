@@ -28,25 +28,25 @@ function fakeClient(result: { data: any; error: any }): RiskProfilesDeps {
 }
 
 test("getRiskProfile returns null when there is no row -- a normal answer, not an error", async () => {
-  const result = await getRiskProfile("owner-abc12345", fakeClient({ data: null, error: null }));
+  const result = await getRiskProfile("0xabababababababababababababababababababab", fakeClient({ data: null, error: null }));
   assert.equal(result, null);
 });
 
 test("getRiskProfile returns the saved profile when there is a row", async () => {
-  const result = await getRiskProfile("owner-abc12345", fakeClient({ data: { profile: "aggressive" }, error: null }));
+  const result = await getRiskProfile("0xabababababababababababababababababababab", fakeClient({ data: { profile: "aggressive" }, error: null }));
   assert.equal(result, "aggressive");
 });
 
 test("getRiskProfile throws a clear error naming the owner and the bad value when the stored profile isn't one of the three", async () => {
   await assert.rejects(
-    () => getRiskProfile("owner-abc12345", fakeClient({ data: { profile: "yolo" }, error: null })),
-    /Corrupt risk profile row for owner "owner-abc12345".*"yolo"/
+    () => getRiskProfile("0xabababababababababababababababababababab", fakeClient({ data: { profile: "yolo" }, error: null })),
+    /Corrupt risk profile row for owner "0xabababababababababababababababababababab".*"yolo"/
   );
 });
 
 test("getRiskProfile turns a database error into a thrown Error", async () => {
   await assert.rejects(
-    () => getRiskProfile("owner-abc12345", fakeClient({ data: null, error: { message: "connection reset" } })),
+    () => getRiskProfile("0xabababababababababababababababababababab", fakeClient({ data: null, error: { message: "connection reset" } })),
     /Failed to load risk profile/
   );
 });
@@ -60,22 +60,22 @@ test("setRiskProfile rejects an invalid profile name before it ever reaches the 
     },
   };
   await assert.rejects(
-    () => setRiskProfile("owner-abc12345", "yolo", deps),
+    () => setRiskProfile("0xabababababababababababababababababababab", "yolo", deps),
     /Invalid risk profile/
   );
   assert.equal(reached, false);
 });
 
 test("setRiskProfile upserts and returns the saved profile for a valid name", async () => {
-  const row = { owner_id: "owner-abc12345", profile: "balanced", created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z" };
-  const result = await setRiskProfile("owner-abc12345", "balanced", fakeClient({ data: row, error: null }));
+  const row = { owner_id: "0xabababababababababababababababababababab", profile: "balanced", created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z" };
+  const result = await setRiskProfile("0xabababababababababababababababababababab", "balanced", fakeClient({ data: row, error: null }));
   assert.equal(result.profile, "balanced");
-  assert.equal(result.ownerId, "owner-abc12345");
+  assert.equal(result.ownerId, "0xabababababababababababababababababababab");
 });
 
 test("setRiskProfile turns a database error into a thrown Error", async () => {
   await assert.rejects(
-    () => setRiskProfile("owner-abc12345", "conservative", fakeClient({ data: null, error: { message: "constraint violation" } })),
+    () => setRiskProfile("0xabababababababababababababababababababab", "conservative", fakeClient({ data: null, error: { message: "constraint violation" } })),
     /Failed to save risk profile/
   );
 });

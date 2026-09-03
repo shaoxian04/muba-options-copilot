@@ -158,18 +158,6 @@ const json = (route: Route, body: unknown, traffic: Traffic, status = 200) => {
 const authorised = (request: Request) => request.headers()["authorization"] === `Bearer ${TEST_API_TOKEN}`;
 
 /**
- * Mirrors `OWNER_ID_RE` in `apps/api/src/app.ts` (and `lib/owner.ts`'s copy of it).
- * A stub that accepted anything here would never catch the browser generating a
- * bad owner id -- which 400s every Risk Profile / Suggestion / Decision call with
- * no recovery (see the comment in `lib/owner.ts`).
- */
-const OWNER_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
-const ownerOf = (request: Request) => {
-  const header = request.headers()["x-copilot-owner"];
-  return typeof header === "string" && OWNER_ID_RE.test(header) ? header : null;
-};
-
-/**
  * The Deck for whatever was asked for.
  *
  * Keyed on `asset` first, because the surface asking for the wrong Underlying and being
@@ -398,16 +386,14 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         return json(route, practiceResult, traffic);
 
       /*
-       * The Risk Profile / Suggestion / Decision routes. All three constraints from
-       * the real routes apply here, not just to the ordinary surface: gated on the
-       * bearer token (a real `/suggestion` call reaches a paid-for exchange lookup
-       * through the agents service, same reasoning as `/propose`), and 400 on a
-       * missing or malformed owner id (mirrors `ownerIdFrom`'s regex in app.ts).
+       * The Risk Profile / Suggestion / Decision routes. Gated on the bearer token,
+       * same as the real routes -- a real `/suggestion` call reaches a paid-for
+       * exchange lookup through the agents service, same reasoning as `/propose`.
+       * The forgeable owner header is gone (re-keyed to the wallet address a
+       * session proved under ADR-0012); the auth journey stubs cover that gate.
        */
       case "/risk-profile": {
         if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
-        const owner = ownerOf(request);
-        if (!owner) return json(route, { error: "x-copilot-owner header is required (8-64 chars, [A-Za-z0-9_-])" }, traffic, 400);
 
         if (request.method() === "PUT") {
           const body = request.postDataJSON() as { profile?: string };
@@ -422,8 +408,6 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
 
       case "/suggestion": {
         if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
-        const owner = ownerOf(request);
-        if (!owner) return json(route, { error: "x-copilot-owner header is required (8-64 chars, [A-Za-z0-9_-])" }, traffic, 400);
 
         // No saved profile -- the real "No saved profile" branch, never a fetch to
         // Python. Once one is saved: the no-signal fixture for the "no-signal"
@@ -435,8 +419,6 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
 
       case "/decisions": {
         if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
-        const owner = ownerOf(request);
-        if (!owner) return json(route, { error: "x-copilot-owner header is required (8-64 chars, [A-Za-z0-9_-])" }, traffic, 400);
 
         const body = request.postDataJSON() as { decision?: "ACCEPTED" | "DISMISSED" };
         return json(route, { ...decisionsAccepted, decision: body.decision ?? decisionsAccepted.decision }, traffic);

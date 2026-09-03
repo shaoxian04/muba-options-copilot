@@ -1,5 +1,5 @@
 -- Risk Profile (one per Trader) and the append-only Decision log.
--- owner_id is an unverified placeholder until real auth exists (see apps/api/src/sessions.ts).
+-- owner_id is now a verified wallet address -- see 20260903000000_owner_id_is_a_proven_wallet.sql.
 
 create table if not exists risk_profiles (
   owner_id    text primary key,

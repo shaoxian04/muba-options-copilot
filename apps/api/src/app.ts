@@ -143,25 +143,14 @@ function requireToken(req: any, reply: any): boolean {
   return false;
 }
 
-const OWNER_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
-
 /**
- * The Risk Profile / Suggestion routes need something to key rows on, and there is no
- * auth yet -- so `x-copilot-owner` is a browser-generated id sent as a plain header,
- * UNVERIFIED, the same placeholder-identity note as sessions.ts's `x-session-id` and
- * store.py's `owner_id`. Returns null (never throws) so the caller can 400 cleanly.
+ * Who a row belongs to: the wallet this session proved it holds (ADR-0012), lowercased
+ * so one Trader is one key whatever case their wallet reports.
  *
- * This identifies a caller, it does not authenticate one: nothing checks that the
- * header's sender is who they claim, so a client can simply send a different owner id
- * and read or overwrite that owner's row. `requireToken` is what actually gates access
- * to these routes -- any holder of that one shared token can currently act as any
- * owner. Known limitation of the no-auth placeholder, not something fixed here.
+ * Nothing the client says is involved. The old x-copilot-owner header let any caller name
+ * any owner and read or overwrite that owner's row; this cannot be asserted, only proven.
  */
-function ownerIdFrom(req: any): string | null {
-  const header = req.headers["x-copilot-owner"];
-  const value = typeof header === "string" ? header : Array.isArray(header) ? header[0] : "";
-  return OWNER_ID_RE.test(value) ? value : null;
-}
+const ownerFor = (s: Session): string | null => s.verifiedWallet?.toLowerCase() ?? null;
 
 /**
  * A Card reference, resolved back to the Order it names.
@@ -637,10 +626,10 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.get("/risk-profile", async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const ownerId = ownerIdFrom(req);
-    if (!ownerId) return reply.code(400).send({ error: "x-copilot-owner header is required (8-64 chars, [A-Za-z0-9_-])" });
+    const owner = ownerFor(sessionFor(req.headers));
+    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
     try {
-      return { profile: await getRiskProfile(ownerId) };
+      return { profile: await getRiskProfile(owner) };
     } catch (e) {
       return reply.code(502).send(safeErrorResponse(req.log, e, "Could not load your Risk Profile."));
     }
@@ -648,12 +637,12 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.put("/risk-profile", async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const ownerId = ownerIdFrom(req);
-    if (!ownerId) return reply.code(400).send({ error: "x-copilot-owner header is required (8-64 chars, [A-Za-z0-9_-])" });
+    const owner = ownerFor(sessionFor(req.headers));
+    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
     const parsed = RiskProfileName.safeParse((req.body as any)?.profile);
     if (!parsed.success) return reply.code(400).send({ error: "profile must be one of conservative, balanced, aggressive" });
     try {
-      const row = await setRiskProfile(ownerId, parsed.data);
+      const row = await setRiskProfile(owner, parsed.data);
       return { profile: row.profile };
     } catch (e) {
       return reply.code(502).send(safeErrorResponse(req.log, e, "Could not save your Risk Profile."));
@@ -667,12 +656,12 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.get("/suggestion", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const ownerId = ownerIdFrom(req);
-    if (!ownerId) return reply.code(400).send({ error: "x-copilot-owner header is required (8-64 chars, [A-Za-z0-9_-])" });
+    const owner = ownerFor(sessionFor(req.headers));
+    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
 
     let profile;
     try {
-      profile = await getRiskProfile(ownerId);
+      profile = await getRiskProfile(owner);
     } catch (e) {
       return reply.code(502).send(safeErrorResponse(req.log, e, "Could not load your Risk Profile."));
     }
@@ -718,12 +707,15 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.post("/decisions", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const ownerId = ownerIdFrom(req);
-    if (!ownerId) return reply.code(400).send({ error: "x-copilot-owner header is required (8-64 chars, [A-Za-z0-9_-])" });
+    const owner = ownerFor(sessionFor(req.headers));
+    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
     const parsed = DecisionRequest.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid decision", issues: parsed.error.issues });
     try {
-      return await recordDecision(ownerId, parsed.data);
+      // The owner is the Trader's wallet address now, and the browser has no use for it
+      // back -- echoing it would put a 40-hex address on the wire for nothing.
+      const { ownerId: _ownerId, ...row } = await recordDecision(owner, parsed.data);
+      return row;
     } catch (e) {
       return reply.code(502).send(safeErrorResponse(req.log, e, "Could not record that decision."));
     }
@@ -731,11 +723,11 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.get("/decisions/stats", async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const ownerId = ownerIdFrom(req);
-    if (!ownerId) return reply.code(400).send({ error: "x-copilot-owner header is required (8-64 chars, [A-Za-z0-9_-])" });
+    const owner = ownerFor(sessionFor(req.headers));
+    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
     const strategyId = typeof (req.query as any)?.strategyId === "string" ? (req.query as any).strategyId : undefined;
     try {
-      return await decisionStats(ownerId, strategyId);
+      return await decisionStats(owner, strategyId);
     } catch (e) {
       return reply.code(502).send(safeErrorResponse(req.log, e, "Could not load decision stats."));
     }

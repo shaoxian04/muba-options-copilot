@@ -76,7 +76,7 @@ const INPUT: RecordDecisionInput = {
 
 const DB_ROW = {
   id: "11111111-1111-1111-1111-111111111111",
-  owner_id: "owner-abc12345",
+  owner_id: "0xabababababababababababababababababababab",
   strategy_id: "rsi-oversold-eth",
   strategy_name: "RSI oversold bounce",
   fired_at: "2026-09-01T00:00:00Z",
@@ -94,7 +94,7 @@ test("recordDecision maps intent.{underlying,direction,sizeUsdc,horizonDays} ont
     insertResult: { data: DB_ROW, error: null },
     onInsert: (row) => { captured = row; },
   });
-  await recordDecision("owner-abc12345", INPUT, deps);
+  await recordDecision("0xabababababababababababababababababababab", INPUT, deps);
 
   assert.equal(captured.then_underlying, INPUT.intent.underlying);
   assert.equal(captured.then_direction, INPUT.intent.direction);
@@ -108,7 +108,7 @@ test("recordDecision never sends id or decided_at -- Postgres generates those", 
     insertResult: { data: DB_ROW, error: null },
     onInsert: (row) => { captured = row; },
   });
-  await recordDecision("owner-abc12345", INPUT, deps);
+  await recordDecision("0xabababababababababababababababababababab", INPUT, deps);
 
   assert.equal("id" in captured, false);
   assert.equal("decided_at" in captured, false);
@@ -116,7 +116,7 @@ test("recordDecision never sends id or decided_at -- Postgres generates those", 
 
 test("recordDecision returns the row the database handed back, mapped from snake_case", async () => {
   const deps = fakeClient({ insertResult: { data: DB_ROW, error: null } });
-  const result = await recordDecision("owner-abc12345", INPUT, deps);
+  const result = await recordDecision("0xabababababababababababababababababababab", INPUT, deps);
 
   assert.equal(result.id, DB_ROW.id);
   assert.equal(result.decision, "ACCEPTED");
@@ -125,7 +125,7 @@ test("recordDecision returns the row the database handed back, mapped from snake
 
 test("recordDecision turns a database error into a thrown Error", async () => {
   const deps = fakeClient({ insertResult: { data: null, error: { message: "unique violation" } } });
-  await assert.rejects(() => recordDecision("owner-abc12345", INPUT, deps), /Failed to record decision/);
+  await assert.rejects(() => recordDecision("0xabababababababababababababababababababab", INPUT, deps), /Failed to record decision/);
 });
 
 test("decisionStats counts accepted and dismissed per strategy", async () => {
@@ -136,7 +136,7 @@ test("decisionStats counts accepted and dismissed per strategy", async () => {
     { ...DB_ROW, id: "4", strategy_id: "s2", decision: "DISMISSED" },
   ];
   const deps = fakeClient({ listResult: { data: rows, error: null } });
-  const stats = await decisionStats("owner-abc12345", undefined, deps);
+  const stats = await decisionStats("0xabababababababababababababababababababab", undefined, deps);
 
   assert.equal(stats.s1!.accepted, 2);
   assert.equal(stats.s1!.dismissed, 1);
@@ -154,7 +154,7 @@ test("decisionStats counts accepted and dismissed per strategy", async () => {
  */
 test("decisionStats reports no entry at all -- not a 0/0 acceptRate -- when there are no decisions", async () => {
   const deps = fakeClient({ listResult: { data: [], error: null } });
-  const stats = await decisionStats("owner-abc12345", undefined, deps);
+  const stats = await decisionStats("0xabababababababababababababababababababab", undefined, deps);
 
   assert.deepEqual(stats, {});
   assert.equal(Object.prototype.hasOwnProperty.call(stats, "acceptRate"), false);
@@ -162,7 +162,7 @@ test("decisionStats reports no entry at all -- not a 0/0 acceptRate -- when ther
 
 test("decisionStats turns a database error into a thrown Error", async () => {
   const deps = fakeClient({ listResult: { data: null, error: { message: "timeout" } } });
-  await assert.rejects(() => decisionStats("owner-abc12345", undefined, deps), /Failed to list decisions/);
+  await assert.rejects(() => decisionStats("0xabababababababababababababababababababab", undefined, deps), /Failed to list decisions/);
 });
 
 /**
@@ -189,7 +189,7 @@ test("decisionStats sums a strategy's decisions across more than one page, not j
     ],
     onQuery: (calls) => queries.push(calls),
   });
-  const stats = await decisionStats("owner-abc12345", undefined, deps);
+  const stats = await decisionStats("0xabababababababababababababababababababab", undefined, deps);
 
   assert.equal(stats.s1!.dismissed, 1000);
   assert.equal(stats.s1!.accepted, 1);
@@ -216,7 +216,7 @@ test("decisionStats reports the most recent strategyName when a strategy id was 
     listResult: { data: rows, error: null },
     onQuery: (calls) => { orderCall = calls.order; },
   });
-  const stats = await decisionStats("owner-abc12345", undefined, deps);
+  const stats = await decisionStats("0xabababababababababababababababababababab", undefined, deps);
 
   assert.deepEqual(orderCall, ["decided_at", { ascending: true }]);
   assert.equal(stats.s1!.strategyName, "New Name");

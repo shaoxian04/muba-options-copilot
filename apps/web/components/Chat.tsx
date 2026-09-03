@@ -71,12 +71,15 @@ export function Chat({
   seeds,
   busy,
   deal,
+  walletVerified,
 }: {
   log: ChatLine[];
   seeds: Seed[];
   busy: boolean;
   /** Same signature as `Surface.deal` -- threaded down to Suggestion for Accept (task 5). */
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<void>;
+  /** Whether the session has proven wallet ownership (ADR-0012) -- gates the Risk Profile. */
+  walletVerified: boolean;
 }) {
   // The route this page happened to load from decides the starting tab (so a direct
   // hit or refresh on /insights opens there) -- but switching tabs afterward never
@@ -170,6 +173,7 @@ export function Chat({
           pending={insightsPending}
           setPending={setInsightsPending}
           deal={deal}
+          walletVerified={walletVerified}
           onAccepted={() => selectEngine("trade")}
         />
       )}
@@ -226,6 +230,7 @@ function InsightsEngine({
   pending,
   setPending,
   deal,
+  walletVerified,
   onAccepted,
 }: {
   log: InsightsLine[];
@@ -233,6 +238,7 @@ function InsightsEngine({
   pending: string | null;
   setPending: Dispatch<SetStateAction<string | null>>;
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<void>;
+  walletVerified: boolean;
   onAccepted: () => void;
 }) {
   const [question, setQuestion] = useState("");
@@ -308,7 +314,7 @@ function InsightsEngine({
         {busy ? <p className="from-copilot">Asking…</p> : null}
       </div>
 
-      <SuggestionCard deal={deal} onAccepted={onAccepted} />
+      <SuggestionCard deal={deal} walletVerified={walletVerified} onAccepted={onAccepted} />
 
       <form
         className="ask-row"

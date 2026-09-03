@@ -17,6 +17,7 @@ vi.mock("../strategy/suggest.js", async (importOriginal) => {
 });
 
 import type { FastifyInstance } from "fastify";
+import { Wallet } from "ethers";
 import { buildApp } from "../app.js";
 import { resetStub } from "./stub-client.js";
 import { getRiskProfile } from "../supabase/riskProfiles.js";
@@ -26,6 +27,25 @@ const mockedGetProfile = vi.mocked(getRiskProfile);
 const mockedFetchSuggestion = vi.mocked(fetchSuggestion);
 
 let app: FastifyInstance;
+let sessionSeq = 0;
+const freshSession = () => `suggestion-${++sessionSeq}`;
+
+// A fixed, never-funded real wallet -- same reasoning as stub-client.ts's TRADER_WALLET.
+const WALLET_A = new Wallet("0x" + "2".repeat(64));
+
+/** Drives the challenge/verify round trip so a session's wallet counts as proven (ADR-0012). */
+async function proveWallet(app: FastifyInstance, session: string, wallet: Wallet): Promise<void> {
+  const challenge = await app.inject({
+    method: "POST", url: "/auth/challenge", headers: { "x-session-id": session },
+    payload: { walletAddress: wallet.address },
+  });
+  const { message } = challenge.json() as { message: string };
+  const signature = await wallet.signMessage(message);
+  await app.inject({
+    method: "POST", url: "/auth/verify", headers: { "x-session-id": session },
+    payload: { signature },
+  });
+}
 
 beforeEach(async () => {
   resetStub();
@@ -34,8 +54,11 @@ beforeEach(async () => {
   app = await buildApp();
 });
 
-const OWNER = "owner-abc12345";
-const getSuggestion = () => app.inject({ method: "GET", url: "/suggestion", headers: { "x-copilot-owner": OWNER } });
+async function getSuggestion() {
+  const session = freshSession();
+  await proveWallet(app, session, WALLET_A);
+  return app.inject({ method: "GET", url: "/suggestion", headers: { "x-session-id": session } });
+}
 
 describe("GET /suggestion", () => {
   it("returns every field null with no saved profile, and never calls the agents service", async () => {
@@ -47,6 +70,13 @@ describe("GET /suggestion", () => {
       profile: null, strategyId: null, strategyName: null, firedAt: null, intent: null, asOf: null,
     });
     expect(mockedFetchSuggestion).not.toHaveBeenCalled();
+  });
+
+  it("looks up the profile keyed on the proven wallet lowercased", async () => {
+    mockedGetProfile.mockResolvedValue(null);
+    await getSuggestion();
+    // WALLET_A.address is checksummed (mixed-case); the lookup must be keyed lowercase.
+    expect(mockedGetProfile).toHaveBeenCalledWith(WALLET_A.address.toLowerCase());
   });
 
   it("fetches a Suggestion for the saved profile", async () => {
@@ -69,17 +99,11 @@ describe("GET /suggestion", () => {
     expect(mockedFetchSuggestion).toHaveBeenCalledWith("balanced");
   });
 
-  it("400s on a missing x-copilot-owner header, before loading a profile", async () => {
-    const res = await app.inject({ method: "GET", url: "/suggestion" });
-    expect(res.statusCode).toBe(400);
+  it("401s with no verified wallet on the session, before loading a profile", async () => {
+    const res = await app.inject({ method: "GET", url: "/suggestion", headers: { "x-session-id": freshSession() } });
+    expect(res.statusCode).toBe(401);
     expect(mockedGetProfile).not.toHaveBeenCalled();
     expect(mockedFetchSuggestion).not.toHaveBeenCalled();
-  });
-
-  it("400s on a malformed x-copilot-owner header", async () => {
-    const res = await app.inject({ method: "GET", url: "/suggestion", headers: { "x-copilot-owner": "nope" } });
-    expect(res.statusCode).toBe(400);
-    expect(mockedGetProfile).not.toHaveBeenCalled();
   });
 
   it("passes through a 404 from the agents service (ETH-only, for now)", async () => {

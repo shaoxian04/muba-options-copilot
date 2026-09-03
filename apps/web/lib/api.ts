@@ -22,8 +22,6 @@ export type {
   RiskProfileResponse, SuggestionResponse, UnderlyingSymbol,
 };
 
-import { ownerId } from "./owner";
-
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:3001";
 
 /**
@@ -108,7 +106,6 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     headers: {
       "content-type": "application/json",
       "x-session-id": sessionId(),
-      "x-copilot-owner": ownerId(),
       ...(init?.headers ?? {}),
     },
   });
