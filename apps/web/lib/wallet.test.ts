@@ -3,14 +3,14 @@ import { UserRejectedRequestError } from "viem";
 
 vi.mock("@wagmi/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@wagmi/core")>();
-  return { ...actual, connect: vi.fn(), disconnect: vi.fn() };
+  return { ...actual, connect: vi.fn(), disconnect: vi.fn(), getConnection: vi.fn() };
 });
 
 vi.mock("./wagmiConfig", () => ({
   config: { storage: { getItem: vi.fn(), setItem: vi.fn(), removeItem: vi.fn() } },
 }));
 
-import { connect, disconnect } from "@wagmi/core";
+import { connect, disconnect, getConnection } from "@wagmi/core";
 import { config } from "./wagmiConfig";
 import {
   connectWallet,
@@ -19,10 +19,33 @@ import {
   lastConnectedWalletId,
   listAvailableWallets,
   waitForFirstAnnouncement,
+  WALLETCONNECT_ICON,
+  WALLETCONNECT_PEER_KEY,
   WalletConnectionCancelled,
   walletOptionFor,
   watchAvailableWallets,
 } from "./wallet";
+
+/**
+ * No real browser in this (Node) test environment -- `window` is undefined by default,
+ * same reason the rest of this file never exercises `rememberConnection` or
+ * `recentConnectionWithinTtl` directly (that localStorage round trip is covered by the
+ * Playwright suite instead, via `backdateStoredConnection`). The WalletConnect-peer cache
+ * is the one piece of that same storage this file does need to unit test, since the
+ * "which real wallet answered" part isn't reachable at all from a fake MIPD extension --
+ * only `getConnection(config).connector.getProvider()` can produce it, and that's already
+ * mocked here rather than a real relay connection.
+ */
+function stubBrowserLocalStorage(): void {
+  const store = new Map<string, string>();
+  vi.stubGlobal("window", {
+    localStorage: {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+      removeItem: (key: string) => void store.delete(key),
+    },
+  });
+}
 
 describe("listAvailableWallets", () => {
   it("always includes WalletConnect, even with nothing else detected", () => {
@@ -30,7 +53,7 @@ describe("listAvailableWallets", () => {
     // checks for `window` itself) -- exactly the "nothing installed" case a Trader
     // with no extensions sees.
     const wallets = listAvailableWallets();
-    expect(wallets).toEqual([{ id: "walletConnect", name: "WalletConnect", icon: null }]);
+    expect(wallets).toEqual([{ id: "walletConnect", name: "WalletConnect", icon: WALLETCONNECT_ICON }]);
   });
 });
 
@@ -113,6 +136,68 @@ describe("connectWallet", () => {
     vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
     await expect(connectWallet("walletConnect")).resolves.toBe("0xabc");
   });
+
+  describe("capturing which real wallet a WalletConnect pairing connected to", () => {
+    afterEach(() => {
+      vi.mocked(getConnection).mockReset();
+      vi.unstubAllGlobals();
+    });
+
+    it("caches the paired wallet's own name and icon from the session's peer metadata", async () => {
+      stubBrowserLocalStorage();
+      vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
+      vi.mocked(getConnection).mockReturnValue({
+        connector: {
+          getProvider: async () => ({
+            session: { peer: { metadata: { name: "OKX Wallet", icons: ["https://okx.example/icon.png"] } } },
+          }),
+        },
+        // biome-ignore-next: only `connector` matters to the code under test
+      } as unknown as ReturnType<typeof getConnection>);
+
+      await connectWallet("walletConnect");
+
+      expect(walletOptionFor("walletConnect")).toEqual({
+        id: "walletConnect",
+        name: "OKX Wallet",
+        icon: "https://okx.example/icon.png",
+      });
+    });
+
+    it("keeps the generic WalletConnect label when the peer never reports its own name", async () => {
+      stubBrowserLocalStorage();
+      vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
+      vi.mocked(getConnection).mockReturnValue({
+        connector: { getProvider: async () => ({}) },
+      } as unknown as ReturnType<typeof getConnection>);
+
+      await connectWallet("walletConnect");
+
+      expect(walletOptionFor("walletConnect")).toEqual({
+        id: "walletConnect",
+        name: "WalletConnect",
+        icon: WALLETCONNECT_ICON,
+      });
+    });
+
+    it("never fails the connection itself when reading the peer's session throws", async () => {
+      stubBrowserLocalStorage();
+      vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
+      vi.mocked(getConnection).mockImplementation(() => {
+        throw new Error("no active connection yet");
+      });
+
+      await expect(connectWallet("walletConnect")).resolves.toBe("0xabc");
+    });
+
+    it("never caches a peer for a plain extension connect", async () => {
+      stubBrowserLocalStorage();
+      vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
+
+      await expect(connectWallet("io.metamask")).rejects.toBeInstanceOf(Error); // no MIPD detail in this env
+      expect(getConnection).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("disconnectWallet", () => {
@@ -149,8 +234,12 @@ describe("lastConnectedWalletId", () => {
 });
 
 describe("walletOptionFor", () => {
-  it("labels the WalletConnect id by name, with no icon", () => {
-    expect(walletOptionFor("walletConnect")).toEqual({ id: "walletConnect", name: "WalletConnect", icon: null });
+  it("labels the WalletConnect id by name, with its own icon", () => {
+    expect(walletOptionFor("walletConnect")).toEqual({
+      id: "walletConnect",
+      name: "WalletConnect",
+      icon: WALLETCONNECT_ICON,
+    });
   });
 
   it("falls back to a generic label for an extension MIPD no longer has on hand", () => {
@@ -158,6 +247,58 @@ describe("walletOptionFor", () => {
     // the case where a Trader's last-used extension isn't currently announcing (e.g. it
     // was disabled, or hasn't finished its EIP-6963 announcement yet).
     expect(walletOptionFor("io.metamask")).toEqual({ id: "io.metamask", name: "Last used wallet", icon: null });
+  });
+
+  describe("with a cached WalletConnect peer", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("prefers the cached peer's own name and icon over the generic WalletConnect label", () => {
+      stubBrowserLocalStorage();
+      window.localStorage.setItem(
+        WALLETCONNECT_PEER_KEY,
+        JSON.stringify({ name: "Trust Wallet", icon: "https://trust.example/icon.png" })
+      );
+
+      expect(walletOptionFor("walletConnect")).toEqual({
+        id: "walletConnect",
+        name: "Trust Wallet",
+        icon: "https://trust.example/icon.png",
+      });
+    });
+
+    it("falls back to the generic icon when the cached peer never reported one", () => {
+      stubBrowserLocalStorage();
+      window.localStorage.setItem(WALLETCONNECT_PEER_KEY, JSON.stringify({ name: "Some Wallet", icon: null }));
+
+      expect(walletOptionFor("walletConnect")).toEqual({
+        id: "walletConnect",
+        name: "Some Wallet",
+        icon: WALLETCONNECT_ICON,
+      });
+    });
+
+    it("ignores a corrupted cache entry rather than showing a broken name", () => {
+      stubBrowserLocalStorage();
+      window.localStorage.setItem(WALLETCONNECT_PEER_KEY, "{not json");
+
+      expect(walletOptionFor("walletConnect")).toEqual({
+        id: "walletConnect",
+        name: "WalletConnect",
+        icon: WALLETCONNECT_ICON,
+      });
+    });
+
+    it("never lets a cached WalletConnect peer bleed into an unrelated extension id", () => {
+      stubBrowserLocalStorage();
+      window.localStorage.setItem(
+        WALLETCONNECT_PEER_KEY,
+        JSON.stringify({ name: "Trust Wallet", icon: "https://trust.example/icon.png" })
+      );
+
+      expect(walletOptionFor("io.metamask")).toEqual({ id: "io.metamask", name: "Last used wallet", icon: null });
+    });
   });
 });
 

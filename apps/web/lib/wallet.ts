@@ -16,6 +16,7 @@ import {
   connect,
   disconnect,
   getConnectorClient,
+  getConnection,
   injected,
   sendTransaction,
   signMessage as wagmiSignMessage,
@@ -53,6 +54,23 @@ export type WalletOption = { id: string; name: string; icon: string | null };
 export const WALLETCONNECT_ID = "walletConnect";
 
 /**
+ * A self-contained mark for WalletConnect, since (unlike an MIPD-detected extension) it
+ * never announces its own icon -- there's nothing to read one from. A simplified brand-blue
+ * monogram, not a reproduction of WalletConnect's own trademarked logo asset; swap in the
+ * real one here if this app ever gets a license to ship it. Inlined as a data URI rather
+ * than a network fetch for the same reason `connectWallet` imports the connector itself
+ * lazily: nothing about opening the picker should touch the network.
+ */
+export const WALLETCONNECT_ICON =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">' +
+      '<rect width="24" height="24" rx="6" fill="#3B99FC"/>' +
+      '<text x="12" y="16.5" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#fff">W</text>' +
+      "</svg>",
+  );
+
+/**
  * This app's own EIP-6963 discovery store, rather than reading `config.mipd`.
  * `@wagmi/core`'s own internal wiring of one was verified, against a real production
  * build in a real browser, to leave `config.mipd` `undefined` even with `window`
@@ -77,7 +95,7 @@ export function listAvailableWallets(): WalletOption[] {
     name: detail.info.name,
     icon: detail.info.icon,
   }));
-  return [...extensions, { id: WALLETCONNECT_ID, name: "WalletConnect", icon: null }];
+  return [...extensions, { id: WALLETCONNECT_ID, name: "WalletConnect", icon: WALLETCONNECT_ICON }];
 }
 
 /**
@@ -172,6 +190,7 @@ export async function connectWallet(walletId: string): Promise<string> {
   const address = result.accounts[0];
   if (!address) throw new WalletUnavailable("The wallet did not return an address.");
   rememberConnection(walletId);
+  if (walletId === WALLETCONNECT_ID) await rememberWalletConnectPeer();
   return address;
 }
 
@@ -190,6 +209,69 @@ function rememberConnection(id: string): void {
   } catch {
     // A private window with site data blocked can throw here -- losing this is fine,
     // it only means the next page load won't auto-reconnect, not that anything breaks.
+  }
+}
+
+/**
+ * Which real wallet a WalletConnect pairing actually connects to (MetaMask mobile, OKX
+ * Wallet, Trust Wallet, ...) isn't known until *after* pairing -- unlike an MIPD-detected
+ * extension, `WALLETCONNECT_ID` alone never says which wallet app answered. WalletConnect's
+ * own session carries that: the wallet on the other end of the pairing is the session's
+ * `peer`, and it self-reports its name/icon in `session.peer.metadata` (the WalletConnect
+ * v2 spec's `CoreTypes.Metadata`). Stored separately from `LAST_CONNECTION_KEY` because it
+ * only ever applies to the WalletConnect id, never to an extension (which always has its
+ * own live MIPD-reported name/icon and needs no cache).
+ */
+export const WALLETCONNECT_PEER_KEY = "copilot-walletconnect-peer";
+
+/**
+ * Structurally validates `session.peer.metadata` before trusting it, the same way any
+ * externally-reported data (a third-party wallet app's own self-description, relayed
+ * through WalletConnect's protocol, not this app) gets checked at a boundary rather than
+ * assumed to match its declared TypeScript type.
+ */
+function readPeerMetadata(provider: unknown): { name: string; icon: string | null } | null {
+  const session = (provider as { session?: unknown } | null | undefined)?.session;
+  const peer = (session as { peer?: unknown } | null | undefined)?.peer;
+  const metadata = (peer as { metadata?: unknown } | null | undefined)?.metadata;
+  if (!metadata || typeof metadata !== "object") return null;
+  const { name, icons } = metadata as { name?: unknown; icons?: unknown };
+  if (typeof name !== "string" || !name) return null;
+  const icon = Array.isArray(icons) ? icons.find((i): i is string => typeof i === "string" && i.length > 0) : null;
+  return { name, icon: icon ?? null };
+}
+
+/**
+ * Reads the just-established WalletConnect session's peer metadata and caches it, so
+ * `walletOptionFor` can label "last used" by the actual wallet app a Trader paired with
+ * instead of the generic "WalletConnect". Best-effort: a wallet that omits its own name
+ * from `session.peer.metadata`, or any failure reading it, just leaves the generic label
+ * in place -- never something to fail the connection itself over.
+ */
+async function rememberWalletConnectPeer(): Promise<void> {
+  if (typeof window === "undefined") return;
+  try {
+    const provider = await getConnection(config).connector?.getProvider();
+    const peer = readPeerMetadata(provider);
+    if (!peer) return;
+    window.localStorage.setItem(WALLETCONNECT_PEER_KEY, JSON.stringify(peer));
+  } catch {
+    // Same reasoning as rememberConnection: worst case is the generic label sticks around.
+  }
+}
+
+/** Reads back what `rememberWalletConnectPeer` cached, or null if there's nothing usable. */
+function walletConnectPeerOption(): WalletOption | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(WALLETCONNECT_PEER_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { name?: unknown; icon?: unknown };
+    if (typeof parsed.name !== "string" || !parsed.name) return null;
+    const icon = typeof parsed.icon === "string" ? parsed.icon : null;
+    return { id: WALLETCONNECT_ID, name: parsed.name, icon: icon ?? WALLETCONNECT_ICON };
+  } catch {
+    return null;
   }
 }
 
@@ -256,7 +338,7 @@ export async function lastConnectedWalletId(): Promise<string | null> {
  * visit, or hasn't finished announcing this early after page load.
  */
 export function walletOptionFor(id: string): WalletOption {
-  if (id === WALLETCONNECT_ID) return { id, name: "WalletConnect", icon: null };
+  if (id === WALLETCONNECT_ID) return walletConnectPeerOption() ?? { id, name: "WalletConnect", icon: WALLETCONNECT_ICON };
   const detail = mipdStore.getProviders().find((d) => d.info.rdns === id);
   return detail ? { id, name: detail.info.name, icon: detail.info.icon } : { id, name: "Last used wallet", icon: null };
 }
