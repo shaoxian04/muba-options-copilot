@@ -49,6 +49,7 @@ export default function Page() {
         busy={s.busy}
         submitTradeMessage={s.submitTradeMessage}
         deal={s.deal}
+        pick={s.pick}
         signedIn={!!s.account}
       />
 
