@@ -21,7 +21,7 @@ export function AccountControl({
   verified,
   verifying,
   error,
-  onConnect,
+  onOpenWalletPicker,
   onVerify,
 }: {
   account: { userId: string; email: string; avatarUrl: string | null } | null;
@@ -31,7 +31,7 @@ export function AccountControl({
   verified: boolean;
   verifying: boolean;
   error: string | null;
-  onConnect: () => void;
+  onOpenWalletPicker: () => void;
   onVerify: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -71,7 +71,7 @@ export function AccountControl({
       ) : (
         <>
           {!walletAddress ? (
-            <button type="button" onClick={onConnect} disabled={connecting} data-testid="connect-wallet">
+            <button type="button" onClick={onOpenWalletPicker} disabled={connecting} data-testid="connect-wallet">
               {connecting ? "Connecting…" : "Connect wallet"}
             </button>
           ) : verified ? (

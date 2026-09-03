@@ -26,6 +26,7 @@ import { EmptyDeck, VetoScreen } from "../components/Halt";
 import { Rail } from "../components/Rail";
 import { RfqModal } from "../components/RfqModal";
 import { Tape } from "../components/Tape";
+import { WalletPicker } from "../components/WalletPicker";
 import { agentGate, useNow, useSurface } from "../lib/surface";
 
 export default function Page() {
@@ -54,8 +55,14 @@ export default function Page() {
           verified={s.walletVerified}
           verifying={s.walletVerifying}
           error={s.walletError}
-          onConnect={() => void s.connectWallet()}
+          onOpenWalletPicker={s.onOpenWalletPicker}
           onVerify={() => void s.verifyWallet()}
+        />
+        <WalletPicker
+          open={s.walletPickerOpen}
+          wallets={s.availableWallets}
+          onPick={(walletId) => void s.onPickWallet(walletId)}
+          onClose={s.onCloseWalletPicker}
         />
         <Rail markets={s.markets} asset={s.asset} loading={s.marketsLoading} onPick={s.setAsset} />
         <Tape deck={s.deck} now={now} />
