@@ -93,11 +93,11 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 | `GET /forecast/news` | no | simulated-headline sentiment for `?symbol=&horizon=`. Opinion, quarantined from the trade flow (ADR-0005) |
 | `GET /forecast/price` | no | a price prediction grounded in real market data. Opinion, never a trade input |
 | `GET /forecast/risk-benefit` | no | the risk/benefit reading, with a runtime guardrail against Max Loss phrasing |
-| `GET /risk-profile` | no | the caller's saved Risk Profile, or `null` if none is set yet. Needs a verified wallet |
-| `PUT /risk-profile` | no | saves conservative/balanced/aggressive for the caller. Needs a verified wallet |
-| `GET /suggestion` | no | an ETH Suggestion from the Strategy Agent for the caller's saved profile. Needs a verified wallet; `null` fields if no profile is saved yet |
-| `POST /decisions` | no | records ACCEPTED/DISMISSED for a Suggestion the caller was shown. Needs a verified wallet |
-| `GET /decisions/stats` | no | per-strategy accept/dismiss counts for the caller, optionally `?strategyId=`. Needs a verified wallet |
+| `GET /risk-profile` | no | the caller's saved Risk Profile, or `null` if none is set yet. Needs a signed-in account |
+| `PUT /risk-profile` | no | saves conservative/balanced/aggressive for the caller. Needs a signed-in account |
+| `GET /suggestion` | no | an ETH Suggestion from the Strategy Agent for the caller's saved profile. Needs a signed-in account; `null` fields if no profile is saved yet |
+| `POST /decisions` | no | records ACCEPTED/DISMISSED for a Suggestion the caller was shown. Needs a signed-in account |
+| `GET /decisions/stats` | no | per-strategy accept/dismiss counts for the caller, optionally `?strategyId=`. Needs a signed-in account |
 
 `/propose` is what fills the confirmation card; `/fill/prepare` then `/fill/settle` are what
 Confirm does — the Trader's own connected wallet signs and submits the actual transaction
@@ -185,21 +185,20 @@ billed AI/CoinGecko call even though the browser can't read the response back, s
 token left those four routes forgeable by any page the operator's browser happened to load.
 
 The Risk Profile / Suggestion / Decision routes are gated by `$COPILOT_API_TOKEN` when set,
-and then again by the wallet the session proved it holds. They key their data on
-`Session.verifiedWallet`, lowercased -- read off the session, never off a header (ADR-0013).
-Without a proven wallet all five answer 401; there is no fallback identity, because a
-fallback is reachable by simply not connecting.
+and then again by the account that signed in. They key their data on the id
+`requireAccount` resolves an `x-account-token` to -- read off a verified Supabase session,
+never off a header (ADR-0017, supersedes ADR-0013). Without a signed-in account all five
+answer 401; there is no fallback identity, because a fallback is reachable by simply not
+signing in.
 
-This closes a real hole. These routes used to key on `x-copilot-owner`, a client-supplied
-header nothing verified, so any holder of the shared token could name a different owner and
-read or overwrite that owner's Risk Profile or Decisions. The header is now gone from both
-sides rather than merely validated, so an owner id is no longer something a caller can
-assert -- only a signature establishes one.
-
-The trade-off is that `verifiedWallet` is in-memory and per-session (ADR-0012), so a backend
-restart or a new tab means signing again -- gasless, and already requested at connect time --
-before a Trader can read their own saved Risk Profile. The data is durable; the proof of who
-may read it is not.
+This closes a real hole, twice over. These routes originally keyed on `x-copilot-owner`, a
+client-supplied header nothing verified, so any holder of the shared token could name a
+different owner and read or overwrite that owner's Risk Profile or Decisions. ADR-0013
+closed that by keying on the wallet a session cryptographically proved instead; ADR-0017
+re-keys on the account for consistency with the rest of the account system (Risk Budget,
+linked wallet, Practice history) without reopening the hole -- an account id is only ever
+handed back after Supabase itself verifies the bearer token, exactly as unforgeable as the
+wallet signature it replaces.
 
 That header is what the Insights tab's card is keyed on. `apps/web/components/SuggestionCard.tsx`
 sits between the Insights log and the ask-row: it is the Risk Profile picker and the
@@ -234,8 +233,9 @@ The reasoning behind this project is written down, not assumed:
   - [0008](./docs/adr/0008-cover-is-bought-by-rfq-for-single-collateral-loans-only.md) — Cover is RFQ-only, single-collateral Loans only
   - [0011](./docs/adr/0011-non-custodial-fill-for-multi-tenant-wallets.md) — each Trader signs their own fill; the backend prepares, never signs
   - [0012](./docs/adr/0012-wallet-proof-sessions-and-chain-verified-settle.md) — sessions prove wallet ownership before a fill; the chain decides whether a fill succeeded
-  - [0013](./docs/adr/0013-a-risk-profile-belongs-to-a-wallet.md) — a Risk Profile is keyed on the proven wallet, not a browser-minted id
+  - [0013](./docs/adr/0013-a-risk-profile-belongs-to-a-wallet.md) — a Risk Profile is keyed on the proven wallet, not a browser-minted id (superseded by 0017)
   - [0014](./docs/adr/0014-sign-in-required-before-wallet-connect.md) — a real account is required before wallet-connect or Confirm; Deck browsing and Practice Run stay open
+  - [0017](./docs/adr/0017-a-risk-profile-belongs-to-an-account.md) — a Risk Profile is keyed on the signed-in account, not the wallet (supersedes 0013)
 
 ## Layout
 

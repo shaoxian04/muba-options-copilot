@@ -1,5 +1,5 @@
 ---
-status: accepted, closes the last open bullet of ADR-0011 and supersedes the placeholder identity note in 20260901000000_risk_profiles_and_decisions.sql
+status: superseded by ADR-0017, closes the last open bullet of ADR-0011 and supersedes the placeholder identity note in 20260901000000_risk_profiles_and_decisions.sql
 ---
 
 # A Risk Profile belongs to a wallet, not to a browser
