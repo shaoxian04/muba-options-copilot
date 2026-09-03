@@ -57,6 +57,7 @@ export default function Page() {
           error={s.walletError}
           onOpenWalletPicker={s.onOpenWalletPicker}
           onVerify={() => void s.verifyWallet()}
+          onDisconnectWallet={s.onDisconnectWallet}
         />
         <WalletPicker
           open={s.walletPickerOpen}

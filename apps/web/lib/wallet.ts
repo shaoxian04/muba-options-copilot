@@ -14,6 +14,7 @@
  */
 import {
   connect,
+  disconnect,
   getConnection,
   getConnectorClient,
   injected,
@@ -22,11 +23,22 @@ import {
   signMessage as wagmiSignMessage,
 } from "@wagmi/core";
 import { getTransactionReceipt as viemGetTransactionReceipt } from "viem/actions";
+import { UserRejectedRequestError } from "viem";
 import type { UnsignedTx } from "@copilot/shared";
 import { createStore as createMipdStore } from "mipd";
 import { config } from "./wagmiConfig";
 
 export class WalletUnavailable extends Error {}
+
+/**
+ * Closing a wallet's own connect/QR UI without pairing (WalletConnect's modal, or an
+ * extension's own popup) surfaces as viem's `UserRejectedRequestError` -- a raw, technical
+ * message ("User rejected the request. Details: Connection request reset... Version:
+ * viem@2.56.3") meant for a developer console, not a Trader who just closed a dialog.
+ * `connectWallet` normalises it to this instead, so a caller can choose to show nothing at
+ * all for a plain cancel rather than surfacing a scary, jargon-filled error.
+ */
+export class WalletConnectionCancelled extends Error {}
 
 export type WalletOption = { id: string; name: string; icon: string | null };
 
@@ -106,12 +118,24 @@ export function waitForFirstAnnouncement(store: AnnouncementSource, timeoutMs = 
   });
 }
 
-/** Builds a fresh `injected({ target })` connector for one MIPD-detected extension. */
+/**
+ * Builds a fresh `injected({ target })` connector for one MIPD-detected extension.
+ *
+ * `shimDisconnect: false` -- the default (`true`) makes wagmi call `wallet_requestPermissions`
+ * before `eth_requestAccounts`, purely to force a fresh account-picker prompt even when an
+ * origin is already authorised. This app has no use for that (a Trader picking a wallet from
+ * `WalletPicker` is already an explicit, fresh choice), and it isn't a universally safe call:
+ * confirmed against a real Binance Wallet extension, `wallet_requestPermissions` gets
+ * intercepted into that wallet's own multi-chain `multiAddressConnect` flow, which never
+ * resolves -- hanging `connect()` forever before a Trader ever sees a normal approve prompt.
+ * Skipping straight to `eth_requestAccounts` is the one EIP-1193 method every wallet answers.
+ */
 function injectedConnectorFor(rdns: string) {
   const detail = mipdStore.getProviders().find((d) => d.info.rdns === rdns);
   if (!detail) throw new WalletUnavailable("That wallet is no longer available. Refresh and try again.");
   return injected({
     target: { id: detail.info.rdns, name: detail.info.name, icon: detail.info.icon, provider: detail.provider },
+    shimDisconnect: false,
   });
 }
 
@@ -131,10 +155,24 @@ export async function connectWallet(walletId: string): Promise<string> {
           projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "",
         })
       : injectedConnectorFor(walletId);
-  const result = await connect(config, { connector });
+  const result = await connect(config, { connector }).catch((error) => {
+    if (error instanceof UserRejectedRequestError) throw new WalletConnectionCancelled();
+    throw error;
+  });
   const address = result.accounts[0];
   if (!address) throw new WalletUnavailable("The wallet did not return an address.");
   return address;
+}
+
+/**
+ * Lets a Trader manually forget the connected wallet, e.g. after they've revoked the
+ * dApp on the wallet's own side and want the surface to stop assuming it's still good.
+ * Swallows any error -- there's nothing useful to show a Trader for "the wallet we were
+ * about to disconnect from wasn't actually reachable," and the caller resets its own
+ * address/verified state regardless of whether this resolves or rejects.
+ */
+export async function disconnectWallet(): Promise<void> {
+  await disconnect(config).catch(() => {});
 }
 
 /**

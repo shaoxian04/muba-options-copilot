@@ -1,5 +1,20 @@
-import { describe, expect, it, vi } from "vitest";
-import { listAvailableWallets, waitForFirstAnnouncement, watchAvailableWallets } from "./wallet";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { UserRejectedRequestError } from "viem";
+
+vi.mock("@wagmi/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@wagmi/core")>();
+  return { ...actual, connect: vi.fn(), disconnect: vi.fn() };
+});
+
+import { connect, disconnect } from "@wagmi/core";
+import {
+  connectWallet,
+  disconnectWallet,
+  listAvailableWallets,
+  waitForFirstAnnouncement,
+  WalletConnectionCancelled,
+  watchAvailableWallets,
+} from "./wallet";
 
 describe("listAvailableWallets", () => {
   it("always includes WalletConnect, even with nothing else detected", () => {
@@ -64,5 +79,36 @@ describe("waitForFirstAnnouncement", () => {
     expect(resolved).toBe(true);
 
     vi.useRealTimers();
+  });
+});
+
+describe("connectWallet", () => {
+  afterEach(() => {
+    vi.mocked(connect).mockReset();
+  });
+
+  it("turns a cancelled WalletConnect session into WalletConnectionCancelled, not the raw viem error", async () => {
+    vi.mocked(connect).mockRejectedValueOnce(
+      new UserRejectedRequestError(new Error("Connection request reset. Please try again."))
+    );
+
+    await expect(connectWallet("walletconnect")).rejects.toBeInstanceOf(WalletConnectionCancelled);
+  });
+});
+
+describe("disconnectWallet", () => {
+  afterEach(() => {
+    vi.mocked(disconnect).mockReset();
+  });
+
+  it("tells wagmi to disconnect the active connector", async () => {
+    vi.mocked(disconnect).mockResolvedValueOnce(undefined);
+    await disconnectWallet();
+    expect(disconnect).toHaveBeenCalled();
+  });
+
+  it("never throws even when nothing is connected", async () => {
+    vi.mocked(disconnect).mockRejectedValueOnce(new Error("no active connection"));
+    await expect(disconnectWallet()).resolves.toBeUndefined();
   });
 });

@@ -45,8 +45,10 @@ import {
 import {
   connectWallet as connectWalletById,
   connectedAddress,
+  disconnectWallet as disconnectWalletById,
   listAvailableWallets,
   sendTx,
+  WalletConnectionCancelled,
   signMessage,
   watchAvailableWallets,
   type WalletOption,
@@ -268,6 +270,7 @@ export interface Surface {
   onCloseWalletPicker: () => void;
   onPickWallet: (walletId: string) => void;
   verifyWallet: () => Promise<void>;
+  onDisconnectWallet: () => void;
 
   setAsset: (a: UnderlyingSymbol) => void;
   setDirection: (d: Direction) => void;
@@ -610,6 +613,10 @@ export function useSurface(): Surface {
         setWalletAddress(address);
         await verifyWalletFor(address);
       } catch (e) {
+        // A Trader closing the wallet's own connect/QR dialog is a plain cancel, not a
+        // failure worth an error banner -- surfacing viem's raw rejection message here
+        // would read as a scary, jargon-filled error for what was just a closed dialog.
+        if (e instanceof WalletConnectionCancelled) return;
         setWalletError(e instanceof Error ? e.message : "Could not connect a wallet.");
       } finally {
         setWalletConnecting(false);
@@ -617,6 +624,20 @@ export function useSurface(): Surface {
     },
     [verifyWalletFor]
   );
+
+  /**
+   * Lets a Trader manually forget the connected wallet -- e.g. after revoking the dApp
+   * on the wallet's own side -- rather than being stuck showing a stale address the
+   * wallet itself no longer recognises. Resets every piece of wallet state back to
+   * "nothing connected," the same starting point as a fresh page load.
+   */
+  const disconnectWallet = useCallback(async () => {
+    await disconnectWalletById();
+    setWalletAddress(null);
+    setWalletVerified(false);
+    setWalletVerifying(false);
+    setWalletError(null);
+  }, []);
 
   /**
    * The current proposal, against the Deck as it stands now.
@@ -1153,6 +1174,7 @@ export function useSurface(): Surface {
     onCloseWalletPicker: closeWalletPicker,
     onPickWallet: pickWallet,
     verifyWallet: () => (walletAddress ? verifyWalletFor(walletAddress) : Promise.resolve()),
+    onDisconnectWallet: () => void disconnectWallet(),
     setAsset,
     setDirection,
     setHorizon,

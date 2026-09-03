@@ -23,6 +23,7 @@ export function AccountControl({
   error,
   onOpenWalletPicker,
   onVerify,
+  onDisconnectWallet,
 }: {
   account: { userId: string; email: string; avatarUrl: string | null } | null;
   onSignOut: () => void;
@@ -33,6 +34,7 @@ export function AccountControl({
   error: string | null;
   onOpenWalletPicker: () => void;
   onVerify: () => void;
+  onDisconnectWallet: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [photoFailed, setPhotoFailed] = useState(false);
@@ -116,6 +118,19 @@ export function AccountControl({
             {menuOpen ? (
               <div className="account-menu" role="menu" data-testid="account-menu">
                 <p className="account-menu-email">{account.email}</p>
+                {walletAddress ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onDisconnectWallet();
+                    }}
+                    data-testid="account-disconnect-wallet"
+                  >
+                    Disconnect wallet
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   role="menuitem"
