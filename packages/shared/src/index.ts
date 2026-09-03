@@ -678,7 +678,7 @@ export const CoverQuote = z.object({
   /**
    * AAVE's price, not the options market's. The Liquidation Price is a fact about Aave, so
    * it is derived from the price Aave liquidates on. The two are cross-checked and a
-   * divergence refuses rather than picking one. (ADR-0011)
+   * divergence refuses rather than picking one. (ADR-0013)
    */
   spot: Figure,
   loan: z.object({
@@ -696,7 +696,7 @@ export const CoverQuote = z.object({
     /**
      * The hedge that matches the Loan exactly: `collateralAmount * liquidationThreshold`.
      * What a Cover SHOULD be. What it can actually buy is decided when a maker answers,
-     * and the gap between the two is the Coverage. (ADR-0012)
+     * and the gap between the two is the Coverage. (ADR-0014)
      */
     requiredContracts: Figure,
     tenorDays: Figure,

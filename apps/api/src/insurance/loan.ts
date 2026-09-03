@@ -10,7 +10,7 @@
  *     is read separately -- and the two are then cross-checked, which is what detects a
  *     multi-collateral Loan without a token-level breakdown ever existing. (ADR-0008)
  *   - Aave's oracle and the Thetanuts feed are both read, because the strike is derived
- *     from one and settles against the other. (ADR-0011)
+ *     from one and settles against the other. (ADR-0013)
  */
 import { ethers } from "ethers";
 import type { UnderlyingSymbol } from "@copilot/shared";

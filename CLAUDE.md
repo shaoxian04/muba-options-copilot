@@ -33,7 +33,7 @@ tested) and `http.ts` (`GET /cover/quote`), with the surface at `/cover`. It com
 Liquidation Price, the Target Strike and the full hedge for any address, and refuses in
 words otherwise. The RFQ money path -- request, wait out `offerEndTimestamp`, settle on a
 second human confirmation -- is NOT built, and `POST /rfq` is still the honest 501 of issue
-#31. See ADR-0011 and ADR-0012 for the decisions taken while building the read half.
+#31. See ADR-0013 and ADR-0014 for the decisions taken while building the read half.
 
 **The book is multi-asset** (issues #23-#27): six Underlyings — BTC, ETH, SOL, BNB, XRP,
 AVAX — keyed by Chainlink **price feed**, never by underlying token (four of them are

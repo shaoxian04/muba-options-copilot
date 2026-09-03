@@ -38,7 +38,7 @@ export const TENOR_DAYS = 14;
 export const PREMIUM_CAP_USDC = 8;
 
 /**
- * 1%, and used for two different checks that happen to share a bound (ADR-0011):
+ * 1%, and used for two different checks that happen to share a bound (ADR-0013):
  *   - `collateralAmount * price` against Aave's own `totalCollateralBase`, which is how a
  *     multi-collateral Loan is detected without a token-level breakdown existing;
  *   - Aave's oracle against the Thetanuts feed, which is how a mis-wired asset, a decimals
@@ -50,7 +50,7 @@ export const TOLERANCE = 0.01;
 /**
  * Below this, Coverage stops being a number and becomes a sentence. "0.4%" reads like
  * protection to someone not doing the arithmetic, and a rounding error is not protection.
- * (ADR-0012)
+ * (ADR-0014)
  */
 export const COVERAGE_FLOOR = 0.01;
 
@@ -158,7 +158,7 @@ export const requiredContracts = (collateralAmount: number, lt: number): number 
 /**
  * How much of the Loan a Cover actually protects. Clamped at 1: buying more than the hedge
  * requires is over-hedging, not 140% protection, and reporting it as coverage would be a lie
- * in the flattering direction. (ADR-0012)
+ * in the flattering direction. (ADR-0014)
  */
 export const coverage = (bought: number, required: number): number =>
   required <= 0 ? 0 : Math.min(bought / required, 1);
