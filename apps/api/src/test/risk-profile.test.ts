@@ -14,7 +14,6 @@ vi.mock("../supabase/riskProfiles.js", () => ({
 }));
 
 import type { FastifyInstance } from "fastify";
-import { Wallet } from "ethers";
 import { buildApp } from "../app.js";
 import { resetStub } from "./stub-client.js";
 import { resetSupabaseStub, registerUser } from "./stub-supabase.js";
@@ -24,39 +23,20 @@ const mockedGet = vi.mocked(getRiskProfile);
 const mockedSet = vi.mocked(setRiskProfile);
 
 let app: FastifyInstance;
-let sessionSeq = 0;
-const freshSession = () => `risk-profile-${++sessionSeq}`;
 
-// Two distinct real wallets so a test can prove ownership of one and try to touch
-// the other's row -- same reasoning as stub-client.ts's TRADER_WALLET, a fixed and
-// never-funded key, just two of them here.
-const WALLET_A = new Wallet("0x" + "2".repeat(64));
-const WALLET_B = new Wallet("0x" + "3".repeat(64));
-
-/** Every test in this file signs in as the same fake account (ADR-0014). */
-const ACCOUNT_TOKEN = "acct-token-1";
-
-/** Drives the challenge/verify round trip so a session's wallet counts as proven (ADR-0012). */
-async function proveWallet(
-  app: FastifyInstance, session: string, wallet: Wallet, extraHeaders: Record<string, string> = {}
-): Promise<void> {
-  const headers = { "x-session-id": session, "x-account-token": ACCOUNT_TOKEN, ...extraHeaders };
-  const challenge = await app.inject({
-    method: "POST", url: "/auth/challenge", headers,
-    payload: { walletAddress: wallet.address },
-  });
-  const { message } = challenge.json() as { message: string };
-  const signature = await wallet.signMessage(message);
-  await app.inject({
-    method: "POST", url: "/auth/verify", headers,
-    payload: { signature },
-  });
-}
+// Two distinct fake accounts so a test can sign in as one and try to touch the
+// other's row -- same reasoning the old file gave for two wallets, now for two
+// accounts (ADR-0017).
+const ACCOUNT_A_TOKEN = "acct-token-a";
+const ACCOUNT_A_ID = "user-a";
+const ACCOUNT_B_TOKEN = "acct-token-b";
+const ACCOUNT_B_ID = "user-b";
 
 beforeEach(async () => {
   resetStub();
   resetSupabaseStub();
-  registerUser(ACCOUNT_TOKEN, { id: "user-1", email: "trader@example.com" });
+  registerUser(ACCOUNT_A_TOKEN, { id: ACCOUNT_A_ID, email: "trader-a@example.com" });
+  registerUser(ACCOUNT_B_TOKEN, { id: ACCOUNT_B_ID, email: "trader-b@example.com" });
   mockedGet.mockReset();
   mockedSet.mockReset();
   app = await buildApp();
@@ -65,9 +45,9 @@ beforeEach(async () => {
 describe("GET /risk-profile", () => {
   it("returns profile: null when nothing is saved yet", async () => {
     mockedGet.mockResolvedValue(null);
-    const session = freshSession();
-    await proveWallet(app, session, WALLET_A);
-    const res = await app.inject({ method: "GET", url: "/risk-profile", headers: { "x-session-id": session } });
+    const res = await app.inject({
+      method: "GET", url: "/risk-profile", headers: { "x-account-token": ACCOUNT_A_TOKEN },
+    });
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ profile: null });
@@ -75,37 +55,38 @@ describe("GET /risk-profile", () => {
 
   it("returns the saved profile", async () => {
     mockedGet.mockResolvedValue("aggressive");
-    const session = freshSession();
-    await proveWallet(app, session, WALLET_A);
-    const res = await app.inject({ method: "GET", url: "/risk-profile", headers: { "x-session-id": session } });
+    const res = await app.inject({
+      method: "GET", url: "/risk-profile", headers: { "x-account-token": ACCOUNT_A_TOKEN },
+    });
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ profile: "aggressive" });
   });
 
-  it("401s with no verified wallet on the session", async () => {
-    const res = await app.inject({ method: "GET", url: "/risk-profile", headers: { "x-session-id": freshSession() } });
+  it("401s with no account signed in", async () => {
+    const res = await app.inject({ method: "GET", url: "/risk-profile" });
     expect(res.statusCode).toBe(401);
     expect(mockedGet).not.toHaveBeenCalled();
   });
 
-  it("keys the lookup on wallet A, not on a session that only proved wallet B", async () => {
+  it("keys the lookup on account A, not on a request bearing account B's token", async () => {
     mockedGet.mockResolvedValue("aggressive");
-    const session = freshSession();
-    await proveWallet(app, session, WALLET_B);
-    await app.inject({ method: "GET", url: "/risk-profile", headers: { "x-session-id": session } });
+    await app.inject({
+      method: "GET", url: "/risk-profile", headers: { "x-account-token": ACCOUNT_B_TOKEN },
+    });
 
-    expect(mockedGet).toHaveBeenCalledWith(WALLET_B.address.toLowerCase());
-    expect(mockedGet).not.toHaveBeenCalledWith(WALLET_A.address.toLowerCase());
+    expect(mockedGet).toHaveBeenCalledWith(ACCOUNT_B_ID);
+    expect(mockedGet).not.toHaveBeenCalledWith(ACCOUNT_A_ID);
   });
 
   it("401s without the API token when one is configured", async () => {
     process.env.COPILOT_API_TOKEN = "a-secret-nobody-sent";
     try {
       const gated = await buildApp();
-      const session = freshSession();
-      await proveWallet(gated, session, WALLET_A, { authorization: "Bearer a-secret-nobody-sent" });
-      const res = await gated.inject({ method: "GET", url: "/risk-profile", headers: { "x-session-id": session } });
+      const res = await gated.inject({
+        method: "GET", url: "/risk-profile",
+        headers: { "x-account-token": ACCOUNT_A_TOKEN },
+      });
       expect(res.statusCode).toBe(401);
       expect(mockedGet).not.toHaveBeenCalled();
     } finally {
@@ -115,65 +96,59 @@ describe("GET /risk-profile", () => {
 });
 
 describe("PUT /risk-profile", () => {
-  it("saves a valid profile name, keyed on the proven wallet lowercased", async () => {
+  it("saves a valid profile name, keyed on the signed-in account", async () => {
     mockedSet.mockResolvedValue({
-      ownerId: WALLET_A.address.toLowerCase(), profile: "balanced",
+      ownerId: ACCOUNT_A_ID, profile: "balanced",
       createdAt: "2026-09-01T00:00:00Z", updatedAt: "2026-09-01T00:00:00Z",
     });
-    const session = freshSession();
-    await proveWallet(app, session, WALLET_A);
     const res = await app.inject({
-      method: "PUT", url: "/risk-profile", headers: { "x-session-id": session }, payload: { profile: "balanced" },
+      method: "PUT", url: "/risk-profile",
+      headers: { "x-account-token": ACCOUNT_A_TOKEN }, payload: { profile: "balanced" },
     });
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ profile: "balanced" });
-    // WALLET_A.address is checksummed (mixed-case); the row must be keyed lowercase.
-    expect(mockedSet).toHaveBeenCalledWith(WALLET_A.address.toLowerCase(), "balanced");
+    expect(mockedSet).toHaveBeenCalledWith(ACCOUNT_A_ID, "balanced");
   });
 
   it("400s on a bad profile name, without ever reaching the database", async () => {
-    const session = freshSession();
-    await proveWallet(app, session, WALLET_A);
     const res = await app.inject({
-      method: "PUT", url: "/risk-profile", headers: { "x-session-id": session }, payload: { profile: "yolo" },
+      method: "PUT", url: "/risk-profile",
+      headers: { "x-account-token": ACCOUNT_A_TOKEN }, payload: { profile: "yolo" },
     });
 
     expect(res.statusCode).toBe(400);
     expect(mockedSet).not.toHaveBeenCalled();
   });
 
-  it("401s with no verified wallet on the session", async () => {
-    const res = await app.inject({
-      method: "PUT", url: "/risk-profile", headers: { "x-session-id": freshSession() }, payload: { profile: "balanced" },
-    });
+  it("401s with no account signed in", async () => {
+    const res = await app.inject({ method: "PUT", url: "/risk-profile", payload: { profile: "balanced" } });
     expect(res.statusCode).toBe(401);
     expect(mockedSet).not.toHaveBeenCalled();
   });
 
-  it("a session that proved wallet A cannot overwrite wallet B's row", async () => {
+  it("account A's token cannot overwrite account B's row", async () => {
     mockedSet.mockResolvedValue({
-      ownerId: WALLET_A.address.toLowerCase(), profile: "balanced",
+      ownerId: ACCOUNT_A_ID, profile: "balanced",
       createdAt: "2026-09-01T00:00:00Z", updatedAt: "2026-09-01T00:00:00Z",
     });
-    const session = freshSession();
-    await proveWallet(app, session, WALLET_A);
     await app.inject({
-      method: "PUT", url: "/risk-profile", headers: { "x-session-id": session }, payload: { profile: "balanced" },
+      method: "PUT", url: "/risk-profile",
+      headers: { "x-account-token": ACCOUNT_A_TOKEN }, payload: { profile: "balanced" },
     });
 
-    expect(mockedSet).toHaveBeenCalledWith(WALLET_A.address.toLowerCase(), "balanced");
-    expect(mockedSet).not.toHaveBeenCalledWith(WALLET_B.address.toLowerCase(), expect.anything());
+    expect(mockedSet).toHaveBeenCalledWith(ACCOUNT_A_ID, "balanced");
+    expect(mockedSet).not.toHaveBeenCalledWith(ACCOUNT_B_ID, expect.anything());
   });
 
   it("401s without the API token when one is configured", async () => {
     process.env.COPILOT_API_TOKEN = "a-secret-nobody-sent";
     try {
       const gated = await buildApp();
-      const session = freshSession();
-      await proveWallet(gated, session, WALLET_A, { authorization: "Bearer a-secret-nobody-sent" });
       const res = await gated.inject({
-        method: "PUT", url: "/risk-profile", headers: { "x-session-id": session }, payload: { profile: "balanced" },
+        method: "PUT", url: "/risk-profile",
+        headers: { "x-account-token": ACCOUNT_A_TOKEN },
+        payload: { profile: "balanced" },
       });
       expect(res.statusCode).toBe(401);
       expect(mockedSet).not.toHaveBeenCalled();
