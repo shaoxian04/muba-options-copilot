@@ -792,7 +792,7 @@ test.describe("sign-in gates the wallet, not the Deck (ADR-0014)", () => {
     await page.goto("/");
 
     await expect(page.getByTestId("chat-signin-gate")).toBeVisible();
-    await expect(page.getByRole("button", { name: "I think ETH drops before Friday" })).toBeDisabled();
+    await expect(page.getByRole("textbox", { name: "Say something to the Copilot" })).toBeDisabled();
 
     await page.getByRole("tab", { name: "Insights" }).click();
     await expect(page.getByTestId("chat-signin-gate")).toBeVisible();
@@ -805,7 +805,7 @@ test.describe("sign-in gates the wallet, not the Deck (ADR-0014)", () => {
     await expect(page.getByTestId("chat-signin-gate")).toHaveCount(0);
     await expect(page.getByRole("textbox", { name: "Ask a question" })).toBeEnabled();
     await page.getByRole("tab", { name: "Trade" }).click();
-    await expect(page.getByRole("button", { name: "I think ETH drops before Friday" })).toBeEnabled();
+    await expect(page.getByRole("textbox", { name: "Say something to the Copilot" })).toBeEnabled();
   });
 });
 

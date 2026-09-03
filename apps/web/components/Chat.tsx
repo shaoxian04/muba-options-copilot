@@ -7,15 +7,15 @@
  * chatbox stays mounted and only which backend a submitted message reaches changes.
  *
  * "Trade" is the Copilot that proposes and explains -- it cannot spend, nothing in this
- * mode can reach `/fill` or `/practice`, and the only thing a seed does is ask the
- * server for a proposal, which signs nothing. There is no free-text-to-trade backend yet
- * (the Trade, Review and Strategy Agents are a separate Python service that has not been
- * started, ADR-0007) -- a text box would imply that layer exists, so the seed prompts
- * stand in for it instead of a dead input. "Insights" is the Forecast subsystem
- * (ADR-0005): real market data, news, price predictions, risk/benefit views, and
- * comparisons across coins, answered from a free-text question. It also carries the
- * Risk Profile picker and the Suggestion it drives (`SuggestionCard.tsx`), gated behind
- * a verified wallet -- accepting one deals a Deck and switches back to the Trade tab.
+ * mode can reach `/fill` or `/practice`. There is no free-text-to-trade backend yet (the
+ * Trade, Review and Strategy Agents are a separate Python service that has not been
+ * started, ADR-0007), so a typed message is logged and answered honestly rather than
+ * pretending to be read -- picking a Card off the Deck is still the only way to price
+ * and buy something. "Insights" is the Forecast subsystem (ADR-0005): real market data,
+ * news, price predictions, risk/benefit views, and comparisons across coins, answered
+ * from a free-text question. It also carries the Risk Profile picker and the Suggestion
+ * it drives (`SuggestionCard.tsx`), gated behind a verified wallet -- accepting one
+ * deals a Deck via `Surface.deal()` and switches back to the Trade tab.
  *
  * Dropping a Deck card (DeckRow.tsx is the drag source) anywhere on this panel is a
  * third way into Insights: it builds one precise, strike-anchored question from the
@@ -57,11 +57,6 @@ import { buildCardQuestion, CARD_DRAG_MIME, type DroppedCard } from "../lib/card
 import { compareStrikeToRange } from "../lib/strikeOutlook";
 import { SuggestionCard } from "./SuggestionCard";
 
-export interface Seed {
-  said: string;
-  run: () => void;
-}
-
 type Engine = "trade" | "insights";
 
 const INSIGHTS_LOG_KEY = "copilot-insights-log";
@@ -88,15 +83,15 @@ function loadInsightsPending(): string | null {
 
 export function Chat({
   log,
-  seeds,
   busy,
+  submitTradeMessage,
   deal,
   walletVerified,
   signedIn,
 }: {
   log: ChatLine[];
-  seeds: Seed[];
   busy: boolean;
+  submitTradeMessage: (text: string) => void;
   /** Same signature as `Surface.deal` -- threaded down to Suggestion for Accept. */
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
   /** Whether the session has proven wallet ownership (ADR-0012) -- gates the Risk Profile. */
@@ -254,7 +249,7 @@ export function Chat({
       )}
 
       {engine === "trade" ? (
-        <TradeEngine log={log} seeds={seeds} busy={busy} disabled={!signedIn} />
+        <TradeEngine log={log} busy={busy} submitTradeMessage={submitTradeMessage} disabled={!signedIn} />
       ) : (
         <InsightsEngine
           log={insightsLog}
@@ -272,15 +267,16 @@ export function Chat({
 
 function TradeEngine({
   log,
-  seeds,
   busy,
+  submitTradeMessage,
   disabled,
 }: {
   log: ChatLine[];
-  seeds: Seed[];
   busy: boolean;
+  submitTradeMessage: (text: string) => void;
   disabled: boolean;
 }) {
+  const [message, setMessage] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -305,20 +301,34 @@ function TradeEngine({
         )}
       </div>
 
-      <div className="seeds">
-        {seeds.map((seed) => (
-          <button key={seed.said} type="button" onClick={seed.run} disabled={busy || disabled}>
-            {seed.said}
-          </button>
-        ))}
-      </div>
-
       {/*
-        A text box would imply the language layer exists for trading. It does not yet --
-        the Trade, Review and Strategy Agents are a separate Python service that has not
-        been started (ADR-0007) -- and a dead input is a worse lie than an honest note.
+        There is no free-text-to-trade backend yet -- the Trade, Review and Strategy
+        Agents are a separate Python service that has not been started (ADR-0007) -- so
+        this logs what was typed and replies honestly rather than pretending to read it.
+        Picking a Card off the Deck is still the only way to price and buy something.
       */}
-      <p className="box">Typing arrives with the agents service. Until then the prompts above stand in for it.</p>
+      <form
+        className="ask-row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const text = message.trim();
+          if (!text || busy || disabled) return;
+          setMessage("");
+          submitTradeMessage(text);
+        }}
+      >
+        <input
+          type="text"
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          placeholder="Say something…"
+          disabled={busy || disabled}
+          aria-label="Say something to the Copilot"
+        />
+        <button type="submit" disabled={busy || disabled || !message.trim()}>
+          Send
+        </button>
+      </form>
     </>
   );
 }

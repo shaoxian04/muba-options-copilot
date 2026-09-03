@@ -297,6 +297,7 @@ export interface Surface {
   setDirection: (d: Direction) => void;
   setHorizon: (h: number) => void;
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
+  submitTradeMessage: (text: string) => void;
   /** Clicking a Card. Opens the confirmation (issue #30) as well as pricing the pick. */
   pick: (cardRef: string) => Promise<void>;
   /**
@@ -322,7 +323,6 @@ export interface Surface {
   submitRfq: () => Promise<void>;
   closeRfq: () => void;
 
-  say: (text: string) => void;
   reset: () => void;
 }
 
@@ -554,6 +554,20 @@ export function useSurface(): Surface {
   const say = useCallback((text: string) => setLog((l) => [...l, { who: "copilot", text }]), []);
   const heard = useCallback((text: string) => setLog((l) => [...l, { who: "trader", text }]), []);
 
+  /**
+   * The Trade tab's chat input. There is no free-text-to-trade backend yet (ADR-0007)
+   * -- the Trade Agent that would read this line has no HTTP surface -- so this only
+   * logs what was typed and answers with a fixed, honest reply. It never calls
+   * `propose`, never derives a number, and never opens a Card: picking one directly
+   * off the Deck is still the only way to price and buy something.
+   */
+  const submitTradeMessage = useCallback(
+    (text: string) => {
+      heard(text);
+      say("I can't read free text yet — pick straight off the Deck on the right.");
+    },
+    [heard, say]
+  );
 
   /**
    * The board, and the Risk Budget it sits beside, together -- but only the board has
@@ -1304,6 +1318,7 @@ export function useSurface(): Surface {
     setDirection,
     setHorizon,
     deal,
+    submitTradeMessage,
     pick,
     setSize,
     confirm,
@@ -1315,7 +1330,6 @@ export function useSurface(): Surface {
     setRfqSize,
     submitRfq,
     closeRfq,
-    say,
     reset,
   };
 }

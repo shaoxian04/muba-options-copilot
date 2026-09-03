@@ -17,7 +17,7 @@
  */
 import { AccountControl } from "../components/AccountControl";
 import { Board } from "../components/Board";
-import { Chat, type Seed } from "../components/Chat";
+import { Chat } from "../components/Chat";
 import { Chips } from "../components/Chips";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { DeckRow } from "../components/DeckRow";
@@ -42,41 +42,12 @@ export default function Page() {
    */
   const horizonLabel = s.deck?.expiries.find((e) => e.horizonDays === s.horizonDays)?.label;
 
-  /**
-   * The seed prompts, naming whatever the rail has selected.
-   *
-   * They FOLLOW the picker; they do not drive it. Pressing one asks for a Deck on the
-   * Underlying already selected -- it never switches Underlying, because reading an
-   * asset out of a sentence is the Trade Agent's job and that service does not exist
-   * yet (ADR-0007). Until it does, the rail is the only thing that moves the selection.
-   */
-  const seeds: Seed[] = [
-    {
-      said: `I think ${s.asset} drops before Friday`,
-      // No `underlying` in the intent, deliberately: a seed follows the picker, so it
-      // deals whatever the rail already has selected and never moves it.
-      run: () => void s.deal(`I think ${s.asset} drops before Friday`, { direction: "DOWN" }),
-    },
-    {
-      said: "What if it goes up instead?",
-      run: () => void s.deal("What if it goes up instead?", { direction: "UP" }),
-    },
-    {
-      said: "What is this, in one line?",
-      run: () =>
-        s.say(
-          `You pay a little now. If ${s.asset} finishes past the number on the card, you get paid the ` +
-            "difference. If it does not, you lose what you paid and not a cent more."
-        ),
-    },
-  ];
-
   return (
     <main className="app">
       <Chat
         log={s.log}
-        seeds={seeds}
         busy={s.busy}
+        submitTradeMessage={s.submitTradeMessage}
         deal={s.deal}
         walletVerified={s.walletVerified}
         signedIn={!!s.account}
