@@ -42,7 +42,15 @@ import {
   type ProposeResult,
   type SessionState,
 } from "./api";
-import { connectWallet as connectInjectedWallet, connectedAddress, sendTx, signMessage } from "./wallet";
+import {
+  connectWallet as connectWalletById,
+  connectedAddress,
+  listAvailableWallets,
+  sendTx,
+  signMessage,
+  watchAvailableWallets,
+  type WalletOption,
+} from "./wallet";
 import { clampSizeUsdc, rfqSizeCapUsdc } from "./geometry";
 import { supabase } from "./supabaseClient";
 
@@ -254,7 +262,11 @@ export interface Surface {
   walletVerified: boolean;
   walletVerifying: boolean;
   walletError: string | null;
-  connectWallet: () => Promise<void>;
+  walletPickerOpen: boolean;
+  availableWallets: WalletOption[];
+  onOpenWalletPicker: () => void;
+  onCloseWalletPicker: () => void;
+  onPickWallet: (walletId: string) => void;
   verifyWallet: () => Promise<void>;
 
   setAsset: (a: UnderlyingSymbol) => void;
@@ -466,6 +478,8 @@ export function useSurface(): Surface {
   const [walletVerified, setWalletVerified] = useState(false);
   const [walletVerifying, setWalletVerifying] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
+  const [walletPickerOpen, setWalletPickerOpen] = useState(false);
+  const [availableWallets, setAvailableWallets] = useState<WalletOption[]>([]);
 
   /**
    * Google puts the profile photo under `avatar_url` in Supabase's normalized
@@ -570,20 +584,39 @@ export function useSurface(): Surface {
     }
   }, []);
 
-  const connectWallet = useCallback(async () => {
-    setWalletConnecting(true);
-    setWalletError(null);
-    setWalletVerified(false);
-    try {
-      const address = await connectInjectedWallet();
-      setWalletAddress(address);
-      await verifyWalletFor(address);
-    } catch (e) {
-      setWalletError(e instanceof Error ? e.message : "Could not connect a wallet.");
-    } finally {
-      setWalletConnecting(false);
-    }
-  }, [verifyWalletFor]);
+  const openWalletPicker = useCallback(() => {
+    setAvailableWallets(listAvailableWallets());
+    setWalletPickerOpen(true);
+  }, []);
+
+  const closeWalletPicker = useCallback(() => setWalletPickerOpen(false), []);
+
+  // While the picker is open, extensions can still be announcing themselves (EIP-6963
+  // has no guaranteed single moment "every wallet has announced by now") -- this keeps
+  // the list current for as long as a Trader is looking at it.
+  useEffect(() => {
+    if (!walletPickerOpen) return;
+    return watchAvailableWallets(setAvailableWallets);
+  }, [walletPickerOpen]);
+
+  const pickWallet = useCallback(
+    async (walletId: string) => {
+      setWalletPickerOpen(false);
+      setWalletConnecting(true);
+      setWalletError(null);
+      setWalletVerified(false);
+      try {
+        const address = await connectWalletById(walletId);
+        setWalletAddress(address);
+        await verifyWalletFor(address);
+      } catch (e) {
+        setWalletError(e instanceof Error ? e.message : "Could not connect a wallet.");
+      } finally {
+        setWalletConnecting(false);
+      }
+    },
+    [verifyWalletFor]
+  );
 
   /**
    * The current proposal, against the Deck as it stands now.
@@ -1114,7 +1147,11 @@ export function useSurface(): Surface {
     walletVerified,
     walletVerifying,
     walletError,
-    connectWallet,
+    walletPickerOpen,
+    availableWallets,
+    onOpenWalletPicker: openWalletPicker,
+    onCloseWalletPicker: closeWalletPicker,
+    onPickWallet: pickWallet,
     verifyWallet: () => (walletAddress ? verifyWalletFor(walletAddress) : Promise.resolve()),
     setAsset,
     setDirection,
