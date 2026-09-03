@@ -273,7 +273,7 @@ export interface Surface {
   setAsset: (a: UnderlyingSymbol) => void;
   setDirection: (d: Direction) => void;
   setHorizon: (h: number) => void;
-  deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<void>;
+  deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
   /** Clicking a Card. Opens the confirmation (issue #30) as well as pricing the pick. */
   pick: (cardRef: string) => Promise<void>;
   /**
@@ -974,6 +974,10 @@ export function useSurface(): Surface {
       } else if (answer?.kind === "NO_ORDER") {
         say(answer.message);
       }
+      // Handed back so a caller can tell a dealt proposal from a VETO, a NO_ORDER or a
+      // refusal `ask` already swallowed. Callers that only wanted the side effects --
+      // the seed prompts -- can keep ignoring it.
+      return answer;
     },
     [ask, asset, clearSelection, deck, direction, heard, horizonDays, loadDeck, say]
   );

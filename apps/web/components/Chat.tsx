@@ -33,6 +33,7 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { usePathname } from "next/navigation";
 import type { ChatLine, TradeIntent } from "../lib/surface";
+import type { ProposeResult } from "../lib/api";
 import { askForecast } from "../lib/api";
 import { deriveHistory, type InsightsLine } from "../lib/insightsHistory";
 import { SuggestionCard } from "./SuggestionCard";
@@ -77,7 +78,7 @@ export function Chat({
   seeds: Seed[];
   busy: boolean;
   /** Same signature as `Surface.deal` -- threaded down to Suggestion for Accept (task 5). */
-  deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<void>;
+  deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
   /** Whether the session has proven wallet ownership (ADR-0012) -- gates the Risk Profile. */
   walletVerified: boolean;
 }) {
@@ -237,7 +238,7 @@ function InsightsEngine({
   setLog: Dispatch<SetStateAction<InsightsLine[]>>;
   pending: string | null;
   setPending: Dispatch<SetStateAction<string | null>>;
-  deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<void>;
+  deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
   walletVerified: boolean;
   onAccepted: () => void;
 }) {

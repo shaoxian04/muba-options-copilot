@@ -26,6 +26,7 @@ import {
   setRiskProfile,
   type DecisionRequest,
   type RiskProfileName,
+  type ProposeResult,
   type SuggestionResponse,
 } from "../lib/api";
 import { agoShort } from "../lib/clock";
@@ -54,7 +55,7 @@ export function SuggestionCard({
   onAccepted,
 }: {
   /** Same signature as `Surface.deal` -- dealt on accept for the Suggestion's own intent. */
-  deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<void>;
+  deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
   /** Whether the session has proven wallet ownership (ADR-0012). Gates the Risk Profile. */
   walletVerified: boolean;
   /** Switches Chat to the Trade tab. Called only once accept has actually dealt a Deck. */
@@ -183,15 +184,12 @@ export function SuggestionCard({
     setPosting(true);
     setDealError(null);
     const intent = sugData.intent;
-    // Cleared below when `deal` throws, which only happens for a hard failure -- the
-    // network being down, or a malformed intent. It does NOT cover the common case: a
-    // 503 from /propose, a VETO or a NO_ORDER all resolve `deal` normally, because
-    // `ask` swallows ApiRefusal and `loadDeck` catches everything (lib/surface.ts). So
-    // an ACCEPTED is still logged for a Suggestion that produced no proposal.
-    //
-    // Closing that needs `deal` to report its outcome rather than signalling by
-    // throwing, which is a change to surface.ts and not this component's to make.
-    let body = decisionBody("ACCEPTED");
+    const body = decisionBody("ACCEPTED");
+    // What the deal actually produced. Read rather than inferred from a thrown error:
+    // `ask` swallows an ApiRefusal and `loadDeck` catches everything (lib/surface.ts),
+    // so a 503 from /propose, a VETO and a NO_ORDER all resolve normally. Only a
+    // PROPOSAL means the Trader has something to look at.
+    let answer: ProposeResult | null = null;
     try {
       // Accept must never spend. This only records the Trader's intent and deals a
       // fresh Deck from it -- a Card still has to be picked and Confirm still has to
@@ -199,19 +197,27 @@ export function SuggestionCard({
       // All four fields, never a subset: the book is multi-asset now, and a Suggestion
       // made on ETH dealt against whichever Underlying the rail has selected is a trade
       // nobody suggested.
-      await deal(undefined, {
+      answer = await deal(undefined, {
         underlying: intent.underlying,
         direction: intent.direction,
         sizeUsdc: intent.sizeUsdc,
         horizonDays: intent.horizonDays,
       });
-      onAccepted();
     } catch {
-      body = null;
-      setDealError("Could not deal that Suggestion. Try again from the Deck.");
+      answer = null;
     }
+
+    const dealt = answer?.kind === "PROPOSAL";
+    // Stay on Insights when nothing was dealt, so the Trader reads the reason where
+    // they pressed rather than landing on a Trade tab with no proposal on it.
+    if (dealt) onAccepted();
+    else setDealError("Could not deal that Suggestion. Try again from the Deck.");
+
     try {
-      if (body) await recordDecision(body);
+      // Only a dealt Suggestion is an ACCEPTED one. Logging the press itself would put
+      // a false positive in /decisions/stats every time the book or the agents service
+      // was having a bad minute -- twice, once the Trader retried.
+      if (dealt && body) await recordDecision(body);
     } catch {
       // Same reasoning as Dismiss: a failed log write must never block the trade
       // intent itself, which has already been dealt (or not) above.

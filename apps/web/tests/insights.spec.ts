@@ -11,6 +11,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { FORBIDDEN, fixtures, installFakeWallet, stubApi } from "./stub";
+import noOrder from "./fixtures/no-order.json" with { type: "json" };
 
 const agentCard = fixtures.proposeAgent.cardRef;
 
@@ -141,6 +142,29 @@ test.describe("a Suggestion", () => {
     const decisions = traffic.all.filter((r) => new URL(r.url()).pathname === "/decisions");
     expect(decisions.length).toBe(1);
     expect(decisions[0]!.postDataJSON()).toMatchObject({ decision: "DISMISSED" });
+  });
+
+  test("Accept logs no Decision when the Suggestion could not be dealt", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await openInsights(page);
+    await pickBalanced(page);
+    await expect(page.getByRole("button", { name: "See what this buys" })).toBeVisible();
+
+    // NO_ORDER is a 200, so `deal` resolves normally -- only its return value says the
+    // Trader got nothing. Accept used to log ACCEPTED anyway, and a Trader who pressed
+    // it again logged a second one, quietly inflating /decisions/stats.
+    // Registered after stubApi's own route, which is what makes it win.
+    await page.route("**/propose", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(noOrder) })
+    );
+
+    await page.getByRole("button", { name: "See what this buys" }).click();
+
+    await expect(page.getByText("Could not deal that Suggestion", { exact: false })).toBeVisible();
+    // Still on Insights, where they pressed -- not switched to a Trade tab holding
+    // nothing.
+    await expect(page.getByRole("radiogroup", { name: "Choose a Risk Profile" })).toBeVisible();
+    expect(traffic.all.filter((r) => new URL(r.url()).pathname === "/decisions")).toEqual([]);
   });
 });
 
