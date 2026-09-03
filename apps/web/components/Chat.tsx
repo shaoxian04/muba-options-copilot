@@ -32,9 +32,11 @@
  */
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { usePathname } from "next/navigation";
-import type { ChatLine } from "../lib/surface";
+import type { ChatLine, TradeIntent } from "../lib/surface";
+import type { ProposeResult } from "../lib/api";
 import { askForecast } from "../lib/api";
 import { deriveHistory, type InsightsLine } from "../lib/insightsHistory";
+import { SuggestionCard } from "./SuggestionCard";
 
 export interface Seed {
   said: string;
@@ -65,7 +67,21 @@ function loadInsightsPending(): string | null {
   }
 }
 
-export function Chat({ log, seeds, busy }: { log: ChatLine[]; seeds: Seed[]; busy: boolean }) {
+export function Chat({
+  log,
+  seeds,
+  busy,
+  deal,
+  walletVerified,
+}: {
+  log: ChatLine[];
+  seeds: Seed[];
+  busy: boolean;
+  /** Same signature as `Surface.deal` -- threaded down to Suggestion for Accept (task 5). */
+  deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
+  /** Whether the session has proven wallet ownership (ADR-0012) -- gates the Risk Profile. */
+  walletVerified: boolean;
+}) {
   // The route this page happened to load from decides the starting tab (so a direct
   // hit or refresh on /insights opens there) -- but switching tabs afterward never
   // navigates through Next's router, only updates the address bar directly (below).
@@ -157,6 +173,9 @@ export function Chat({ log, seeds, busy }: { log: ChatLine[]; seeds: Seed[]; bus
           setLog={setInsightsLog}
           pending={insightsPending}
           setPending={setInsightsPending}
+          deal={deal}
+          walletVerified={walletVerified}
+          onAccepted={() => selectEngine("trade")}
         />
       )}
     </div>
@@ -211,11 +230,17 @@ function InsightsEngine({
   setLog,
   pending,
   setPending,
+  deal,
+  walletVerified,
+  onAccepted,
 }: {
   log: InsightsLine[];
   setLog: Dispatch<SetStateAction<InsightsLine[]>>;
   pending: string | null;
   setPending: Dispatch<SetStateAction<string | null>>;
+  deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
+  walletVerified: boolean;
+  onAccepted: () => void;
 }) {
   const [question, setQuestion] = useState("");
   const [busy, setBusy] = useState(false);
@@ -262,8 +287,7 @@ function InsightsEngine({
       <div className="log" ref={logRef} role="log" aria-live="polite" aria-label="Insights conversation">
         {log.length === 0 ? (
           <p className="from-copilot">
-            Ask about any coin — current price, news, a forward-looking view, risk/benefit, or compare a few
-            against each other. Real data only; nothing here can reach a trade.
+            Ask about any coin. Real data only; nothing here can reach a trade.
           </p>
         ) : (
           log.map((line, i) =>
@@ -291,6 +315,8 @@ function InsightsEngine({
         {busy ? <p className="from-copilot">Asking…</p> : null}
       </div>
 
+      <SuggestionCard deal={deal} walletVerified={walletVerified} onAccepted={onAccepted} />
+
       <form
         className="ask-row"
         onSubmit={(e) => {
@@ -306,8 +332,8 @@ function InsightsEngine({
           disabled={busy}
           aria-label="Ask a question"
         />
-        <button type="submit" disabled={busy || !question.trim()}>
-          Ask
+        <button type="submit" className="ask-submit" disabled={busy || !question.trim()}>
+          <span aria-hidden="true">→</span> Ask
         </button>
       </form>
     </>

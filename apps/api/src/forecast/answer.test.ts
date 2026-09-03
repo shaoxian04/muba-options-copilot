@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { synthesizeAnswer } from "./answer.js";
 import { ForbiddenPhraseUsed } from "./guardrails.js";
 import type { AgentCreateFn } from "./agent.js";
-import type { MarketData } from "@copilot/shared";
+import type { Indicators, MarketData } from "@copilot/shared";
 
 const marketData: MarketData = {
   symbol: "PEPE",
@@ -97,4 +97,97 @@ test("synthesizeAnswer omits the history block entirely when history is empty or
   };
   await synthesizeAnswer("what's PEPE's price?", "PEPE", { market: marketData }, fakeCreate);
   assert.ok(!capturedUser.includes("<<HISTORY>>"));
+});
+
+// --- indicators in the synthesis prompt --------------------------------------
+
+const indicators: Indicators = {
+  symbol: "ETH",
+  close: 2451.25,
+  rsi14: 28.42,
+  sma20: 2600.5,
+  ema20: 2550.75,
+  candleSource: "binance",
+  asOf: "2026-09-01T00:00:00+00:00",
+};
+
+function capture(answer = "ok"): { create: AgentCreateFn; seen: () => string } {
+  let user = "";
+  return {
+    create: async (params) => {
+      user = params.messages[0].content;
+      return { content: [{ type: "text", text: JSON.stringify({ answer }) }] };
+    },
+    seen: () => user,
+  };
+}
+
+test("synthesizeAnswer puts the indicator values in the prompt", async () => {
+  const c = capture("ETH's RSI(14) is 28.4, below the usual oversold line.");
+  await synthesizeAnswer("is ETH oversold?", "ETH", { indicators }, c.create);
+
+  assert.match(c.seen(), /RSI\(14\) 28\.4/);
+  assert.match(c.seen(), /SMA\(20\) \$2600\.50/);
+  assert.match(c.seen(), /EMA\(20\) \$2550\.75/);
+  assert.match(c.seen(), /Latest daily close \$2451\.25/);
+});
+
+test("synthesizeAnswer marks indicators COMPUTED so they are not hedged as a forecast", async () => {
+  const c = capture();
+  await synthesizeAnswer("is ETH oversold?", "ETH", { indicators }, c.create);
+  assert.match(c.seen(), /COMPUTED/);
+  assert.match(c.seen(), /not a forecast or an opinion/);
+});
+
+test("synthesizeAnswer omits an indicator still inside its warm-up window", async () => {
+  const c = capture();
+  await synthesizeAnswer("is ETH oversold?", "ETH", { indicators: { ...indicators, rsi14: null } }, c.create);
+
+  assert.doesNotMatch(c.seen(), /RSI\(14\)/);
+  assert.match(c.seen(), /SMA\(20\)/);
+});
+
+test("synthesizeAnswer says so plainly when no indicator has enough history", async () => {
+  const c = capture();
+  await synthesizeAnswer(
+    "is it oversold?",
+    "ETH",
+    { indicators: { ...indicators, rsi14: null, sma20: null, ema20: null } },
+    c.create
+  );
+  assert.match(c.seen(), /No indicator has enough history yet\./);
+});
+
+test("synthesizeAnswer names the available indicator set alongside the values", async () => {
+  const c = capture();
+  await synthesizeAnswer("is ETH oversold?", "ETH", { indicators }, c.create);
+  assert.match(c.seen(), /Only RSI, SMA and EMA are computed; no other indicator is available\./);
+});
+
+test("synthesizeAnswer names the available indicator set even during warm-up", async () => {
+  const c = capture();
+  await synthesizeAnswer(
+    "is it oversold?",
+    "ETH",
+    { indicators: { ...indicators, rsi14: null, sma20: null, ema20: null } },
+    c.create
+  );
+  assert.match(c.seen(), /Only RSI, SMA and EMA are computed; no other indicator is available\./);
+});
+
+test("synthesizeAnswer carries indicators for the other coins in a comparison", async () => {
+  const c = capture();
+  await synthesizeAnswer(
+    "which is more oversold, ETH or BTC?",
+    "ETH",
+    {
+      indicators,
+      otherCoins: [{ symbol: "BTC", indicators: { ...indicators, symbol: "BTC", rsi14: 71.9, close: 78169.37 } }],
+    },
+    c.create
+  );
+
+  assert.match(c.seen(), /RSI\(14\) 28\.4/);
+  assert.match(c.seen(), /RSI\(14\) 71\.9/);
+  assert.match(c.seen(), /For comparison/);
 });

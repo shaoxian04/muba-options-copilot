@@ -1,0 +1,20 @@
+{
+  "id": "rsi-overbought-fade-eth-v1",
+  "owner_id": "demo-owner",
+  "name": "RSI(14) overbought fade",
+  "enabled": true,
+  "notes": "Mirror of rsi-oversold.json: RSI(14) above 70 is read as short-term overextension likely to fade. This is the analysis surface -- this prose never reaches `then`.",
+  "when": [
+    {
+      "left": { "source": "INDICATOR", "kind": "RSI", "period": 14 },
+      "operator": ">",
+      "right": { "source": "CONSTANT", "value": 70 }
+    }
+  ],
+  "then": {
+    "underlying": "ETH",
+    "direction": "DOWN",
+    "sizeUsdc": 2,
+    "horizonDays": 3
+  }
+}

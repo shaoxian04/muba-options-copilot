@@ -45,18 +45,22 @@ test.describe("the Deck as dealt", () => {
     expect(up).toEqual(fixtures.deckUp1.cards.map((c) => c.impliedChance.display));
   });
 
-  test("draws the Implied Chance as a number and as a rising fill", async ({ page }) => {
+  test("draws chance it pays as a dial, a number and words on every Card (issue #29)", async ({ page }) => {
     await page.goto("/");
 
     for (const [i, card] of cards.entries()) {
       const tile = page.getByTestId("card").nth(i);
-      await expect(tile).toContainText(card.impliedChance.display);
 
-      // The rail's height IS the chance -- a taller rail is a likelier Card, which is
-      // the whole reason the Deck can be read at a glance.
-      const height = await tile.locator(".rail").evaluate((el) => (el as HTMLElement).style.height);
-      expect(parseFloat(height)).toBeCloseTo(Math.max(5, card.impliedChance.value * 100), 1);
-      expect(await tile.locator(".rail").getAttribute("data-band")).toBe(String(card.chanceBand));
+      // The dial: an arc, under a two-line "chance / it pays" label.
+      await expect(tile.locator("svg .dial-arc")).toHaveCount(1);
+      await expect(tile).toContainText("chance");
+      await expect(tile).toContainText("it pays");
+
+      // The number: the server's own string, drawn inside the dial.
+      await expect(tile.locator(".dial-num")).toHaveText(card.impliedChance.display);
+
+      // The words: the same meaning again, so the Card survives colour removed entirely.
+      await expect(tile).toContainText(card.chanceLabel);
     }
   });
 
@@ -66,6 +70,106 @@ test.describe("the Deck as dealt", () => {
     for (const [i, card] of cards.entries()) {
       await expect(page.getByTestId("card").nth(i)).toContainText(card.contracts.display);
     }
+  });
+
+  test("leads with the strike, and states the signed distance to it (issue #29)", async ({ page }) => {
+    await page.goto("/");
+
+    for (const [i, card] of cards.entries()) {
+      const tile = page.getByTestId("card").nth(i);
+      await expect(tile).toContainText(card.strike.display);
+
+      // The sentence is the server's own -- rendered whole, split only to bold the tail.
+      const text = await tile.innerText();
+      expect(text.replace(/\s+/g, " ")).toContain(card.distance.sentence);
+
+      const bold = card.distance.alreadyPast ? "must stay" : card.distance.needed.display;
+      await expect(tile.locator(".dist b")).toHaveText(bold);
+    }
+  });
+
+  test("says 'must stay' rather than a percentage once a strike has already been passed (issue #29)", async ({
+    page,
+  }) => {
+    await stubApi(page, "compressed");
+    await page.goto("/");
+
+    const passed = fixtures.deckCompressed.cards.find((c) => c.distance.alreadyPast)!;
+    const tile = page.locator(`[data-card-ref="${passed.cardRef}"]`);
+
+    await expect(tile).toContainText("already");
+    await expect(tile).toContainText("must stay");
+    await expect(tile.locator(".dist b")).toHaveText("must stay");
+    // Never a percentage once the strike has already been passed.
+    await expect(tile.locator(".dist")).not.toContainText("%");
+  });
+
+  test("shows Premium, what the stake buys, and Maker Depth with its offer count (issue #29)", async ({ page }) => {
+    await page.goto("/");
+
+    for (const [i, card] of cards.entries()) {
+      const tile = page.getByTestId("card").nth(i);
+      const text = (await tile.innerText()).replace(/\s+/g, " ");
+
+      expect(text).toContain("Premium");
+      expect(text).toContain(`${card.perContractUsd.display} / contract`);
+
+      expect(text).toContain("You pay");
+      expect(text).toContain(`${card.premiumUsdc.display} for ${card.contracts.display} contracts`);
+
+      expect(text).toContain("Maker depth");
+      expect(text).toContain(card.depthUsdc.display);
+      const offerWord = card.depthOrders.value === 1 ? "offer" : "offers";
+      expect(text).toContain(`${card.depthOrders.display} ${offerWord}`);
+
+      // Never labelled volume, liquidity or open interest (issue #29's acceptance bar).
+      expect(text.toLowerCase()).not.toMatch(/\bvolume\b|\bliquidity\b|open interest/);
+    }
+  });
+
+  test("shows nothing, not a zero, when nobody holds a strike (issue #29)", async ({ page }) => {
+    await page.goto("/");
+
+    for (const [i, card] of cards.entries()) {
+      expect(card.heldCount).toBeNull(); // the fixture book's own shape, asserted so this test fails loudly if that changes
+      const tile = page.getByTestId("card").nth(i);
+      await expect(tile).toContainText("Held now");
+      await expect(tile).toContainText("nobody yet");
+    }
+  });
+
+  test("runs a live countdown to expiry on every Card (issue #29)", async ({ page }) => {
+    await page.goto("/");
+
+    const clock = page.getByTestId("card-countdown").first();
+    await expect(clock).toHaveText(/^\d{2}:\d{2}:\d{2}$/);
+    await expect(page.getByTestId("card").first()).toContainText("expires in");
+
+    const first = await clock.textContent();
+    await page.clock.runFor(3000);
+    await expect(clock).not.toHaveText(first!);
+  });
+
+  test("never shows a bare payout multiple (issue #29)", async ({ page }) => {
+    await page.goto("/");
+
+    for (const [i] of cards.entries()) {
+      const text = await page.getByTestId("card").nth(i).innerText();
+      expect(text).not.toMatch(/[×x]\s*\d/);
+    }
+  });
+
+  test("says '2 offers', plural, when more than one Order stands behind a strike (issue #29)", async ({ page }) => {
+    await stubApi(page);
+    await page.goto("/");
+    await page.getByTestId("rail-SOL").click();
+    // SOL/DOWN lands on its fullest expiry automatically (three Cards, at two days) --
+    // `deck-sol-down-1` (one Card, at one day) is not what is on screen after this click.
+    await expect(page.getByTestId("card")).toHaveCount(fixtures.deckSolDown2.cards.length);
+
+    const many = fixtures.deckSolDown2.cards.find((c) => c.depthOrders.value > 1)!;
+    const tile = page.locator(`[data-card-ref="${many.cardRef}"]`);
+    await expect(tile).toContainText(`${many.depthOrders.display} offers`);
   });
 
   test("never says put or call", async ({ page }) => {
@@ -258,12 +362,9 @@ test.describe("on a phone", () => {
     expect(violations.filter((v) => v.impact === "critical" || v.impact === "serious").map((v) => v.id)).toEqual([]);
   });
 
-  test("keeps Max Loss and the Risk Budget in reach without scrolling them away", async ({ page }) => {
-    await page.goto("/");
-    await expect(page.getByTestId("card").first()).toBeVisible();
-
-    await page.mouse.wheel(0, 2000);
-    await expect(page.getByTestId("max-loss")).toBeInViewport();
-    await expect(page.getByTestId("risk-remaining")).toBeInViewport();
-  });
+  // "Keeps Max Loss and the Risk Budget in reach without scrolling them away" tested the
+  // persistent commit bar, which issue #30 removed outright -- Max Loss now lives only
+  // inside the confirmation a Card click opens, on both desktop and phone. Its
+  // replacement, "stays visible when the page behind it is scrolled", lives in
+  // `journeys.spec.ts`'s "Max Loss holds still" and runs under this same phone project.
 });

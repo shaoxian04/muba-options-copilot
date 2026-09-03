@@ -16,7 +16,7 @@ vi.mock("../thetanuts/client.js", async () => await import("./stub-client.js"));
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
 import { executeFill, UnsafeOrder } from "../thetanuts/execute.js";
-import { resetStub, spies, state } from "./stub-client.js";
+import { resetStub, spies, state, TRADER_ADDRESS, proveWallet } from "./stub-client.js";
 import { NOW, DEFAULT_BOOK, makeOrder } from "./fixtures.js";
 
 vi.useFakeTimers({ toFake: ["Date"] });
@@ -59,7 +59,7 @@ describe("PROPOSAL", () => {
     const { cards } = (
       await app.inject({
         method: "GET",
-        url: "/deck?direction=DOWN&horizonDays=1&sizeUsdc=2",
+        url: "/deck?asset=ETH&direction=DOWN&horizonDays=1&sizeUsdc=2",
         headers: { "x-session-id": session },
       })
     ).json();
@@ -152,7 +152,7 @@ describe("VETO", () => {
     const { cards } = (
       await app.inject({
         method: "GET",
-        url: "/deck?direction=DOWN&horizonDays=1&sizeUsdc=2",
+        url: "/deck?asset=ETH&direction=DOWN&horizonDays=1&sizeUsdc=2",
         headers: { "x-session-id": session },
       })
     ).json();
@@ -186,6 +186,7 @@ describe("a Review Agent pass skips no check", () => {
 
   it("does not skip the Risk Budget check at the moment of the Fill", async () => {
     const session = freshSession();
+    await proveWallet(app, session);
     const { proposalId } = (await propose(INTENT, session)).json();
 
     // The budget is cut below the proposal's Max Loss after it was priced.
@@ -196,16 +197,16 @@ describe("a Review Agent pass skips no check", () => {
       payload: { riskBudgetUsdc: 1 },
     });
 
-    state.canSign = true;
     const res = await app.inject({
       method: "POST",
-      url: "/fill",
+      url: "/fill/prepare",
       headers: { "x-session-id": session },
-      payload: { proposalId },
+      payload: { proposalId, walletAddress: TRADER_ADDRESS },
     });
 
     expect(res.statusCode).toBe(403);
     expect(spies.fillOrder).not.toHaveBeenCalled();
+    expect(spies.encodeFillOrder).not.toHaveBeenCalled();
   });
 
   it("does not skip the buy-only check (ADR-0002)", async () => {

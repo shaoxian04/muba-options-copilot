@@ -1,0 +1,7 @@
+{
+  "status": "REFUSED",
+  "refusal": {
+    "code": "UNSUPPORTED_COLLATERAL",
+    "message": "This Loan is collateralised with wstETH, which a Cover cannot hedge. Only WETH and cbBTC are supported. wstETH, cbETH and weETH are deliberately excluded: they drift against ETH over time, so an ETH put under-hedges them by a margin that grows."
+  }
+}

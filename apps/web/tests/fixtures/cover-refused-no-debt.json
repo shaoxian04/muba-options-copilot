@@ -1,0 +1,7 @@
+{
+  "status": "REFUSED",
+  "refusal": {
+    "code": "NO_DEBT",
+    "message": "This Loan has no debt, so it cannot be liquidated and there is nothing to cover. Borrow against your collateral first."
+  }
+}

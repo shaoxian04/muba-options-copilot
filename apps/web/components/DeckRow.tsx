@@ -1,38 +1,42 @@
 "use client";
 
 /**
- * The Deck: every Order the Trader may buy right now, as cards they can compare.
+ * The Deck: every Order the Trader may buy right now, as Cards they can compare.
  *
- * The headline is the market's own Implied Chance that the contract pays out, drawn as
- * a fill rising from the bottom of the card. Read across the row it is a gradient from
- * cheap long shots to expensive likely ones -- which is the trade-off an options-naive
- * person most needs to see, made visible without a sentence of explanation.
+ * Issue #29 -- each Card is a labelled data sheet, not a shape to decode. Every figure
+ * is named: the strike leads, a signed distance line says how far the Underlying has to
+ * move (or that it has already passed and must instead STAY), four labelled rows give
+ * the premium, the stake's contracts, Maker Depth and who else holds the strike, and the
+ * footer runs a live countdown to expiry. Implied Chance survives the beginner pass
+ * under the surface label "chance it pays" -- drawn as a dial, given as a number, and
+ * said in words, so the Card carries its meaning with colour removed entirely.
  *
- * Three things here are not decoration:
+ * Nothing here is decoration:
  *
- *   - The rail's height is `impliedChance.value` and its colour is `chanceBand`, both
- *     from the server. React quantises nothing.
- *   - Every card carries `chanceLabel` in words, so removing colour entirely -- a
- *     screen reader, deuteranopia, a printout -- loses no information.
- *   - When the server says the Deck's chances have compressed into a narrow band, the
- *     gradient has stopped carrying information and the words are promoted from a
- *     caption to the card's second line.
+ *   - The rail's colour is the Card's direction (call/put, blue/orange) -- identity, not
+ *     a second reading of Implied Chance. Implied Chance lives on the dial alone now.
+ *   - `distance.sentence`, `chanceLabel` and every other figure are the server's own
+ *     strings, rendered verbatim. The one sentence this file reads apart is
+ *     `distance.sentence` itself, split at its own length so the numeral or "must stay"
+ *     can be bolded -- no wording is invented here, only where the split falls.
+ *   - Maker Depth's proportional bar and the dial's arc are coordinates from
+ *     `lib/geometry.ts`, never text.
  *
  * Every number rendered is a `display` string. There is no arithmetic in this file, and
  * `tests/support/no-arithmetic.test.ts` fails if any appears.
  */
 import type { Card, Deck } from "@copilot/shared";
-import { fillHeight } from "../lib/geometry";
-
-/** The ramp is defined in `globals.css` and held to a contrast bar by `tests/support/ramp.test.ts`. */
-const rampColour = (band: number) => `var(--r${band})`;
+import { countdown, countdownWords } from "../lib/clock";
+import { depthBarWidths } from "../lib/geometry";
+import { Dial } from "./Dial";
 
 function CardTile({
   card,
   direction,
   selected,
   dealt,
-  gradientLegible,
+  depthWidth,
+  now,
   onPick,
   disabled,
 }: {
@@ -40,7 +44,8 @@ function CardTile({
   direction: Deck["direction"];
   selected: boolean;
   dealt: boolean;
-  gradientLegible: boolean;
+  depthWidth: string;
+  now: number;
   onPick: () => void;
   disabled: boolean;
 }) {
@@ -48,6 +53,27 @@ function CardTile({
   // puts settle in USDC and inverse calls in WETH -- a coincidence of today's book, not
   // a fact about which way the Card pays.
   const pays = direction === "DOWN" ? "pays below" : "pays above";
+  const railColour = direction === "DOWN" ? "var(--put)" : "var(--call)";
+
+  /*
+   * The distance line, bolded where the number is.
+   *
+   * `distance.sentence` is the server's whole sentence -- "must fall 3.5%" or "already
+   * below — must stay" -- written in `apps/api/src/thetanuts/distance.ts` because
+   * deciding when a percentage becomes "already past" is arithmetic on a signed figure
+   * (ADR-0006, issue #24). Nothing here recomputes that: `alreadyPast` picks which tail
+   * to bold -- the server's own flag for exactly this -- and `sentence.slice` finds
+   * where that tail starts by its length, not by inventing new wording.
+   */
+  const distanceBold = card.distance.alreadyPast ? "must stay" : card.distance.needed.display;
+  const distancePrefix = card.distance.sentence.slice(0, card.distance.sentence.length - distanceBold.length);
+
+  // "1 offer" vs "3 offers", "1 trader" vs "4 traders" -- a word chosen by comparing the
+  // server's own count to one, the same way `pays` above chooses a word from `direction`.
+  // The count itself is never touched: `depthOrders.display` and `heldCount.display` are
+  // rendered verbatim.
+  const offerWord = card.depthOrders.value === 1 ? "offer" : "offers";
+  const heldWord = card.heldCount && card.heldCount.value === 1 ? "trader" : "traders";
 
   return (
     <li>
@@ -61,53 +87,88 @@ function CardTile({
         data-card-ref={card.cardRef}
         data-chance={card.impliedChance.display}
         /*
-         * The whole card said once, in order, for a screen reader: what it costs, what
-         * it buys, what it pays in, and how likely it is. Reading the visual fragments
-         * in DOM order would give "38 % chance $2,360.00 pays below" and teach nobody
-         * anything.
+         * The whole Card said once, in order, for a screen reader: the strike and
+         * direction, how far it has to move, the chance it pays in words as well as a
+         * number, what it costs, what it buys, Maker Depth, who else holds it, break
+         * even, and when it expires. Reading the visual fragments in DOM order would
+         * teach nobody anything.
          */
         aria-label={
-          `Strike ${card.strike.display}, ${pays}. ` +
-          `Implied Chance ${card.impliedChance.display}, ${card.chanceLabel}. ` +
-          `${card.contracts.display} contracts for ${card.premiumUsdc.display}, ` +
-          `settling in ${card.payoutAsset}. Break even at ${card.breakevenPrice.display}.`
+          `Strike ${card.strike.display}, ${pays}. ${card.distance.sentence}. ` +
+          `Chance it pays ${card.impliedChance.display}, ${card.chanceLabel}. ` +
+          `Premium ${card.perContractUsd.display} per contract. ` +
+          `${card.contracts.display} contracts for ${card.premiumUsdc.display}, settling in ${card.payoutAsset}. ` +
+          `Maker depth ${card.depthUsdc.display} across ${card.depthOrders.display} ${offerWord}. ` +
+          (card.heldCount
+            ? `${card.heldCount.display} ${heldWord} hold this strike. `
+            : "Nobody holds this strike yet. ") +
+          `Break even at ${card.breakevenPrice.display}. ` +
+          `Expires ${card.expiry.display}, ${countdownWords(card.expiry.value, now)}.`
         }
       >
-        {/*
-          Two drawings of one band. The rail is at full opacity and carries the
-          comparison; the tint is a wash and carries the glance. Nothing is printed on
-          the rail, which is the only reason it can be saturated enough to tell apart --
-          see the note at the top of `globals.css`.
-        */}
-        <i
-          className="rail"
-          aria-hidden="true"
-          style={{ height: fillHeight(card.impliedChance.value), background: rampColour(card.chanceBand) }}
-          data-band={card.chanceBand}
-        />
-        <i
-          className="tint"
-          aria-hidden="true"
-          style={{ height: fillHeight(card.impliedChance.value), background: rampColour(card.chanceBand) }}
-        />
+        <i className="rail" aria-hidden="true" style={{ background: railColour }} />
 
-        <span aria-hidden="true">
-          {/* The server's string, whole. Splitting the "%" off to style it smaller
-              would mean React deciding what part of a figure a Trader reads. */}
-          <span className="od hero">{card.impliedChance.display}</span>
-          <br />
-          <span className="lbl">chance</span>
-          {gradientLegible ? null : <div className="words">{card.chanceLabel}</div>}
-        </span>
-
-        <span aria-hidden="true">
-          <span className="k">{card.strike.display}</span>
-          <div className="mi">
-            {pays}
-            <br />
-            {card.contracts.display} for {card.premiumUsdc.display}
+        <div className="etop" aria-hidden="true">
+          <div>
+            <div className="k hero">{card.strike.display}</div>
+            <div className="dist">
+              {distancePrefix}
+              <b>{distanceBold}</b>
+            </div>
           </div>
-        </span>
+          <div className="ch">
+            <Dial chance={card.impliedChance.value} band={card.chanceBand} size={46} display={card.impliedChance.display} />
+            <small className="lbl">
+              chance
+              <br />
+              it pays
+            </small>
+            {/* The number lives on the dial; this is the same chance said in words, so
+                the Card carries its meaning with colour removed entirely (issue #10, #29). */}
+            <div className="words">{card.chanceLabel}</div>
+          </div>
+        </div>
+
+        <dl aria-hidden="true">
+          <dt>Premium</dt>
+          <dd>
+            {card.perContractUsd.display} <span className="u">/ contract</span>
+          </dd>
+
+          <dt>You pay</dt>
+          <dd>
+            {card.premiumUsdc.display} <span className="u">for {card.contracts.display} contracts</span>
+          </dd>
+
+          <dt>Maker depth</dt>
+          <dd>
+            <span className="hbar">
+              <i style={{ width: depthWidth }} />
+            </span>
+            {card.depthUsdc.display}{" "}
+            <span className="u">
+              · {card.depthOrders.display} {offerWord}
+            </span>
+          </dd>
+
+          <dt>Held now</dt>
+          <dd>
+            {card.heldCount ? (
+              <>
+                {card.heldCount.display} <span className="u">{heldWord}</span>
+              </>
+            ) : (
+              <span className="u">nobody yet</span>
+            )}
+          </dd>
+        </dl>
+
+        <div className="efoot" aria-hidden="true">
+          <span className="lbl">expires in</span>
+          <span className="clk" data-testid="card-countdown">
+            {countdown(card.expiry.value, now)}
+          </span>
+        </div>
       </button>
     </li>
   );
@@ -118,14 +179,21 @@ export function DeckRow({
   selectedRef,
   dealtRef,
   busy,
+  now,
   onPick,
 }: {
   deck: Deck;
   selectedRef: string | null;
   dealtRef: string | null;
   busy: boolean;
+  now: number;
   onPick: (cardRef: string) => void;
 }) {
+  // One strike's Maker Depth read against the deepest in this same Deck -- a width, not
+  // a figure. `depthBarWidths` is the one place this ratio is computed, in `lib/
+  // geometry.ts`, so this file stays free of the `Math.max` that finding "deepest" needs.
+  const depthWidths = depthBarWidths(deck.cards.map((c) => c.depthUsdc.value));
+
   return (
     <div className="well">
       {deck.gradientLegible ? null : (
@@ -139,14 +207,15 @@ export function DeckRow({
         data-testid="deck"
         aria-label={`Options you can buy, longest shot first${deck.expiry ? `, all ending ${deck.expiry.display}` : ""}`}
       >
-        {deck.cards.map((card) => (
+        {deck.cards.map((card, i) => (
           <CardTile
             key={card.cardRef}
             card={card}
             direction={deck.direction}
             selected={card.cardRef === selectedRef}
             dealt={card.cardRef === dealtRef}
-            gradientLegible={deck.gradientLegible}
+            depthWidth={depthWidths[i] ?? "6%"}
+            now={now}
             disabled={busy}
             onPick={() => onPick(card.cardRef)}
           />

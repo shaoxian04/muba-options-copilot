@@ -9,7 +9,7 @@
  * successfully-gathered coin so the answer can genuinely compare them.
  */
 import { z } from "zod";
-import type { ConversationTurn, MarketData, NewsAnalysis, PricePrediction, RiskBenefitView } from "@copilot/shared";
+import type { ConversationTurn, Indicators, MarketData, NewsAnalysis, PricePrediction, RiskBenefitView } from "@copilot/shared";
 import { callAgentForJson, type AgentCreateFn } from "./agent.js";
 import { assertNoForbiddenPhrase } from "./guardrails.js";
 import { describeHistory } from "./conversationHistory.js";
@@ -19,6 +19,7 @@ const AnswerModel = z.object({ answer: z.string() });
 export interface CoinSummary {
   symbol: string;
   market?: MarketData;
+  indicators?: Indicators;
   news?: NewsAnalysis;
   price?: PricePrediction;
   riskBenefit?: RiskBenefitView;
@@ -26,6 +27,7 @@ export interface CoinSummary {
 
 export interface AnswerContext {
   market?: MarketData;
+  indicators?: Indicators;
   news?: NewsAnalysis;
   price?: PricePrediction;
   riskBenefit?: RiskBenefitView;
@@ -33,8 +35,27 @@ export interface AnswerContext {
   history?: ConversationTurn[];
 }
 
+/** Indicator lines, skipping any value still inside its warm-up window. */
+function describeIndicators(i: Indicators): string {
+  const values = [
+    i.rsi14 === null ? null : `RSI(14) ${i.rsi14.toFixed(1)}`,
+    i.sma20 === null ? null : `SMA(20) $${i.sma20.toFixed(2)}`,
+    i.ema20 === null ? null : `EMA(20) $${i.ema20.toFixed(2)}`,
+  ].filter((v): v is string => v !== null);
+
+  const head =
+    `Technical indicators, COMPUTED from daily ${i.candleSource} candles as of ${i.asOf} -- ` +
+    `arithmetic on real price history, not a forecast or an opinion. Latest daily close $${i.close.toFixed(2)}. ` +
+    `Only RSI, SMA and EMA are computed; no other indicator is available.`;
+
+  return values.length > 0
+    ? `${head} ${values.join(", ")}.`
+    : `${head} No indicator has enough history yet.`;
+}
+
 function describeCoinData(data: {
   market?: MarketData;
+  indicators?: Indicators;
   news?: NewsAnalysis;
   price?: PricePrediction;
   riskBenefit?: RiskBenefitView;
@@ -47,6 +68,7 @@ function describeCoinData(data: {
         `24h change ${m.change24h}%, 24h high $${m.high24h}, 24h low $${m.low24h}, 24h volume $${m.volume24h}.`
     );
   }
+  if (data.indicators) parts.push(describeIndicators(data.indicators));
   if (data.news) {
     parts.push(
       `News sentiment analysis (simulated headlines): overall ${data.news.overallSentiment} -- ${data.news.summary}\n` +
@@ -94,9 +116,12 @@ export async function synthesizeAnswer(
       "history is provided, you may use it for continuity -- avoid needlessly repeating a caveat, acknowledge " +
       "what was just discussed -- but the real data given for THIS asset is always authoritative; never " +
       "let history override or supply a number, headline, or fact. Address exactly what was asked, in plain " +
-      "language, 2-4 sentences. If nothing relevant was provided for part of the question, say so plainly instead " +
+      "language, 2-4 sentences. Any block marked COMPUTED is measured fact -- state it directly and never " +
+      "hedge it as a prediction, though what it implies about the future is still opinion. If nothing relevant " +
+      "was provided for part of the question, say so plainly instead " +
       'of guessing. Never use the phrase "max loss". Output ONLY JSON: {"answer": string}.',
     `Question:\n"""\n${question}\n"""\n\nAsset: ${symbol}\n\n${describeContext(context)}`,
+    "synthesizeAnswer",
     create
   );
   assertNoForbiddenPhrase(model.answer);

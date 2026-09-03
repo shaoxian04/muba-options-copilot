@@ -39,6 +39,25 @@ export function countdownWords(untilMs: number, nowMs: number): string {
 }
 
 /**
+ * How long ago `fromMs` was, compact -- "just now", "10h ago", "5m ago", "2d ago".
+ *
+ * This is a staleness signal, not a countdown: it renders once from `firedAt` and never
+ * re-ticks, because the underlying reading is a daily candle close, not a live tick.
+ * Clock skew means `fromMs` can land slightly in the future -- that's still "just now",
+ * never "in -3 minutes", since a Trader has no use for a negative duration.
+ */
+export function agoShort(fromMs: number, nowMs: number): string {
+  const total = Math.max(0, Math.floor((nowMs - fromMs) / 1000));
+  if (total < 60) return "just now";
+  const minutes = Math.floor(total / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+/**
  * How much of a holding's life has drained, 0 to 1.
  *
  * Geometry for the time bar, not a figure -- it becomes a width and is never rendered

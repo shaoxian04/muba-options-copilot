@@ -18,22 +18,37 @@ import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
-import { ProposeRequest, type ProposeResult } from "@copilot/shared";
-import { canSign } from "./thetanuts/client.js";
-import { buyableOrders, impliedVol, daysToExpiry, orderIdentity, PUT } from "./thetanuts/orders.js";
-import { spotPrice } from "./thetanuts/market.js";
+import { ProposeRequest, UnderlyingSymbol, MAX_HORIZON_DAYS, type ProposeResult, RiskProfileName, DecisionRequest } from "@copilot/shared";
+import { canSign, walletAddress, chain } from "./thetanuts/client.js";
+import { buyableOrders, daysToExpiry, orderIdentity, PUT } from "./thetanuts/orders.js";
+import { impliedMovePct } from "./thetanuts/implied-move.js";
+import { spotPrice, spotPrices } from "./thetanuts/market.js";
+import { UnknownUnderlying } from "./thetanuts/underlyings.js";
 import { proposeTrade, proposeChosenOrder, NoSuitableOrder, QuoteMoved } from "./thetanuts/propose.js";
 import { buildDeck } from "./thetanuts/deck.js";
+import { buildDepth } from "./thetanuts/depth-view.js";
+import { marketOverview } from "./thetanuts/markets.js";
 import { reviewIntent } from "./agents/review.js";
 import { practiceRoutes, practiceHoldings } from "./practice.js";
+import { rfqRoutes } from "./rfq.js";
+import { coverRoutes } from "./insurance/http.js";
 import { safeErrorResponse } from "./errors.js";
 import { realHoldings } from "./thetanuts/holdings.js";
+import { prepareFillTx, UnsafeOrder } from "./thetanuts/prepareFill.js";
+import { verifyFillOnChain } from "./thetanuts/verifyFill.js";
+import { buildChallengeMessage, generateNonce, verifyChallengeSignature } from "./auth.js";
 import { usd } from "./format.js";
-import { executeFill, RiskBudgetExceeded, UnsafeOrder } from "./thetanuts/execute.js";
 import {
   sessionFor, remainingBudget, setRiskBudget,
-  rememberProposal, recallProposal, rememberCard, recallCard, ProposalIdBody, type Session,
+  rememberProposal, recallProposal, rememberCard, recallCard,
+  reservePendingFill, confirmPendingFill, releasePendingFill,
+  beginAuthChallenge, takeAuthChallenge, markWalletVerified,
+  type Session,
 } from "./sessions.js";
+import {
+  AuthChallengeRequest, AuthVerifyRequest,
+  FillPrepareRequest, FillSettleRequest, type PreparedFill,
+} from "@copilot/shared";
 import { buildScenario } from "./forecast/scenario.js";
 import { analyzeNews } from "./forecast/news.js";
 import { predictPrice } from "./forecast/price.js";
@@ -42,6 +57,10 @@ import { parseForecastQuery, parseAskBody, forecastErrorStatus } from "./forecas
 import { answerQuestion } from "./forecast/ask.js";
 import { CryptoNewsQuery, MacroNewsQuery, AllNewsQuery } from "@copilot/shared";
 import { getCryptoNewsFeed, getMacroNewsFeed, getAllNewsFeed } from "./news/service.js";
+import { fetchIndicators, IndicatorsUnavailable } from "./forecast/indicators.js";
+import { fetchSuggestion, SuggestionUnavailable } from "./strategy/suggest.js";
+import { getRiskProfile, setRiskProfile } from "./supabase/riskProfiles.js";
+import { recordDecision, decisionStats } from "./supabase/decisions.js";
 
 /**
  * This process holds a funded key and exposes routes that spend money or cost real API
@@ -73,16 +92,39 @@ const apiToken = (): string | undefined => process.env.COPILOT_API_TOKEN || unde
  * repeat one that will drift.
  */
 export const COST_ROUTE_MAX_PER_MINUTE = 30;
+
+/** The period `/book` quotes its Implied Move over. A week reads as "the near future". */
+const BOOK_MOVE_DAYS = 7;
 const COST_ROUTE_LIMIT = { rateLimit: { max: COST_ROUTE_MAX_PER_MINUTE, timeWindow: "1 minute" } };
 
 /**
- * A query string arrives as strings, so numbers are coerced -- but only into the range
- * the book actually trades. ETH puts run to 3 days and no further.
+ * A query string arrives as strings, so numbers are coerced.
+ *
+ * `asset` is REQUIRED and has no default. A default of ETH is how an ETH-only assumption
+ * survives the migration meant to remove it -- the request succeeds, the Trader is shown
+ * ETH, and nothing reports a problem.
+ *
+ * The horizon was capped at 3 days, which was not a market fact: the live book runs ETH
+ * and BTC calls out to about 60. The cap was hiding most of the book. It is bounded, but
+ * by something absurd rather than by something wrong, and the response says which
+ * expiries actually exist.
  */
 const DeckQuery = z.object({
+  asset: UnderlyingSymbol,
   direction: z.enum(["UP", "DOWN"]),
-  horizonDays: z.coerce.number().int().min(1).max(3),
+  horizonDays: z.coerce.number().int().min(1).max(MAX_HORIZON_DAYS),
   sizeUsdc: z.coerce.number().positive().max(1000),
+});
+
+/**
+ * The depth chart answers for one Underlying and is filtered by nothing else.
+ *
+ * `horizonDays` is here and `direction` is deliberately NOT: the horizon labels one
+ * statistic, while a direction would filter the chart and turn it back into a Deck.
+ */
+const DepthQuery = z.object({
+  asset: UnderlyingSymbol,
+  horizonDays: z.coerce.number().int().min(1).max(MAX_HORIZON_DAYS).optional(),
 });
 
 /**
@@ -103,6 +145,15 @@ function requireToken(req: any, reply: any): boolean {
   reply.code(401).send({ error: "Unauthorized" });
   return false;
 }
+
+/**
+ * Who a row belongs to: the wallet this session proved it holds (ADR-0012), lowercased
+ * so one Trader is one key whatever case their wallet reports.
+ *
+ * Nothing the client says is involved. The old x-copilot-owner header let any caller name
+ * any owner and read or overwrite that owner's row; this cannot be asserted, only proven.
+ */
+const ownerFor = (s: Session): string | null => s.verifiedWallet?.toLowerCase() ?? null;
 
 /**
  * A Card reference, resolved back to the Order it names.
@@ -133,23 +184,35 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.get("/health", async () => ({ ok: true, canSign: canSign() }));
 
   /**
-   * What the market looks like right now. Read-only, safe to poll.
-   * `impliedMovePct` is an observation derived from live premiums, not a Forecast --
-   * see ADR-0005 for why that distinction is enforced rather than stylistic.
+   * Every market that is quoting, for the ticker rail. Read-only, safe to poll.
+   *
+   * One request rather than six. The rail is the first thing on the surface and six
+   * round trips to paint it would make the app feel broken before a Trader has acted.
+   */
+  app.get("/markets", async () => marketOverview());
+
+  /**
+   * The ETH book in detail. Read-only, safe to poll.
+   *
+   * Kept alongside `/markets` because it answers a different question -- how deep and
+   * how soon, on one Underlying -- and because `npm run explore` and the README both
+   * name it. `impliedMovePct` is an observation derived from live premiums, not a
+   * Forecast (ADR-0005).
    */
   app.get("/book", async () => {
     // Same `spotPrice` the Deck and the board read, so the tape and a Card can never
     // disagree about what ETH costs for any reason but the seconds between two polls.
-    const [orders, spot] = await Promise.all([buyableOrders(), spotPrice().catch(() => null)]);
-    const ivs = orders.map(impliedVol).filter((v): v is number => typeof v === "number");
-    const iv = ivs.length ? ivs.reduce((a, b) => a + b, 0) / ivs.length : undefined;
+    const [orders, spot] = await Promise.all([buyableOrders("ETH"), spotPrice("ETH").catch(() => null)]);
     return {
       spotUsd: spot,
       buyable: orders.length,
       puts: orders.filter((o) => o.order.optionType === PUT).length,
       calls: orders.filter((o) => o.order.optionType !== PUT).length,
       soonestExpiryDays: orders.length ? Math.min(...orders.map(daysToExpiry)) : null,
-      impliedMovePct: iv ? Number((iv * Math.sqrt(7 / 365) * 100).toFixed(1)) : null,
+      // Derived in `implied-move.ts` with every other reading of this idea, rather than
+      // inline here. This route and /depth quoting different numbers for "the Implied
+      // Move" is exactly what one home prevents.
+      impliedMovePct: impliedMovePct(orders, BOOK_MOVE_DAYS),
     };
   });
 
@@ -193,18 +256,52 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   /**
-   * The Deck: every Order the Trader may safely buy right now, for one direction and
-   * one expiry. Read-only and cheap -- `previewFillOrder` is synchronous and local, so
-   * pricing ten Cards costs one book fetch and no round trips.
+   * The Deck: every Order the Trader may safely buy right now, on one Underlying, for
+   * one direction and one expiry. Read-only.
    *
-   * ETH puts only ever run to 3 days, so the horizon is not an arbitrary range: it is
-   * the whole grid.
+   * A request without an `asset` is refused rather than answered about ETH -- see
+   * `DeckQuery`. The response also names which expiries this Underlying quotes in this
+   * direction, so the surface can render an empty chip as dead rather than hide it.
    */
   app.get("/deck", async (req, reply) => {
     const parsed = DeckQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid Deck request", issues: parsed.error.issues });
 
-    return buildDeck(sessionFor(req.headers), parsed.data);
+    try {
+      return await buildDeck(sessionFor(req.headers), parsed.data);
+    } catch (e) {
+      // Belt and braces: the query schema already rejects an unregistered symbol, but
+      // `buildDeck` refuses one too, and a refusal that names the asset asked for is a
+      // better 400 than a stack trace.
+      if (e instanceof UnknownUnderlying) return reply.code(400).send({ error: e.message });
+      throw e;
+    }
+  });
+
+  /**
+   * Where makers will actually trade on one Underlying. Read-only.
+   *
+   * NOT a Deck. Unfiltered by direction and unfiltered by expiry, deliberately: a chart
+   * that emptied the moment a Trader pressed a chip would just be the Deck again, drawn
+   * as bars, and would teach them nothing about the market they are standing in.
+   *
+   * `horizonDays` is optional and governs one statistic -- the expected move. Absent
+   * means that statistic is null rather than quoted over a horizon nobody chose.
+   *
+   * Not rate-limited alongside /propose: it costs no Thetanuts pricing calls. It IS slow
+   * -- the indexer hands back every Position it has ever recorded to count the live ones
+   * -- and the fix for that is a loading state, not a cache (ADR-0003).
+   */
+  app.get("/depth", async (req, reply) => {
+    const parsed = DepthQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid depth request", issues: parsed.error.issues });
+
+    try {
+      return await buildDepth(parsed.data);
+    } catch (e) {
+      if (e instanceof UnknownUnderlying) return reply.code(400).send({ error: e.message });
+      throw e;
+    }
   });
 
   /**
@@ -284,65 +381,179 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   /**
-   * The only route that spends money. Takes a proposal id, never a raw order --
-   * so a caller cannot hand us an order we never priced or vetted.
+   * Step one of proving a session is backed by the wallet it claims (ADR-0012). Pure
+   * local cryptography -- no RPC call, no cost -- but still session-scoped and
+   * token-gated like every other route that establishes what a session may do.
    */
-  app.post("/fill", async (req, reply) => {
+  app.post("/auth/challenge", async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const parsedBody = ProposalIdBody.safeParse(req.body);
-    if (!parsedBody.success) return reply.code(400).send({ error: "proposalId required" });
-    const { proposalId } = parsedBody.data;
-    if (!canSign()) return reply.code(503).send({ error: "No signer configured. Set THETANUTS_PRIVATE_KEY." });
+    const parsed = AuthChallengeRequest.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "walletAddress is required" });
 
     const s = sessionFor(req.headers);
-    const found = recallProposal(s, proposalId);
-    if (!found)
-      return reply.code(410).send({ error: "That quote has expired. Prices move -- ask for a fresh one." });
+    const nonce = generateNonce();
+    beginAuthChallenge(s, parsed.data.walletAddress, nonce);
+    return { message: buildChallengeMessage(parsed.data.walletAddress, nonce) };
+  });
 
-    // Reserve the spend and consume the proposal SYNCHRONOUSLY, before the await below.
-    // Node has no threads, so nothing can interleave between this check and this mutation --
-    // that's what makes it atomic. Doing this after the await (the old code) left a window
-    // where two concurrent /fill calls could both pass the budget check before either one's
-    // spend was recorded.
+  /**
+   * Step two: the Trader's wallet has signed the exact message /auth/challenge handed
+   * back. Verifying it here is what lets /fill/prepare later trust a walletAddress this
+   * session claims, instead of taking it on faith.
+   */
+  app.post("/auth/verify", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const parsed = AuthVerifyRequest.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "signature is required" });
+
+    const s = sessionFor(req.headers);
+    const pending = takeAuthChallenge(s);
+    if (!pending) {
+      reply.code(410).send({ error: "No challenge to verify, or it expired. Request a new one." });
+      return;
+    }
+    const message = buildChallengeMessage(pending.walletAddress, pending.nonce);
+    if (!verifyChallengeSignature(message, parsed.data.signature, pending.walletAddress)) {
+      reply.code(401).send({ error: "Signature does not match that wallet." });
+      return;
+    }
+    markWalletVerified(s, pending.walletAddress);
+    return { walletAddress: pending.walletAddress };
+  });
+
+  /**
+   * The Trader's own wallet signs the fill (ADR-0011). This route never signs or
+   * submits anything -- it re-checks the Risk Budget, reserves the spend, and returns
+   * the unsigned transaction(s) the connected wallet must send. `POST /fill/settle`
+   * finalizes or releases that reservation once the wallet reports what happened.
+   */
+  app.post("/fill/prepare", async (req, reply): Promise<PreparedFill | undefined> => {
+    if (!requireToken(req, reply)) return;
+    const parsed = FillPrepareRequest.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400).send({ error: "proposalId and a valid walletAddress are required", issues: parsed.error.issues });
+      return;
+    }
+    const { proposalId, walletAddress: trader } = parsed.data;
+
+    const s = sessionFor(req.headers);
+    if (!s.verifiedWallet || s.verifiedWallet.toLowerCase() !== trader.toLowerCase()) {
+      reply.code(401).send({ error: "Verify this wallet before confirming a fill." });
+      return;
+    }
+
+    const found = recallProposal(s, proposalId);
+    if (!found) {
+      reply.code(410).send({ error: "That quote has expired. Prices move -- ask for a fresh one." });
+      return;
+    }
+
     const remaining = remainingBudget(s);
-    if (found.proposal.maxLossUsdc > remaining)
-      return reply.code(403).send({
+    if (found.proposal.maxLossUsdc > remaining) {
+      reply.code(403).send({
         error: `This trade risks $${found.proposal.maxLossUsdc.toFixed(2)} but only $${remaining.toFixed(2)} of the Risk Budget remains.`,
       });
+      return;
+    }
+
+    // Reserve and consume the proposal SYNCHRONOUSLY, before the await below -- same
+    // reasoning the old single-call /fill handler documented: nothing can interleave
+    // between this check and this mutation, which is what makes it atomic.
     s.proposals.delete(proposalId);
-    s.spentUsdc += found.proposal.maxLossUsdc;
+    reservePendingFill(s, proposalId, found.proposal.maxLossUsdc);
 
     try {
-      const result = await executeFill(found.proposal, found.order, remainingBudget(s) + found.proposal.maxLossUsdc);
-      return { ...result, remainingUsdc: remainingBudget(s) };
+      const prepared = await prepareFillTx(found.proposal, found.order, trader);
+      return {
+        approveTx: prepared.approveTx,
+        fillTx: prepared.fillTx,
+        optionAddress: prepared.optionAddress,
+        explorerTxUrlBase: `${chain.explorerUrl}/tx/`,
+        remainingUsdc: remainingBudget(s),
+      };
     } catch (e: any) {
-      s.spentUsdc -= found.proposal.maxLossUsdc; // the fill never happened -- release the reservation
-      if (e instanceof RiskBudgetExceeded) return reply.code(403).send({ error: e.message });
-      if (e instanceof UnsafeOrder) return reply.code(403).send({ error: e.message });
-      // Raw ethers/RPC error text can carry the provider API key embedded in
-      // THETANUTS_RPC_URL -- never forward e.message to the caller. See errors.ts.
-      return reply.code(502).send(safeErrorResponse(req.log, e, "Fill failed. Try again, or ask for a fresh quote if this keeps happening."));
+      releasePendingFill(s, proposalId); // preparing failed -- give the reservation back
+      if (e instanceof UnsafeOrder) {
+        reply.code(403).send({ error: e.message });
+        return;
+      }
+      reply.code(502).send(safeErrorResponse(req.log, e, "Could not prepare that fill. Try again."));
+      return;
     }
+  });
+
+  /**
+   * Finalizes or releases a reservation `POST /fill/prepare` made. When a transaction
+   * hash is given, the chain -- not the caller -- decides the outcome (ADR-0012): the
+   * backend looks up the real receipt through its own RPC connection. No hash means
+   * nothing was ever sent (the wallet declined to sign), so there is nothing to check
+   * and the reservation is simply released.
+   */
+  app.post("/fill/settle", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const parsed = FillSettleRequest.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "proposalId is required" });
+    const { proposalId, txHash } = parsed.data;
+    const s = sessionFor(req.headers);
+
+    if (!txHash) {
+      const existed = releasePendingFill(s, proposalId);
+      if (!existed) return reply.code(410).send({ error: "No prepared fill found for that proposal." });
+      return { remainingUsdc: remainingBudget(s), confirmed: false };
+    }
+
+    try {
+      const verification = await verifyFillOnChain(txHash);
+      if (!verification.found) {
+        reply.code(425).send({ error: "That transaction is not visible yet. Try settling again shortly." });
+        return;
+      }
+      const existed = verification.succeeded ? confirmPendingFill(s, proposalId) : releasePendingFill(s, proposalId);
+      if (!existed) {
+        reply.code(410).send({ error: "No prepared fill found for that proposal." });
+        return;
+      }
+      return { remainingUsdc: remainingBudget(s), confirmed: verification.succeeded };
+    } catch (e) {
+      reply.code(502).send(safeErrorResponse(req.log, e, "Could not verify that transaction. Try again."));
+      return;
+    }
+  });
+
+  const PositionsQuery = z.object({
+    address: z.string().regex(/^0x[a-fA-F0-9]{40}$/, "must be a 0x-prefixed 20-byte address").optional(),
   });
 
   /**
    * The board: everything the Trader holds, real and practised, each labelled.
    *
-   * Real Positions come from the chain on every request -- there is no `positions`
-   * table and no balance cache, ever (ADR-0003). If this feels slow, the fix is a
-   * loading state, not a cache.
-   *
-   * It does not refuse without a wallet. A Trader who has only practised still has a
-   * board, and an empty page would teach them nothing.
+   * Reads holdings for whichever wallet the browser reports as connected (ADR-0011).
+   * With none given, it falls back to the operator's own configured wallet -- which is
+   * what keeps a wallet-less dev session and the CLI's single-wallet model working
+   * exactly as before. Gated on having an address, not on `canSign()` -- a non-custodial
+   * deployment never holds a signing key at all, and its board must still show whatever
+   * wallet the browser connected.
    */
   app.get("/positions", async (req, reply) => {
     if (!requireToken(req, reply)) return;
+    const parsedQuery = PositionsQuery.safeParse(req.query);
+    if (!parsedQuery.success) return reply.code(400).send({ error: parsedQuery.error.issues[0]?.message });
+
     const session = sessionFor(req.headers);
-    const spot = await spotPrice().catch(() => null);
+    // EVERY Underlying's spot, because the board can hold Positions on any of them. It
+    // used to read ETH's and value all six against it, which marked a BTC holding at
+    // `max(0, ETH_spot - BTC_strike)` -- zero, however deep in the money it really was.
+    const prices = await spotPrices().catch(() => ({}) as Record<string, number>);
+    const address = parsedQuery.data.address ?? walletAddress();
 
-    const [real, address] = canSign() ? await realHoldings(spot) : [[], null];
+    const [real, resolvedAddress] = address ? await realHoldings(prices, address) : [[], null];
 
-    return { address, spotUsd: spot === null ? null : usd(spot), holdings: [...real, ...practiceHoldings(session, spot)] };
+    return {
+      address: resolvedAddress,
+      // The headline price stays ETH's: it labels the tape, not any one holding.
+      spotUsd: prices.ETH === undefined ? null : usd(prices.ETH),
+      holdings: [...real, ...practiceHoldings(session, prices)],
+    };
   });
 
   /**
@@ -367,6 +578,29 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.get("/forecast/news", { config: COST_ROUTE_LIMIT }, forecast(analyzeNews));
   app.get("/forecast/price", { config: COST_ROUTE_LIMIT }, forecast(predictPrice));
   app.get("/forecast/risk-benefit", { config: COST_ROUTE_LIMIT }, forecast(assessRiskBenefit));
+
+  /**
+   * Indicators for one coin, from the Python agents service. The odd one out among the
+   * /forecast/* routes: no AI call, no horizon, and its numbers are arithmetic over
+   * public candles rather than opinion -- so it carries no disclaimer. Rate-limited
+   * anyway, since it makes an outbound exchange request.
+   *
+   * 503 when the service is down, per ADR-0007. The other Forecast routes keep working.
+   */
+  app.get("/forecast/indicators", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const symbol = typeof (req.query as any)?.symbol === "string" ? (req.query as any).symbol.trim() : "";
+    if (!symbol) return reply.code(400).send({ error: "symbol query parameter is required" });
+    try {
+      return await fetchIndicators(symbol);
+    } catch (e) {
+      if (e instanceof IndicatorsUnavailable) {
+        if (e.details) req.log.error({ err: e, details: e.details }, "Indicators shape drift");
+        return reply.code(e.status === 404 ? 404 : 503).send({ error: e.message });
+      }
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not fetch indicators."));
+    }
+  });
 
   /**
    * Free-text entry point: extracts which coin(s), horizon, and analyses a question is
@@ -417,7 +651,128 @@ export async function buildApp(): Promise<FastifyInstance> {
     return getAllNewsFeed(parsed.data);
   });
 
+  /**
+   * The Trader's saved Risk Profile. Not an error when unset -- the surface then asks
+   * them to choose one, same as an empty board is not an error.
+   */
+  app.get("/risk-profile", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const owner = ownerFor(sessionFor(req.headers));
+    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    try {
+      return { profile: await getRiskProfile(owner) };
+    } catch (e) {
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not load your Risk Profile."));
+    }
+  });
+
+  app.put("/risk-profile", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const owner = ownerFor(sessionFor(req.headers));
+    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    const parsed = RiskProfileName.safeParse((req.body as any)?.profile);
+    if (!parsed.success) return reply.code(400).send({ error: "profile must be one of conservative, balanced, aggressive" });
+    try {
+      const row = await setRiskProfile(owner, parsed.data);
+      return { profile: row.profile };
+    } catch (e) {
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not save your Risk Profile."));
+    }
+  });
+
+  /**
+   * ETH Suggestion for the Trader's saved profile, from the Strategy Agent. Reaches
+   * a live exchange through the agents service, so it is gated like /forecast/indicators:
+   * token-gated and rate-limited, and 503 (not 502) when that service is down (ADR-0007).
+   */
+  app.get("/suggestion", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const owner = ownerFor(sessionFor(req.headers));
+    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+
+    let profile;
+    try {
+      profile = await getRiskProfile(owner);
+    } catch (e) {
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not load your Risk Profile."));
+    }
+    // No saved profile -- the surface asks them to choose one, not a guessed default.
+    // Every key SuggestionResponse names, so this branch and the fired one are one shape.
+    if (!profile)
+      return {
+        profile: null, strategyId: null, strategyName: null, firedAt: null,
+        coverSummary: null, marketBand: null, intent: null, asOf: null,
+      };
+
+    try {
+      return await fetchSuggestion(profile);
+    } catch (e) {
+      if (e instanceof SuggestionUnavailable) {
+        if (e.details) req.log.error({ err: e, details: e.details }, "Suggestion shape drift");
+        // e.status is the Python service's own status when it answered (undefined
+        // means it never answered at all -- unreachable, or a body we couldn't read).
+        // A 4xx from Python is permanent -- a bad profile (400) or an unknown symbol
+        // (404) -- and RETRYABLE_STATUS in marketData.ts does not retry 4xx, so mapping
+        // either to 503 would be dishonest AND (for the 500 case below) costly: 500 IS
+        // in RETRYABLE_STATUS, and Python's "more than one strategy fired" seed-data bug
+        // answers 500 for something that will never succeed on retry. So: 404 stays 404
+        // (an unrecognized symbol, same as /forecast/indicators); any other 4xx becomes
+        // 502 (this backend built a request Python rejected -- not the Trader's fault,
+        // not an outage); 5xx, and no status at all (unreachable / bad body), stay 503
+        // per ADR-0007, since those genuinely are "the service is down."
+        const status = e.status;
+        const mapped = status === 404 ? 404 : status !== undefined && status >= 400 && status < 500 ? 502 : 503;
+        return reply.code(mapped).send({ error: e.message });
+      }
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not fetch a Suggestion."));
+    }
+  });
+
+  /**
+   * Records what the Trader did with a Suggestion. Spends nothing and signs nothing --
+   * it's a note about their choice, not an act on their behalf. Token-gated like the
+   * other DB-touching routes, since it writes via the Supabase SERVICE ROLE key.
+   *
+   * Rate-limited like the /forecast/* and /suggestion routes -- not because a Decision
+   * write costs a paid API call (it doesn't), but because it is the one route here that
+   * writes an unbounded number of rows per caller with only a token (which may be
+   * unset) standing between it and storage abuse. GET /risk-profile, PUT /risk-profile
+   * and GET /decisions/stats stay unlimited: they're a single row per owner (a PUT
+   * overwrites, it doesn't accumulate) or a read, so there's nothing here for a rate
+   * limit to bound.
+   */
+  app.post("/decisions", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const owner = ownerFor(sessionFor(req.headers));
+    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    const parsed = DecisionRequest.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid decision", issues: parsed.error.issues });
+    try {
+      // The owner is the Trader's wallet address now, and the browser has no use for it
+      // back -- echoing it would put a 40-hex address on the wire for nothing.
+      const { ownerId: _ownerId, ...row } = await recordDecision(owner, parsed.data);
+      return row;
+    } catch (e) {
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not record that decision."));
+    }
+  });
+
+  app.get("/decisions/stats", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const owner = ownerFor(sessionFor(req.headers));
+    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    const strategyId = typeof (req.query as any)?.strategyId === "string" ? (req.query as any).strategyId : undefined;
+    try {
+      return await decisionStats(owner, strategyId);
+    } catch (e) {
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not load decision stats."));
+    }
+>>>>>>> ca37e8723b291ecbfc2562e14ece610c151fbb5a
+  });
+
   await app.register(practiceRoutes);
+  await app.register(rfqRoutes);
+  await app.register(coverRoutes);
 
   return app;
 }

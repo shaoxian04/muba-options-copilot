@@ -1,0 +1,20 @@
+{
+  "id": "rsi-oversold-eth-v1",
+  "owner_id": "demo-owner",
+  "name": "RSI(14) oversold bounce",
+  "enabled": true,
+  "notes": "Classic mean-reversion setup: RSI(14) below 30 has historically preceded a short-term bounce on ETH. This is the analysis surface -- this prose never reaches `then`.",
+  "when": [
+    {
+      "left": { "source": "INDICATOR", "kind": "RSI", "period": 14 },
+      "operator": "<",
+      "right": { "source": "CONSTANT", "value": 30 }
+    }
+  ],
+  "then": {
+    "underlying": "ETH",
+    "direction": "UP",
+    "sizeUsdc": 2,
+    "horizonDays": 3
+  }
+}

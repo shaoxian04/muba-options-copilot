@@ -1,0 +1,66 @@
+{
+  "status": "QUOTE",
+  "quote": {
+    "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+    "collateral": "cbBTC",
+    "underlying": "BTC",
+    "spot": {
+      "value": 77882.14,
+      "display": "$77,882.14"
+    },
+    "loan": {
+      "collateralAmount": {
+        "value": 0.05,
+        "display": "0.05000000 cbBTC"
+      },
+      "collateralUsd": {
+        "value": 3894.107,
+        "display": "$3,894.11"
+      },
+      "debtUsd": {
+        "value": 2000,
+        "display": "$2,000.00"
+      },
+      "liquidationThreshold": {
+        "value": 0.78,
+        "display": "78%"
+      },
+      "healthFactor": {
+        "value": 1.51870173,
+        "display": "1.52"
+      }
+    },
+    "cover": {
+      "liquidationPrice": {
+        "value": 51282.051282051274,
+        "display": "$51,282.05"
+      },
+      "targetStrike": {
+        "value": 56410.25641025641,
+        "display": "$56,410.26"
+      },
+      "strikeDistanceFromSpot": {
+        "value": -0.27569714429705694,
+        "display": "-27.6%"
+      },
+      "requiredContracts": {
+        "value": 0.03900000000000001,
+        "display": "0.039000"
+      },
+      "tenorDays": {
+        "value": 14,
+        "display": "14d"
+      },
+      "expiry": {
+        "value": 1769673600000,
+        "display": "29 Jan, 08:00 UTC"
+      },
+      "premiumCapUsdc": {
+        "value": 8,
+        "display": "$8.00"
+      }
+    },
+    "warnings": [],
+    "disclaimer": "Nothing has been requested from a maker, nothing has been signed, and no USDC has moved. This is what your Loan would need, read from Aave."
+  }
+}

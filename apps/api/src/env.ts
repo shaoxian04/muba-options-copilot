@@ -49,8 +49,15 @@ export const maxFillUsdc = () => Number(process.env.MAX_FILL_USDC ?? 2);
  *  (what this process binds to) once this sits behind a reverse proxy or gets deployed. */
 export const backendEndpoint = (): string => process.env.BACKEND_ENDPOINT ?? "http://127.0.0.1:3001";
 
+/** Where the Python agents service listens (ADR-0007). Loopback, like this backend. */
+export const agentsEndpoint = (): string => process.env.AGENTS_ENDPOINT ?? "http://127.0.0.1:8000";
+
 export const openaiApiKey = (): string | undefined => process.env.OPENAI_API_KEY || undefined;
 export const groqApiKey = (): string | undefined => process.env.GROQ_API_KEY || undefined;
+
+/** Optional, same as the AI keys above -- the usage-log writer no-ops without these. */
+export const supabaseUrl = (): string | undefined => process.env.SUPABASE_URL || undefined;
+export const supabaseServiceRoleKey = (): string | undefined => process.env.SUPABASE_SERVICE_ROLE_KEY || undefined;
 
 export function anthropicApiKey(): string {
   const key = process.env.ANTHROPIC_API_KEY;

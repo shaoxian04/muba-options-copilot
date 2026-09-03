@@ -1,18 +1,20 @@
 /**
- * Issues #11-#14 -- the surface walked end to end.
+ * Issues #11-#14 and #30 -- the surface walked end to end.
  *
  * The API suite already proves a Card's premium equals the Trade Proposal's for the same
  * cardRef. That test cannot see the failure that actually reaches a Trader: React
  * rounding, truncating or reformatting on the way to the screen. So the equality is
  * asserted HERE, in the DOM, character for character.
  *
- * Everything else in this file is a journey rather than a unit: deal, override, confirm;
- * the same walk ending in a Practice Run with the network watched; Max Loss holding
- * still while a Trader flicks; the Risk Budget refusing; and the two halt states.
+ * Issue #30 removed the persistent commit bar: the only Confirm in the product now lives
+ * inside a modal a Trader arrives at by clicking a Card. That reshapes most of the
+ * journeys below -- anything that used to read Max Loss, the Risk Budget, the agent gate
+ * or Confirm/Practice Run off a bar that was always on screen now has to open the
+ * confirmation first, the same deliberate step a Trader has to take.
  */
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { cards, fixtures, FORBIDDEN, stubApi, TEST_API_TOKEN } from "./stub";
+import { cards, fixtures, FORBIDDEN, installFakeWallet, stubApi, TEST_API_TOKEN } from "./stub";
 
 const agentCard = fixtures.proposeAgent.cardRef;
 const overrideCard = cards.find((c) => c.cardRef !== agentCard)!;
@@ -22,6 +24,25 @@ const overrideProposal = fixtures.proposeByCard[overrideCard.cardRef];
 const deal = async (page: Page) => {
   await page.getByRole("button", { name: "I think ETH drops before Friday" }).click();
   await expect(page.getByTestId("chosen-by")).toBeVisible();
+};
+
+/**
+ * Click a Card and wait for the confirmation to open (issue #30). This is now the only
+ * way to reach Max Loss, the size control, the agent gate, or Confirm and Practice Run
+ * -- there is nowhere else on the surface any of them still render.
+ */
+const openConfirm = async (page: Page, cardRef: string) => {
+  await page.locator(`[data-card-ref="${cardRef}"]`).click();
+  await expect(page.getByTestId("confirm-modal")).toBeVisible();
+};
+
+/**
+ * Connects the fake wallet -- WalletConnect now lives inside `ConfirmModal` (issue #30
+ * moved Confirm there), so every journey that reaches it opens a confirmation first.
+ */
+const connectWallet = async (page: Page) => {
+  await page.getByTestId("connect-wallet").click();
+  await expect(page.getByTestId("wallet-address")).toBeVisible();
 };
 
 test.describe("selection, and who chose", () => {
@@ -134,6 +155,7 @@ test.describe("selection, and who chose", () => {
   test("shows the agent gate as three states, with the human last", async ({ page }) => {
     await page.goto("/");
     await deal(page);
+    await openConfirm(page, agentCard);
 
     const gate = page.getByRole("list", { name: "Who has to agree before anything is signed" });
     const chips = gate.getByRole("listitem");
@@ -147,16 +169,16 @@ test.describe("selection, and who chose", () => {
   test("says the Review Agent ran even when the Trader overrode it", async ({ page }) => {
     await page.goto("/");
     await deal(page);
-    await page.locator(`[data-card-ref="${overrideCard.cardRef}"]`).click();
+    await openConfirm(page, overrideCard.cardRef);
 
     await expect(page.getByRole("listitem").filter({ hasText: "Review" })).toContainText("your override");
   });
 
   test("draws the pending Fill on the Risk Budget as a ghost segment", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByTestId("risk-pending")).toHaveCSS("width", "0px");
-
     await deal(page);
+    await openConfirm(page, agentCard);
+
     const width = await page.getByTestId("risk-pending").evaluate((el) => el.getBoundingClientRect().width);
     expect(width).toBeGreaterThan(0);
   });
@@ -174,26 +196,245 @@ test.describe("selection, and who chose", () => {
   });
 });
 
+test.describe("the confirmation replaces the commit bar", () => {
+  test.beforeEach(async ({ page }) => {
+    await stubApi(page);
+  });
+
+  test("no standing Confirm control exists anywhere until a Card is clicked", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByTestId("card").first()).toBeVisible();
+
+    // Not disabled -- ABSENT. There is nowhere on the surface a Trader can even find
+    // a Confirm button before they have clicked a Card.
+    await expect(page.getByTestId("confirm")).toHaveCount(0);
+    await expect(page.getByTestId("practice")).toHaveCount(0);
+    await expect(page.getByTestId("confirm-modal")).toHaveCount(0);
+  });
+
+  test("clicking a Card opens the confirmation, and it holds the only Confirm in the product", async ({ page }) => {
+    await page.goto("/");
+    await openConfirm(page, agentCard);
+
+    const modal = page.getByTestId("confirm-modal");
+    await expect(modal).toHaveAttribute("role", "dialog");
+    await expect(modal).toHaveAttribute("aria-modal", "true");
+    await expect(page.getByTestId("confirm")).toHaveCount(1);
+    await expect(page.getByTestId("practice")).toHaveCount(1);
+  });
+
+  test("restates the trade as a belief in plain language, and never names the instrument", async ({ page }) => {
+    await page.goto("/");
+    await openConfirm(page, agentCard);
+
+    const belief = page.getByTestId("belief");
+    await expect(belief).toContainText("You believe");
+    await expect(belief).toContainText("ETH");
+    await expect(belief).toContainText("below");
+    await expect(belief).toContainText(fixtures.proposeAgent.proposal.figures.strike.display);
+
+    // Not just the belief block -- nowhere in the whole dialog does the instrument
+    // appear. "Chance" contains no forbidden substring, so this is safe as a whole-word
+    // check against the modal's full text.
+    const modalText = await page.getByTestId("confirm-modal").innerText();
+    for (const word of ["CALL", "PUT", "call option", "put option"]) {
+      expect(modalText).not.toContain(word);
+    }
+  });
+
+  test("the countdown runs in hours, minutes and seconds", async ({ page }) => {
+    await page.goto("/");
+    await openConfirm(page, agentCard);
+
+    const clock = page.getByTestId("belief-countdown");
+    await expect(clock).toHaveText(/^\d+:\d{2}:\d{2}$/);
+    const first = await clock.textContent();
+    await page.clock.runFor(3000);
+    await expect(clock).not.toHaveText(first!);
+  });
+
+  test("Max Loss is the largest figure, and equals the premium", async ({ page }) => {
+    await page.goto("/");
+    await openConfirm(page, agentCard);
+
+    const f = fixtures.proposeAgent.proposal.figures;
+    await expect(page.getByTestId("max-loss")).toHaveText(f.maxLossUsdc.display);
+    expect(f.maxLossUsdc.display).toBe(f.premiumUsdc.display);
+
+    const maxLossSize = await page.getByTestId("max-loss").evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    const chanceSize = await page.getByTestId("chance-pays").evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    const depthSize = await page.getByTestId("depth-here").evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    expect(maxLossSize).toBeGreaterThan(chanceSize);
+    expect(maxLossSize).toBeGreaterThan(depthSize);
+  });
+
+  test("shows chance it pays and Maker Depth from the picked Card", async ({ page }) => {
+    await page.goto("/");
+    await openConfirm(page, agentCard);
+
+    const card = cards.find((c) => c.cardRef === agentCard)!;
+    await expect(page.getByTestId("chance-pays")).toContainText(card.impliedChance.display);
+    await expect(page.getByTestId("chance-pays")).toContainText(card.chanceLabel);
+    await expect(page.getByTestId("depth-here")).toContainText(card.depthUsdc.display);
+  });
+
+  test("Escape dismisses, and returns focus to the Card that opened it", async ({ page }) => {
+    await page.goto("/");
+    const opener = page.locator(`[data-card-ref="${agentCard}"]`);
+    await opener.click();
+    await expect(page.getByTestId("confirm-modal")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("confirm-modal")).toHaveCount(0);
+    await expect(opener).toBeFocused();
+  });
+
+  test("a backdrop click dismisses", async ({ page }) => {
+    await page.goto("/");
+    await openConfirm(page, agentCard);
+
+    await page.getByTestId("scrim").click({ position: { x: 2, y: 2 } });
+    await expect(page.getByTestId("confirm-modal")).toHaveCount(0);
+  });
+
+  test("traps focus inside the dialog", async ({ page }) => {
+    await page.goto("/");
+    await openConfirm(page, agentCard);
+
+    const dialog = page.getByTestId("confirm-modal");
+    const focusable = dialog.locator('button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])');
+    const count = await focusable.count();
+    expect(count).toBeGreaterThan(1);
+
+    // Shift+Tab off the first focusable element wraps to the last, never escaping to
+    // the Deck behind it.
+    await focusable.first().focus();
+    await page.keyboard.press("Shift+Tab");
+    await expect(focusable.last()).toBeFocused();
+
+    await page.keyboard.press("Tab");
+    await expect(focusable.first()).toBeFocused();
+  });
+
+  test("has no critical or serious accessibility violations", async ({ page }) => {
+    await page.goto("/");
+    await openConfirm(page, agentCard);
+
+    const { violations } = await new AxeBuilder({ page }).analyze();
+    expect(violations.filter((v) => v.impact === "critical" || v.impact === "serious").map((v) => v.id)).toEqual([]);
+  });
+});
+
+test.describe("size: presets, the stepper, and the cap", () => {
+  test.beforeEach(async ({ page }) => {
+    await stubApi(page);
+  });
+
+  test("a preset recomputes every figure via a real server round trip", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await openConfirm(page, agentCard);
+
+    const before = await page.getByTestId("max-loss").textContent();
+
+    await page.getByTestId("size-preset-5").click();
+
+    await expect.poll(() => traffic.all.filter((r) => new URL(r.url()).pathname === "/propose").length).toBeGreaterThanOrEqual(2);
+    const last = traffic.all.filter((r) => new URL(r.url()).pathname === "/propose").at(-1)!;
+    expect(last.postDataJSON()).toMatchObject({ cardRef: agentCard, sizeUsdc: 5 });
+
+    // Every figure that depends on size moved together -- not adjusted in the
+    // browser, re-read off the server's fresh answer.
+    await expect(page.getByTestId("max-loss")).not.toHaveText(before!);
+    await expect(page.getByTestId("max-loss")).toHaveText("$5.00");
+    await expect(page.getByTestId("size-value")).toHaveText("$5.00");
+  });
+
+  test("the stepper recomputes every figure the same way", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await openConfirm(page, agentCard);
+
+    await page.getByTestId("size-increase").click();
+
+    await expect.poll(() => traffic.all.filter((r) => new URL(r.url()).pathname === "/propose").length).toBeGreaterThanOrEqual(2);
+    const last = traffic.all.filter((r) => new URL(r.url()).pathname === "/propose").at(-1)!;
+    expect(last.postDataJSON()).toMatchObject({ cardRef: agentCard, sizeUsdc: 2.5 });
+    await expect(page.getByTestId("max-loss")).toHaveText("$2.50");
+  });
+
+  test("Max binds on the Risk Budget when it is the tighter of the two", async ({ page }) => {
+    // The default session carries a $5 Risk Budget against every fixture Card's $500
+    // Maker Depth -- the budget is always the smaller of the two here.
+    const traffic = await stubApi(page, "normal");
+    await page.goto("/");
+    await openConfirm(page, agentCard);
+
+    // A preset past the $5 ceiling cannot be pressed at all.
+    await expect(page.getByTestId("size-preset-10")).toBeDisabled();
+
+    await page.getByTestId("size-max").click();
+    const last = traffic.all.filter((r) => new URL(r.url()).pathname === "/propose").at(-1)!;
+    expect(last.postDataJSON()).toMatchObject({ sizeUsdc: 5 });
+    await expect(page.getByTestId("max-loss")).toHaveText("$5.00");
+  });
+
+  test("Max binds on Maker Depth when it is the tighter of the two", async ({ page }) => {
+    // "deep-budget" raises the Risk Budget to $1,000, well past every fixture Card's
+    // $500 Maker Depth -- the OTHER branch of "whichever binds first".
+    const traffic = await stubApi(page, "deep-budget");
+    await page.goto("/");
+    await openConfirm(page, agentCard);
+
+    // $10 is now comfortably inside the (much larger) budget, so it is pressable --
+    // proof the ceiling actually moved rather than a preset merely being disabled.
+    await expect(page.getByTestId("size-preset-10")).toBeEnabled();
+
+    await page.getByTestId("size-max").click();
+    const last = traffic.all.filter((r) => new URL(r.url()).pathname === "/propose").at(-1)!;
+    expect(last.postDataJSON()).toMatchObject({ sizeUsdc: 500 });
+    await expect(page.getByTestId("max-loss")).toHaveText("$500.00");
+  });
+
+  test("shows the share of the Risk Budget the size consumes", async ({ page }) => {
+    await page.goto("/");
+    await openConfirm(page, agentCard);
+
+    await expect(page.getByTestId("risk-remaining")).toContainText("of");
+    await expect(page.getByTestId("risk-remaining")).toContainText(fixtures.session.figures.riskBudgetUsdc.display);
+  });
+});
+
 test.describe("Max Loss holds still", () => {
   test("does not change as the Trader flicks across every Card", async ({ page }) => {
     await stubApi(page);
     await page.goto("/");
 
+    // Issue #30: the confirmation covers the Deck, so flicking across Cards now means
+    // opening one, reading it, and closing it before the next -- there is no longer a
+    // way to click a second Card while the first Card's confirmation sits open on top
+    // of it.
     const maxLoss = page.getByTestId("max-loss");
-    await expect(maxLoss).not.toHaveText("—");
-    const before = await maxLoss.textContent();
+    let before: string | null = null;
 
     for (const card of cards) {
-      await page.locator(`[data-card-ref="${card.cardRef}"]`).click();
+      await openConfirm(page, card.cardRef);
       await expect(page.getByTestId("chosen-by")).toBeVisible();
-      expect(await maxLoss.textContent()).toBe(before);
+      await expect(maxLoss).not.toHaveText("—");
+      const text = await maxLoss.textContent();
+      before ??= text;
+      expect(text).toBe(before);
+
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId("confirm-modal")).toHaveCount(0);
     }
   });
 
-  test("stays on screen when the page is scrolled", async ({ page }) => {
+  test("stays visible when the page behind it is scrolled", async ({ page }) => {
     await stubApi(page);
     await page.goto("/");
     await deal(page);
+    await openConfirm(page, agentCard);
 
     await page.mouse.wheel(0, 3000);
     await expect(page.getByTestId("max-loss")).toBeInViewport();
@@ -214,8 +455,8 @@ test.describe("the confirmation says what the Card said", () => {
      *
      * The API suite proves the Card and the proposal carry the same figures. It cannot
      * see a component rounding one of them on the way to the screen -- so the strings
-     * are compared as RENDERED, from the Card the Trader clicked to the commit bar they
-     * are about to press.
+     * are compared as RENDERED, from the Card the Trader clicked to the confirmation
+     * that opened for it.
      */
     const tile = page.locator(`[data-card-ref="${overrideCard.cardRef}"]`);
     const shown = await tile.innerText();
@@ -233,18 +474,21 @@ test.describe("the confirmation says what the Card said", () => {
 });
 
 test.describe("finishing, for real and for practice", () => {
-  test("makes Confirm and Practice Run unmistakable from each other", async ({ page }) => {
+  test("makes Confirm and Practice Run unmistakable from each other, Practice Run the prominent one", async ({ page }) => {
     await stubApi(page);
     await page.goto("/");
     await deal(page);
+    await openConfirm(page, agentCard);
 
     const confirm = page.getByTestId("confirm");
     const practice = page.getByTestId("practice");
 
-    await expect(practice).toContainText("no money");
+    await expect(practice).toContainText("spends nothing");
     await expect(confirm).toContainText("Confirm");
 
-    // Not colour alone: one is a solid slab, the other a dashed outline.
+    // Not colour alone: one is a solid slab, the other a dashed outline -- and issue
+    // #30 flips which is which. Practice Run, the button that costs nothing, is now
+    // the solid one; Confirm is the quiet, outlined one.
     const styles = await Promise.all(
       [confirm, practice].map((b) =>
         b.evaluate((el) => {
@@ -254,26 +498,29 @@ test.describe("finishing, for real and for practice", () => {
       )
     );
     expect(styles[0]!.bg).not.toBe(styles[1]!.bg);
-    expect(styles[1]!.border).toContain("dashed");
+    expect(styles[0]!.border).toContain("dashed");
+    expect(styles[1]!.border).not.toContain("dashed");
   });
 
-  test("a Practice Run issues no request to /fill", async ({ page }) => {
+  test("a Practice Run issues no request to /fill/prepare", async ({ page }) => {
     const traffic = await stubApi(page);
     await page.goto("/");
     await deal(page);
+    await openConfirm(page, agentCard);
 
     await page.getByTestId("practice").click();
     await expect(page.getByTestId("holding")).toHaveCount(1);
 
     // Asserted on captured traffic, not on code shape: the surface may not even try.
     expect(traffic.paths()).toContain("/practice");
-    expect(traffic.paths()).not.toContain("/fill");
+    expect(traffic.paths()).not.toContain("/fill/prepare");
   });
 
   test("labels a practice holding as practice, three ways", async ({ page }) => {
     await stubApi(page);
     await page.goto("/");
     await deal(page);
+    await openConfirm(page, agentCard);
     await page.getByTestId("practice").click();
 
     const holding = page.getByTestId("holding").first();
@@ -290,6 +537,7 @@ test.describe("finishing, for real and for practice", () => {
     await expect(page.getByTestId("board-empty")).toBeVisible();
 
     await deal(page);
+    await openConfirm(page, agentCard);
     await page.getByTestId("practice").click();
 
     await expect(page.getByTestId("board-empty")).toHaveCount(0);
@@ -300,6 +548,7 @@ test.describe("finishing, for real and for practice", () => {
     await stubApi(page);
     await page.goto("/");
     await deal(page);
+    await openConfirm(page, agentCard);
     await page.getByTestId("practice").click();
 
     const holding = page.getByTestId("holding").first();
@@ -313,22 +562,112 @@ test.describe("finishing, for real and for practice", () => {
     await expect(clock).not.toHaveText(first!);
   });
 
-  test("Confirm spends only on the Trader's own press", async ({ page }) => {
-    const traffic = await stubApi(page);
-    await page.goto("/");
-    await deal(page);
-
-    // Everything up to this point priced a real Order. Nothing has been signed.
-    expect(traffic.paths()).not.toContain("/fill");
-
-    await page.getByTestId("confirm").click();
-    await expect.poll(() => traffic.paths().filter((p) => p === "/fill").length).toBe(1);
-  });
-
-  test("hands the Trader the transaction once real money has moved", async ({ page }) => {
+  test("a Practice Run shows no celebration -- no confetti, streak, leaderboard or animation", async ({ page }) => {
     await stubApi(page);
     await page.goto("/");
     await deal(page);
+    await openConfirm(page, agentCard);
+    await page.getByTestId("practice").click();
+
+    await expect(page.getByTestId("practice-receipt")).toBeVisible();
+    const modalText = (await page.getByTestId("confirm-modal").innerText()).toLowerCase();
+    for (const word of ["streak", "leaderboard", "congrat", "🎉", "confetti", "win", "nearly"]) {
+      expect(modalText).not.toContain(word);
+    }
+  });
+
+  test("Confirm spends only on the Trader's own press", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await installFakeWallet(page);
+    await page.goto("/");
+    await deal(page);
+    await openConfirm(page, agentCard);
+    await connectWallet(page);
+
+    // Everything up to this point priced a real Order. Nothing has been signed.
+    expect(traffic.paths()).not.toContain("/fill/prepare");
+
+    await page.getByTestId("confirm").click();
+    await expect.poll(() => traffic.paths().filter((p) => p === "/fill/prepare").length).toBe(1);
+    await expect.poll(() => traffic.paths().filter((p) => p === "/fill/settle").length).toBe(1);
+  });
+
+  test("Confirm stays disabled until a wallet is connected", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await installFakeWallet(page);
+    await page.goto("/");
+    await deal(page);
+    await openConfirm(page, agentCard);
+
+    await expect(page.getByTestId("confirm")).toBeDisabled();
+    await expect(page.getByTestId("wallet-gate")).toBeVisible();
+    // Practice Run never needs a wallet, and stays pressable throughout.
+    await expect(page.getByTestId("practice")).toBeEnabled();
+
+    await page.getByTestId("confirm").click({ force: true }).catch(() => {});
+    expect(traffic.paths()).not.toContain("/fill/prepare");
+
+    await connectWallet(page);
+    await expect(page.getByTestId("confirm")).toBeEnabled();
+    await expect(page.getByTestId("wallet-gate")).toHaveCount(0);
+  });
+
+  test("shows a connecting state, then the connected address", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallet(page);
+    await page.goto("/");
+    await deal(page);
+    await openConfirm(page, agentCard);
+
+    const connect = page.getByTestId("connect-wallet");
+    await expect(connect).toHaveText("Connect wallet");
+    await connect.click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+    await expect(page.getByTestId("connect-wallet")).toHaveCount(0);
+  });
+
+  test("offers a Verify button when a wallet was already authorised before this page loaded", async ({ page }) => {
+    // installFakeWallet pre-authorises eth_accounts, simulating a wallet the browser
+    // already trusted from a previous visit -- connectedAddress() picks this up on
+    // mount without prompting, but verification is a fresh signature every page load.
+    await stubApi(page);
+    await installFakeWallet(page, { preAuthorised: true });
+    await page.goto("/");
+    await deal(page);
+    await openConfirm(page, agentCard);
+
+    await expect(page.getByTestId("wallet-address")).toHaveCount(0);
+    const verify = page.getByTestId("verify-wallet");
+    await expect(verify).toBeVisible();
+    await verify.click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+  });
+
+  test("recovers from a transaction the chain hasn't shown it yet", async ({ page }) => {
+    const traffic = await stubApi(page, "settle-pending-once");
+    await installFakeWallet(page);
+    await page.goto("/");
+    // The retry delay is a real setTimeout in confirm() -- let the page's clock run
+    // instead of the frozen one stubApi installs for the countdown timers, the same
+    // fix needed for the wallet-signing flow itself.
+    await page.clock.resume();
+    await deal(page);
+    await openConfirm(page, agentCard);
+    await connectWallet(page);
+
+    await page.getByTestId("confirm").click();
+
+    await expect(page.getByTestId("receipt")).toBeVisible({ timeout: 10_000 });
+    await expect.poll(() => traffic.paths().filter((p) => p === "/fill/settle").length).toBe(2);
+  });
+
+  test("hands the Trader the transaction once real money has moved, with no celebration", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallet(page);
+    await page.goto("/");
+    await deal(page);
+    await openConfirm(page, agentCard);
+    await connectWallet(page);
     await expect(page.getByTestId("receipt")).toHaveCount(0);
 
     await page.getByTestId("confirm").click();
@@ -338,27 +677,79 @@ test.describe("finishing, for real and for practice", () => {
     const receipt = page.getByTestId("receipt");
     await expect(receipt).toBeVisible();
     await expect(receipt.getByRole("link")).toHaveAttribute("href", /^https?:\/\//);
+
+    const modalText = (await page.getByTestId("confirm-modal").innerText()).toLowerCase();
+    for (const word of ["streak", "leaderboard", "congrat", "🎉", "confetti", "win", "nearly"]) {
+      expect(modalText).not.toContain(word);
+    }
   });
 
-  test("sends the bearer token /fill is gated on", async ({ page }) => {
+  test("still shows the receipt when reporting success back to the server fails", async ({ page }) => {
+    // The wallet has already broadcast and mined the transaction by the time the app
+    // tells the backend about it -- real money has moved, so a failure of THAT report
+    // must never be shown to the Trader as if their fill itself had failed.
+    await stubApi(page, "settle-fails");
+    await installFakeWallet(page);
+    await page.goto("/");
+    await deal(page);
+    await openConfirm(page, agentCard);
+    await connectWallet(page);
+
+    await page.getByTestId("confirm").click();
+
+    await expect(page.getByTestId("receipt")).toBeVisible();
+    await expect(page.getByTestId("refusal")).toHaveCount(0);
+  });
+
+  test("shows a failure and releases the reservation when the wallet's transaction fails on-chain", async ({
+    page,
+  }) => {
+    const traffic = await stubApi(page);
+    await installFakeWallet(page, { fail: true });
+    await page.goto("/");
+    await deal(page);
+    await openConfirm(page, agentCard);
+    await connectWallet(page);
+
+    const before = await page.getByTestId("risk-remaining").textContent();
+
+    await page.getByTestId("confirm").click();
+
+    await expect(page.getByTestId("receipt")).toHaveCount(0);
+    await expect(page.getByTestId("refusal")).toBeVisible();
+    await expect.poll(() => traffic.paths().filter((p) => p === "/fill/settle").length).toBe(1);
+    const settleBody = traffic.all.find((r) => new URL(r.url()).pathname === "/fill/settle")!.postDataJSON();
+    expect(settleBody.txHash).toBeUndefined(); // nothing to check -- the send itself never returned a hash
+
+    // The reservation was released -- the Risk Budget reads the same as before Confirm.
+    await expect(page.getByTestId("risk-remaining")).toHaveText(before!);
+  });
+
+  test("sends the bearer token /fill/prepare is gated on", async ({ page }) => {
     // `.env.example` states the contract: "The frontend sends it as `Authorization:
     // Bearer ...`". Without the header, Confirm answers 401 for anyone who followed the
     // documented security posture -- and it only breaks once a token is set, which is
     // exactly the configuration that most needs to work.
     const traffic = await stubApi(page);
+    await installFakeWallet(page);
     await page.goto("/");
     await deal(page);
+    await openConfirm(page, agentCard);
+    await connectWallet(page);
     await page.getByTestId("confirm").click();
-    await expect.poll(() => traffic.paths().includes("/fill")).toBe(true);
+    await expect.poll(() => traffic.paths().includes("/fill/prepare")).toBe(true);
 
-    const request = traffic.all.find((r) => new URL(r.url()).pathname === "/fill")!;
+    const request = traffic.all.find((r) => new URL(r.url()).pathname === "/fill/prepare")!;
     expect(await request.headerValue("authorization")).toBe(`Bearer ${TEST_API_TOKEN}`);
   });
 
   test("surfaces a moved quote before the Trader confirms, not after", async ({ page }) => {
     const traffic = await stubApi(page);
+    await installFakeWallet(page);
     await page.goto("/");
     await deal(page);
+    await openConfirm(page, agentCard);
+    await connectWallet(page);
     await expect(page.getByTestId("confirm")).toBeEnabled();
 
     // The book reprices under them while the proposal is on screen.
@@ -369,16 +760,29 @@ test.describe("finishing, for real and for practice", () => {
     await expect(page.getByTestId("confirm")).toBeDisabled();
     await expect(page.getByTestId("practice")).toBeDisabled();
     // Story 30: never filled at a price they did not see.
-    expect(traffic.paths()).not.toContain("/fill");
+    expect(traffic.paths()).not.toContain("/fill/prepare");
   });
 
-  test("neither button is pressable before a Card is picked", async ({ page }) => {
-    await stubApi(page);
+  test("issue #32: a moved quote does not follow the Trader when they close and reopen for a different Card", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await installFakeWallet(page);
     await page.goto("/");
-    await expect(page.getByTestId("card").first()).toBeVisible();
+    await deal(page);
+    await openConfirm(page, agentCard);
 
-    await expect(page.getByTestId("confirm")).toBeDisabled();
-    await expect(page.getByTestId("practice")).toBeDisabled();
+    traffic.moveTheQuote();
+    await page.clock.runFor(7000);
+    await expect(page.getByTestId("quote-moved")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("confirm-modal")).toHaveCount(0);
+
+    // A different Card, freshly priced -- `quoteMoved` is about the ONE proposal a
+    // Trader was shown going stale, not a flag that sticks to the confirmation itself.
+    await openConfirm(page, overrideCard.cardRef);
+    await expect(page.getByTestId("quote-moved")).toHaveCount(0);
+    await connectWallet(page);
+    await expect(page.getByTestId("confirm")).toBeEnabled();
   });
 });
 
@@ -386,7 +790,7 @@ test.describe("the Risk Budget refusing", () => {
   test("refuses at the surface, in the server's own words, and cannot be pressed through", async ({ page }) => {
     await stubApi(page, "over-budget");
     await page.goto("/");
-    await page.getByTestId("card").first().click();
+    await openConfirm(page, cards[0]!.cardRef);
 
     await expect(page.getByTestId("refusal")).toBeVisible();
     await expect(page.getByTestId("refusal")).toContainText("Risk Budget");
@@ -397,13 +801,13 @@ test.describe("the Risk Budget refusing", () => {
   test("issues no fill after a refusal, however hard it is clicked", async ({ page }) => {
     const traffic = await stubApi(page, "over-budget");
     await page.goto("/");
-    await page.getByTestId("card").first().click();
+    await openConfirm(page, cards[0]!.cardRef);
     await expect(page.getByTestId("refusal")).toBeVisible();
 
     await page.getByTestId("confirm").click({ force: true }).catch(() => {});
     await page.getByTestId("practice").click({ force: true }).catch(() => {});
 
-    expect(traffic.paths()).not.toContain("/fill");
+    expect(traffic.paths()).not.toContain("/fill/prepare");
     expect(traffic.paths()).not.toContain("/practice");
   });
 });
@@ -425,7 +829,7 @@ test.describe("the halt states", () => {
     await expect(clashing).toHaveCount(fixtures.veto.clashingFields.length * 2);
     await expect(clashing.first()).toContainText("they disagree");
 
-    expect(traffic.paths()).not.toContain("/fill");
+    expect(traffic.paths()).not.toContain("/fill/prepare");
     expect(traffic.paths()).not.toContain("/practice");
   });
 
@@ -439,6 +843,26 @@ test.describe("the halt states", () => {
     await expect(page.getByTestId("deck")).toHaveCount(0);
     const size = await page.getByRole("heading", { level: 2 }).evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
     expect(size).toBeGreaterThanOrEqual(20);
+  });
+
+  test("issue #32: replaces the board, the confirmation and the payoff curve too -- but not the book's own standing state", async ({ page }) => {
+    await stubApi(page, "veto");
+    await page.goto("/");
+    await deal(page).catch(() => {});
+    await expect(page.getByTestId("veto")).toBeVisible();
+
+    // Nothing that lets a Trader act on a proposal survives a Veto: no board (real or
+    // practised), no confirmation, no payoff curve for a proposal that was never made.
+    await expect(page.getByTestId("board")).toHaveCount(0);
+    await expect(page.getByTestId("board-empty")).toHaveCount(0);
+    await expect(page.getByTestId("confirm-modal")).toHaveCount(0);
+    await expect(page.getByTestId("payoff-plot")).toHaveCount(0);
+
+    // But the rail, the tape and the Maker Depth chart -- the book's own standing
+    // state, not a proposal -- stay up, so a Trader is not stranded with no way back
+    // to the market they were just looking at (see the comment in `page.tsx`).
+    await expect(page.getByTestId("rail-ETH")).toBeVisible();
+    await expect(page.getByTestId("depth-chart")).toBeVisible();
   });
 
   test("the Veto survives colour being removed", async ({ page }) => {
@@ -464,7 +888,16 @@ test.describe("the halt states", () => {
     await stubApi(page, "empty");
     await page.goto("/");
 
-    await expect(page.getByTestId("empty-rfq")).toBeDisabled();
+    // Issue #31: the empty-Deck button is no longer a dead stub -- it opens the same
+    // RFQ dialog the chips-row door does, and that dialog leads to an honest 501, not
+    // a fake success. "Not pretending it is wired" now means the refusal is real.
+    await expect(page.getByTestId("empty-rfq")).toBeEnabled();
+    await page.getByTestId("empty-rfq").click();
+    await expect(page.getByTestId("rfq-modal")).toBeVisible();
+
+    await page.getByTestId("rfq-submit").click();
+    await expect(page.getByTestId("rfq-refusal")).toBeVisible();
+    await expect(page.getByTestId("rfq-refusal")).toContainText("not built yet");
   });
 
   test("both halt states are reachable without the agents service", async ({ page }) => {
@@ -497,39 +930,436 @@ test.describe("the halt states", () => {
 test.describe("the golden path", () => {
   test("deal, override, confirm -- and nothing leaks on the way", async ({ page }) => {
     const traffic = await stubApi(page);
+    await installFakeWallet(page);
     await page.goto("/");
 
     // Dealt.
     await deal(page);
     await expect(page.getByTestId("chosen-by")).toContainText("the agent picked this");
 
-    // Overruled.
-    await page.locator(`[data-card-ref="${overrideCard.cardRef}"]`).click();
+    // Overruled, and the confirmation opens for it.
+    await openConfirm(page, overrideCard.cardRef);
     await expect(page.getByTestId("chosen-by")).toContainText("your pick, not the agent's");
+    await connectWallet(page);
 
     // The numbers came from the server, and they are the Card's.
     await expect(page.getByTestId("premium")).toHaveText(overrideCard.premiumUsdc.display);
     await expect(page.getByTestId("max-loss")).toHaveText(overrideCard.maxLossUsdc.display);
 
-    // Confirmed, by a press.
+    // Confirmed, by a press inside the confirmation -- the only Confirm in the product.
     await page.getByTestId("confirm").click();
-    await expect.poll(() => traffic.paths().filter((p) => p === "/fill").length).toBe(1);
+    await expect.poll(() => traffic.paths().filter((p) => p === "/fill/prepare").length).toBe(1);
+    await expect.poll(() => traffic.paths().filter((p) => p === "/fill/settle").length).toBe(1);
 
-    for (const body of traffic.bodies) {
+    // Every response EXCEPT /fill/prepare's own -- which legitimately carries the real
+    // transaction calldata the Trader's own wallet has to see to sign it (ADR-0011) --
+    // still carries none of this. /auth/challenge and /auth/verify are exempted too,
+    // for a different, narrower reason: they legitimately echo the TRADER'S OWN wallet
+    // address back (proving sign-in, not naming an Order), which happens to be the same
+    // 40-hex-character shape FORBIDDEN's generic address pattern watches for. None of
+    // these three are exempted from having been fetched -- only from the scan itself.
+    const exemptPaths = new Set(["/fill/prepare", "/auth/challenge", "/auth/verify"]);
+    const exemptIndexes = new Set(
+      traffic.all.flatMap((r, i) => (exemptPaths.has(new URL(r.url()).pathname) ? [i] : []))
+    );
+    expect(exemptIndexes.size).toBeGreaterThanOrEqual(3);
+    for (const [i, body] of traffic.bodies.entries()) {
+      if (exemptIndexes.has(i)) continue;
       for (const forbidden of FORBIDDEN) expect(body).not.toMatch(forbidden);
     }
+    // And /fill/prepare's body is exactly the fixture the real API produced -- not a
+    // hand-widened stub standing in for a contract nobody checked.
+    const prepareIndex = traffic.all.findIndex((r) => new URL(r.url()).pathname === "/fill/prepare");
+    expect(traffic.bodies[prepareIndex]).toBe(JSON.stringify(fixtures.fillPrepare));
   });
 
-  test("the same walk, ending in practice, never touches /fill", async ({ page }) => {
+  test("the same walk, ending in practice, never touches /fill/prepare", async ({ page }) => {
     const traffic = await stubApi(page);
     await page.goto("/");
 
     await deal(page);
-    await page.locator(`[data-card-ref="${overrideCard.cardRef}"]`).click();
+    await openConfirm(page, overrideCard.cardRef);
     await expect(page.getByTestId("chosen-by")).toContainText("your pick");
     await page.getByTestId("practice").click();
     await expect(page.getByTestId("holding")).toHaveCount(1);
 
+    expect(traffic.paths()).not.toContain("/fill/prepare");
+  });
+});
+
+/**
+ * Issue #31 -- the RFQ door: naming a strike the book does not offer.
+ *
+ * Unlike the Card confirmation, this journey has no success path to walk: /rfq always
+ * answers 501, on purpose. So what these tests hold is the honesty of the refusal --
+ * that it reads as an answer to what was actually asked, states plainly that nothing
+ * moved, and never dresses itself up as a pending trade -- alongside the same shape
+ * and accessibility bar every other dialog on this surface is held to.
+ */
+test.describe("the RFQ door", () => {
+  test.beforeEach(async ({ page }) => {
+    await stubApi(page);
+  });
+
+  test("sits above the Deck's own cards, reachable without scrolling past them", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByTestId("card").first()).toBeVisible();
+
+    const door = page.getByTestId("rfq-door");
+    await expect(door).toBeVisible();
+    await expect(door).toContainText("Name your own strike");
+
+    // The claim is about POSITION relative to the card grid a Deck can grow to any
+    // length -- not about the page's initial fold, which issue #32 (not yet landed)
+    // owns. The door sits in the chips row, above every Card, so reaching it never
+    // means scrolling past them the way a control placed after the grid would.
+    const doorBox = (await door.boundingBox())!;
+    const firstCardBox = (await page.getByTestId("card").first().boundingBox())!;
+    expect(doorBox.y).toBeLessThan(firstCardBox.y);
+  });
+
+  test("is styled distinctly from a Card -- dashed, not a filled tile", async ({ page }) => {
+    await page.goto("/");
+    const borderStyle = await page.getByTestId("rfq-door").evaluate((el) => getComputedStyle(el).borderStyle);
+    expect(borderStyle).toBe("dashed");
+  });
+
+  test("opens the same shape of confirmation a Card opens", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    const modal = page.getByTestId("rfq-modal");
+    await expect(modal).toBeVisible();
+    await expect(modal).toHaveAttribute("role", "dialog");
+    await expect(modal).toHaveAttribute("aria-modal", "true");
+    await expect(page.getByTestId("rfq-submit")).toHaveCount(1);
+    await expect(page.getByTestId("rfq-cancel")).toHaveCount(1);
+  });
+
+  test("the strike slider is a percentage from spot, and the belief sentence updates as it is dragged", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    const slider = page.getByTestId("rfq-strike-slider");
+    await expect(slider).toHaveAttribute("min", "-30");
+    await expect(slider).toHaveAttribute("max", "30");
+    await expect(slider).toHaveAttribute("step", "0.5");
+    await expect(slider).toHaveAttribute("aria-label", "Strike, as a percentage from spot");
+
+    const before = await page.getByTestId("rfq-belief").innerText();
+    await slider.focus();
+    await page.keyboard.press("ArrowRight");
+    const after = await page.getByTestId("rfq-belief").innerText();
+    expect(after).not.toBe(before);
+    await expect(page.getByTestId("rfq-offset-readout")).toContainText("%");
+  });
+
+  test("never prints a dollar strike while dragging -- only the percentage the slider itself names", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    const slider = page.getByTestId("rfq-strike-slider");
+    await slider.focus();
+    for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowRight");
+
+    // Nobody has priced this strike -- server included -- so nothing in the belief
+    // sentence or the live offset readout may be a dollar figure, dragging or not.
+    await expect(page.getByTestId("rfq-belief")).not.toContainText("$");
+    await expect(page.getByTestId("rfq-offset-readout")).not.toContainText("$");
+  });
+
+  test("expiry is offered in tenors longer than the book, under a note that the book stops at 3 days", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    for (const days of [7, 14, 30, 60]) {
+      await expect(page.getByTestId(`rfq-tenor-${days}`)).toBeVisible();
+    }
+    await expect(page.getByTestId("rfq-modal")).toContainText("book stops at 3 days");
+
+    await page.getByTestId("rfq-tenor-30").click();
+    await expect(page.getByTestId("rfq-tenor-30")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("rfq-belief")).toContainText("30 days");
+  });
+
+  test("shows no premium and no Implied Chance -- both explicitly unpriced, never simply absent", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    await expect(page.getByTestId("rfq-premium")).toBeVisible();
+    await expect(page.getByTestId("rfq-premium")).toHaveText("not priced yet");
+    await expect(page.getByTestId("rfq-chance")).toBeVisible();
+    await expect(page.getByTestId("rfq-chance")).toHaveText("not priced yet");
+  });
+
+  test("shows Max Loss, and states the size is a reserve price enforced on-chain", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    await expect(page.getByTestId("rfq-max-loss")).toBeVisible();
+    await expect(page.getByTestId("rfq-max-loss")).toHaveText("$2");
+    await expect(page.getByTestId("rfq-reserve-note")).toContainText("reserve price");
+    await expect(page.getByTestId("rfq-reserve-note")).toContainText("enforced on-chain");
+  });
+
+  test("submitting surfaces the 501, stating nothing was sent, signed or spent -- never a pending state", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    await expect(page.getByTestId("rfq-refusal")).toHaveCount(0);
+    await page.getByTestId("rfq-submit").click();
+
+    const refusal = page.getByTestId("rfq-refusal");
+    await expect(refusal).toBeVisible();
+    await expect(refusal).toHaveAttribute("role", "alert");
+    await expect(refusal).toContainText("501");
+    await expect(refusal).toContainText("not built yet");
+    await expect(refusal).toContainText("Nothing was sent to a maker");
+    await expect(refusal).toContainText("nothing was signed");
+    await expect(refusal).toContainText("no USDC moved");
+
+    // Never a fake pending state: no receipt, no holding, no request to either route
+    // that would move money or open even a practised Position.
+    await expect(page.getByTestId("receipt")).toHaveCount(0);
+    await expect(page.getByTestId("practice-receipt")).toHaveCount(0);
     expect(traffic.paths()).not.toContain("/fill");
+    expect(traffic.paths()).not.toContain("/practice");
+  });
+
+  test("the refusal echoes back exactly what was asked for", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    await page.getByTestId("rfq-tenor-14").click();
+    await page.getByTestId("rfq-size-preset-2").click();
+    await page.getByTestId("rfq-submit").click();
+
+    // ETH falls by default (direction DOWN), so the door opens 10% below the fixture's
+    // $2,445.49 spot -- $2,200.94, formatted the way `apps/api/src/format.ts` formats it.
+    await expect(page.getByTestId("rfq-refusal")).toContainText(
+      "You asked for: ETH below $2,200.94, 14 days, at most $2.00."
+    );
+  });
+
+  test("issues no additional request after a refusal, however hard Request quotes is clicked", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+    await page.getByTestId("rfq-submit").click();
+    await expect(page.getByTestId("rfq-refusal")).toBeVisible();
+
+    const before = traffic.paths().filter((p) => p === "/rfq").length;
+    await page.getByTestId("rfq-submit").click({ force: true }).catch(() => {});
+    expect(traffic.paths().filter((p) => p === "/rfq").length).toBe(before);
+  });
+
+  test("Escape dismisses, and returns focus to the door that opened it", async ({ page }) => {
+    await page.goto("/");
+    const door = page.getByTestId("rfq-door");
+    await door.click();
+    await expect(page.getByTestId("rfq-modal")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("rfq-modal")).toHaveCount(0);
+    await expect(door).toBeFocused();
+  });
+
+  test("a backdrop click dismisses", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    await page.getByTestId("rfq-scrim").click({ position: { x: 2, y: 2 } });
+    await expect(page.getByTestId("rfq-modal")).toHaveCount(0);
+  });
+
+  test("the empty-Deck message points at this door and opens the same dialog", async ({ page }) => {
+    await stubApi(page, "empty");
+    await page.goto("/");
+    await expect(page.getByTestId("empty-rfq")).toBeEnabled();
+
+    await page.getByTestId("empty-rfq").click();
+    await expect(page.getByTestId("rfq-modal")).toBeVisible();
+  });
+
+  test("traps focus inside the dialog, the slider included", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    const dialog = page.getByTestId("rfq-modal");
+    const focusable = dialog.locator('button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])');
+    const count = await focusable.count();
+    expect(count).toBeGreaterThan(1);
+
+    await focusable.first().focus();
+    await page.keyboard.press("Shift+Tab");
+    await expect(focusable.last()).toBeFocused();
+
+    await page.keyboard.press("Tab");
+    await expect(focusable.first()).toBeFocused();
+  });
+
+  test("issue #32: has no 'quote moved' state -- nothing is priced here for the book to move out from under", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    // The same reprice that flips the Card confirmation's `quote-moved` banner, held
+    // open across a full poll interval -- but inside the RFQ dialog instead.
+    traffic.moveTheQuote();
+    await page.clock.runFor(7000);
+
+    await expect(page.locator('[data-testid="quote-moved"]')).toHaveCount(0);
+    await expect(page.getByTestId("rfq-modal")).not.toContainText("price moved");
+    await expect(page.getByTestId("rfq-submit")).toBeEnabled();
+  });
+
+  test("has no critical or serious accessibility violations, open or refused", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+
+    const opened = await new AxeBuilder({ page }).analyze();
+    expect(
+      opened.violations.filter((v) => v.impact === "critical" || v.impact === "serious").map((v) => v.id)
+    ).toEqual([]);
+
+    await page.getByTestId("rfq-submit").click();
+    await expect(page.getByTestId("rfq-refusal")).toBeVisible();
+
+    const refused = await new AxeBuilder({ page }).analyze();
+    expect(
+      refused.violations.filter((v) => v.impact === "critical" || v.impact === "serious").map((v) => v.id)
+    ).toEqual([]);
+  });
+});
+
+/**
+ * Issue #32 -- the board, and loading without blanking.
+ *
+ * A network stub answers instantly, which is exactly the width the ticket's own
+ * loading states occupy in real life -- too narrow for a normal test to ever observe.
+ * `traffic.hold(path)` (see `stub.ts`) widens that window on demand: the tests below
+ * hold a request open, assert on the state while it is genuinely in flight, then
+ * release it and assert the state that follows.
+ */
+test.describe("loading, without blanking the surface", () => {
+  test("the board shows a loading state, not \"nothing open\", before positions have answered", async ({ page }) => {
+    const traffic = await stubApi(page);
+    const release = traffic.hold("/positions");
+    await page.goto("/");
+
+    await expect(page.getByTestId("board-loading")).toBeVisible();
+    await expect(page.getByTestId("board-empty")).toHaveCount(0);
+
+    release();
+    await expect(page.getByTestId("board-empty")).toBeVisible();
+    await expect(page.getByTestId("board-loading")).toHaveCount(0);
+  });
+
+  test("the board reads across every Underlying, not scoped to the one selected on the rail", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await expect(page.getByTestId("board-empty")).toBeVisible();
+
+    await page.getByTestId("rail-SOL").click();
+    await expect(page.getByTestId("rail-SOL")).toHaveAttribute("aria-pressed", "true");
+
+    // GET /positions carries no `asset` -- it is not re-fetched by, or scoped to, the
+    // rail's own selection (`apps/api/src/app.ts`'s `/positions` prices every
+    // Underlying's spot in the one read).
+    const positionsRequests = traffic.all.filter((r) => new URL(r.url()).pathname === "/positions");
+    expect(positionsRequests.length).toBe(1);
+    expect(new URL(positionsRequests[0]!.url()).searchParams.get("asset")).toBeNull();
+  });
+
+  test("the rail shows a loading state before markets have answered", async ({ page }) => {
+    const traffic = await stubApi(page);
+    const release = traffic.hold("/markets");
+    await page.goto("/");
+
+    await expect(page.getByTestId("rail-loading")).toBeVisible();
+    await expect(page.getByTestId("rail-loading")).toContainText("Reading the markets");
+    await expect(page.getByTestId("rail-ETH")).toHaveCount(0);
+
+    release();
+    await expect(page.getByTestId("rail-ETH")).toBeVisible();
+    await expect(page.getByTestId("rail-loading")).toHaveCount(0);
+  });
+
+  test("the Deck and the depth chart each show a loading state before the first read lands", async ({ page }) => {
+    const traffic = await stubApi(page);
+    const releaseDeck = traffic.hold("/deck");
+    const releaseDepth = traffic.hold("/depth");
+    await page.goto("/");
+
+    await expect(page.getByTestId("deck-loading")).toBeVisible();
+    await expect(page.getByTestId("depth-loading")).toBeVisible();
+    await expect(page.getByTestId("deck")).toHaveCount(0);
+    await expect(page.getByTestId("depth-chart")).toHaveCount(0);
+
+    releaseDeck();
+    await expect(page.getByTestId("deck")).toBeVisible();
+    await expect(page.getByTestId("deck-loading")).toHaveCount(0);
+
+    releaseDepth();
+    await expect(page.getByTestId("depth-chart")).toBeVisible();
+    await expect(page.getByTestId("depth-loading")).toHaveCount(0);
+  });
+
+  test("switching Underlying keeps the last Deck on screen, disabled, under an 'Updating' note -- not blanked", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await expect(page.getByTestId("card").first()).toBeVisible();
+    const priorCardCount = await page.getByTestId("card").count();
+
+    const release = traffic.hold("/deck");
+    await page.getByTestId("rail-SOL").click();
+
+    // The ETH Deck stays on screen -- not replaced by a bare loading paragraph -- and
+    // it is disabled: a stray click on a stale Card must not send the NEW asset
+    // alongside a `cardRef` that only exists on the OLD one.
+    await expect(page.getByTestId("deck-refreshing")).toBeVisible();
+    await expect(page.getByTestId("card")).toHaveCount(priorCardCount);
+    await expect(page.getByTestId("card").first()).toBeDisabled();
+
+    release();
+    await expect(page.getByTestId("deck-refreshing")).toHaveCount(0);
+    await expect(page.getByTestId("card").first()).toBeEnabled();
+  });
+
+  test("switching Underlying keeps the last depth chart on screen under an 'Updating' note -- not blanked", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await expect(page.getByTestId("depth-chart")).toBeVisible();
+
+    // Both /deck and /depth are held. /deck's answer is what `fullestExpiry` in
+    // `lib/surface.ts` uses to move a Trader onto the expiry with the most Cards --
+    // left to resolve here, on an instantly-answering stub, it would change
+    // `horizonDays` and drive a SECOND, un-held /depth request before this test ever
+    // gets to observe the loading state. A genuinely slow network would not race like
+    // that: both requests would still be in flight together.
+    const releaseDeck = traffic.hold("/deck");
+    const releaseDepth = traffic.hold("/depth");
+    await page.getByTestId("rail-SOL").click();
+
+    await expect(page.getByTestId("depth-refreshing")).toBeVisible();
+    await expect(page.getByTestId("depth-chart")).toBeVisible();
+
+    releaseDeck();
+    releaseDepth();
+    await expect(page.getByTestId("depth-refreshing")).toHaveCount(0);
+  });
+
+  test("has no critical or serious accessibility violations while the Deck, the depth chart, the rail and the board are all still loading", async ({ page }) => {
+    const traffic = await stubApi(page);
+    traffic.hold("/deck");
+    traffic.hold("/depth");
+    traffic.hold("/markets");
+    traffic.hold("/positions");
+    await page.goto("/");
+
+    await expect(page.getByTestId("deck-loading")).toBeVisible();
+    const { violations } = await new AxeBuilder({ page }).analyze();
+    expect(violations.filter((v) => v.impact === "critical" || v.impact === "serious").map((v) => v.id)).toEqual([]);
   });
 });

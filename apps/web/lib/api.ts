@@ -10,9 +10,19 @@
  * so the Deck a Trader is looking at and the Card they pick have to arrive under the
  * same id.
  */
-import type { Card, ConversationTurn, CoinAskResult, Deck, Figure, Holding, ProposeResult } from "@copilot/shared";
+import type {
+  Card, ConversationTurn, CoinAskResult, CoverQuote, CoverQuoteResult, CoverRefusal,
+  DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding,
+  MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, RiskProfileName,
+  RiskProfileResponse, SuggestionResponse, UnderlyingSymbol,
+} from "@copilot/shared";
 
-export type { Card, ConversationTurn, CoinAskResult, Deck, Figure, Holding, ProposeResult };
+export type {
+  Card, ConversationTurn, CoinAskResult, CoverQuote, CoverQuoteResult, CoverRefusal,
+  DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding,
+  MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, RiskProfileName,
+  RiskProfileResponse, SuggestionResponse, UnderlyingSymbol,
+};
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:3001";
 
@@ -109,12 +119,47 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export const getDeck = (q: { direction: "UP" | "DOWN"; horizonDays: number; sizeUsdc: number }): Promise<Deck> =>
-  call<Deck>(`/deck?direction=${q.direction}&horizonDays=${q.horizonDays}&sizeUsdc=${q.sizeUsdc}`);
+export const getDeck = (q: {
+  asset: UnderlyingSymbol;
+  direction: "UP" | "DOWN";
+  horizonDays: number;
+  sizeUsdc: number;
+  /** Lets `lib/surface.ts` cancel a read a Trader has since navigated away from. */
+  signal?: AbortSignal;
+}): Promise<Deck> =>
+  call<Deck>(`/deck?asset=${q.asset}&direction=${q.direction}&horizonDays=${q.horizonDays}&sizeUsdc=${q.sizeUsdc}`, {
+    signal: q.signal,
+  });
 
-export const getSession = (): Promise<SessionState> => call<SessionState>("/session");
+/**
+ * Every market that is quoting. One request, not six -- the rail is the first thing on
+ * the surface and six round trips would make the app feel broken before a Trader acts.
+ */
+export const getMarkets = (): Promise<MarketOverview> => call<MarketOverview>("/markets");
 
-export const getBoard = (): Promise<Board> => call<Board>("/positions");
+/**
+ * Where makers will actually trade on one Underlying -- the Maker Depth chart's data.
+ *
+ * Deliberately narrower than `getDeck`: no `direction`, because the chart is filtered
+ * by neither direction nor expiry (issue #28). `horizonDays` is optional and governs
+ * one statistic -- the Implied Move -- so it is left off the query when the caller has
+ * none to name rather than defaulted to one that answers a question nobody asked.
+ */
+export const getDepth = (q: {
+  asset: UnderlyingSymbol;
+  horizonDays?: number;
+  /** Lets `lib/surface.ts` cancel a read a Trader has since navigated away from. */
+  signal?: AbortSignal;
+}): Promise<DepthView> =>
+  call<DepthView>(
+    `/depth?asset=${q.asset}${q.horizonDays === undefined ? "" : `&horizonDays=${q.horizonDays}`}`,
+    { signal: q.signal }
+  );
+
+export const getSession = (): Promise<SessionState> => call<SessionState>("/session", { headers: authHeaders() });
+
+export const getBoard = (address: string | null): Promise<Board> =>
+  call<Board>(`/positions${address ? `?address=${address}` : ""}`, { headers: authHeaders() });
 
 /**
  * Ask for a trade.
@@ -125,6 +170,7 @@ export const getBoard = (): Promise<Board> => call<Board>("/positions");
  * sitting in the browser.
  */
 export const propose = (body: {
+  underlying: UnderlyingSymbol;
   direction: "UP" | "DOWN";
   horizonDays: number;
   sizeUsdc: number;
@@ -132,15 +178,46 @@ export const propose = (body: {
 }): Promise<ProposeResult> =>
   call<ProposeResult>("/propose", {
     method: "POST",
-    body: JSON.stringify({ underlying: "ETH", ...body }),
+    // No `underlying: "ETH"` default here any more. It used to be spread in ahead of the
+    // caller's fields, which meant the surface could not have asked for anything else
+    // even once the book opened -- an ETH-only assumption hidden in a spread.
+    body: JSON.stringify(body),
     headers: authHeaders(),
   });
 
-/** Spends real USDC. Only ever called from the Trader's own press on Confirm. */
-export const fill = (proposalId: string): Promise<FillReceipt> =>
-  call<FillReceipt>("/fill", {
+/** Step one of proving this wallet is who it says it is (ADR-0012). Signs nothing yet. */
+export const requestAuthChallenge = (walletAddress: string): Promise<{ message: string }> =>
+  call<{ message: string }>("/auth/challenge", {
     method: "POST",
-    body: JSON.stringify({ proposalId }),
+    body: JSON.stringify({ walletAddress }),
+    headers: authHeaders(),
+  });
+
+/** Step two: hands over the signature /auth/challenge's message produced. */
+export const verifyAuthChallenge = (signature: string): Promise<{ walletAddress: string }> =>
+  call<{ walletAddress: string }>("/auth/verify", {
+    method: "POST",
+    body: JSON.stringify({ signature }),
+    headers: authHeaders(),
+  });
+
+/** Asks the backend to build the unsigned transaction(s) this fill needs. Signs nothing. */
+export const prepareFill = (proposalId: string, walletAddress: string): Promise<PreparedFill> =>
+  call<PreparedFill>("/fill/prepare", {
+    method: "POST",
+    body: JSON.stringify({ proposalId, walletAddress }),
+    headers: authHeaders(),
+  });
+
+/**
+ * Reports what happened, so the Risk Budget reservation can be finalized or released.
+ * `txHash` present means the backend checks the chain itself and decides (ADR-0012);
+ * absent means nothing was ever sent, and the reservation is simply released.
+ */
+export const settleFill = (proposalId: string, txHash?: string): Promise<{ remainingUsdc: number; confirmed: boolean }> =>
+  call<{ remainingUsdc: number; confirmed: boolean }>("/fill/settle", {
+    method: "POST",
+    body: JSON.stringify({ proposalId, txHash }),
     headers: authHeaders(),
   });
 
@@ -172,3 +249,96 @@ export const askForecast = (
  */
 export const practice = (proposalId: string): Promise<{ holding: Holding }> =>
   call<{ holding: Holding }>("/practice", { method: "POST", body: JSON.stringify({ proposalId }) });
+
+/**
+ * Name a strike the book does not offer (issue #31).
+ *
+ * This always throws `ApiRefusal(501, ...)` -- the sealed-bid RFQ backend is out of
+ * scope, and this route exists to refuse honestly rather than pretend a maker is
+ * pricing anything. `strikeOffsetPct` is the slider's own raw number, never resolved
+ * to a dollar strike in this file or anywhere else in the browser: only the server,
+ * which alone holds live spot, may turn it into one, and it does that only inside the
+ * refusal's own echoed sentence.
+ *
+ * `kind: "TRADER"` is injected here so the call site in `surface.ts` needs no change --
+ * the union discriminant is an implementation detail of the wire shape, not something
+ * a caller thinking about a trade needs to name.
+ */
+export const requestRfq = (body: {
+  underlying: UnderlyingSymbol;
+  direction: "UP" | "DOWN";
+  strikeOffsetPct: number;
+  horizonDays: RfqTenorDays;
+  sizeUsdc: number;
+}): Promise<never> =>
+  call<never>("/rfq", { method: "POST", body: JSON.stringify({ kind: "TRADER", ...body }), headers: authHeaders() });
+
+/**
+ * The Cover door's RFQ request (issue #43): a selector, not figures. The server
+ * re-reads the Loan off Aave and re-derives strike, size and cap itself -- a stale
+ * or tampered browser cannot change what is actually requested.
+ *
+ * A coverable Loan throws `ApiRefusal(501, ...)` (the sealed-bid backend is not built).
+ * An uncoverable Loan returns `{ status: "REFUSED", refusal }` as a normal 200 -- the
+ * same shape `getCoverQuote` uses, so a later surface can treat both identically.
+ * (The return type below says so -- `Promise<never>` would claim this call can only
+ * ever throw, which is exactly the half of the contract the REFUSED path is for.)
+ */
+export const requestCoverRfq = (body: {
+  address: string;
+}): Promise<{ status: "REFUSED"; refusal: CoverRefusal }> =>
+  call<{ status: "REFUSED"; refusal: CoverRefusal }>("/rfq", {
+    method: "POST",
+    body: JSON.stringify({ kind: "COVER", ...body }),
+    headers: authHeaders(),
+  });
+
+/**
+ * A Borrower's Loan, and the Cover it would need. Read-only: it requests nothing from a
+ * maker and signs nothing.
+ *
+ * A REFUSED result arrives as a normal 200 and is returned, not thrown -- being told
+ * "this Loan holds two assets and here is why that matters" is an answer, not a failure,
+ * and throwing it would push a true sentence into an error boundary.
+ */
+export const getCoverQuote = (q: {
+  address: string;
+  signal?: AbortSignal;
+}): Promise<CoverQuoteResult> =>
+  call<CoverQuoteResult>(`/cover/quote?address=${encodeURIComponent(q.address)}`, { signal: q.signal });
+
+/**
+ * The Trader's saved Risk Profile, or `null` if they have never chosen one -- not an
+ * error, same as an empty board is not an error. Token-gated like /forecast/*.
+ */
+export const getRiskProfile = (): Promise<RiskProfileName | null> =>
+  call<RiskProfileResponse>("/risk-profile", { headers: authHeaders() }).then((r) => r.profile);
+
+/** Saves the Trader's Risk Profile. Asked once; this is also how they change it later. */
+export const setRiskProfile = (profile: RiskProfileName): Promise<RiskProfileName> =>
+  call<RiskProfileResponse>("/risk-profile", {
+    method: "PUT",
+    body: JSON.stringify({ profile }),
+    headers: authHeaders(),
+  }).then((r) => r.profile as RiskProfileName);
+
+/**
+ * The ETH Suggestion for the Trader's saved Risk Profile. `profile`/`intent` come back
+ * null together when nothing has fired or nothing is saved yet -- not an error, same as
+ * `getRiskProfile` returning null. Token-gated, same as /risk-profile.
+ */
+export const getSuggestion = (): Promise<SuggestionResponse> =>
+  call<SuggestionResponse>("/suggestion", { headers: authHeaders() });
+
+/**
+ * Records what the Trader did with a Suggestion -- accepted it or dismissed it. Spends
+ * nothing and signs nothing (see apps/api/src/app.ts's POST /decisions doc comment):
+ * it's a note about their choice, not an act on their behalf. Token-gated and
+ * rate-limited on the server like the other DB-touching routes.
+ */
+export const recordDecision = (body: DecisionRequest): Promise<unknown> =>
+  call<unknown>("/decisions", {
+    method: "POST",
+    body: JSON.stringify(body),
+    headers: authHeaders(),
+  });

@@ -94,7 +94,16 @@ export function VetoScreen({
   );
 }
 
-export function EmptyDeck({ message, onRetry }: { message: string; onRetry: () => void }) {
+export function EmptyDeck({
+  message,
+  onRetry,
+  onRfq,
+}: {
+  message: string;
+  onRetry: () => void;
+  /** Issue #31 -- the same RFQ dialog the door beside the chips opens, so an empty market is a next step rather than a dead end. */
+  onRfq: () => void;
+}) {
   return (
     <div className="halt" data-testid="empty-deck">
       <h2>Nobody is quoting this right now.</h2>
@@ -106,8 +115,7 @@ export function EmptyDeck({ message, onRetry }: { message: string; onRetry: () =
         <button type="button" className="go prac" onClick={onRetry} data-testid="empty-retry">
           Look again
         </button>
-        {/* Out of scope for this work: the button states the intent, nothing is wired. */}
-        <button type="button" className="go" disabled title="Not wired up yet" data-testid="empty-rfq">
+        <button type="button" className="go" onClick={onRfq} data-testid="empty-rfq">
           Ask for one to be made
         </button>
       </div>

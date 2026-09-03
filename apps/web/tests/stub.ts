@@ -19,15 +19,38 @@ import deckDown3 from "./fixtures/deck-down-3.json" with { type: "json" };
 import deckUp1 from "./fixtures/deck-up-1.json" with { type: "json" };
 import deckEmpty from "./fixtures/deck-empty.json" with { type: "json" };
 import deckCompressed from "./fixtures/deck-compressed.json" with { type: "json" };
+import deckSolDown1 from "./fixtures/deck-sol-down-1.json" with { type: "json" };
+import deckSolDown2 from "./fixtures/deck-sol-down-2.json" with { type: "json" };
+import deckSolUp1 from "./fixtures/deck-sol-up-1.json" with { type: "json" };
+import markets from "./fixtures/markets.json" with { type: "json" };
+import depthEth from "./fixtures/depth-eth.json" with { type: "json" };
+import depthEthMarked from "./fixtures/depth-eth-marked.json" with { type: "json" };
 import session from "./fixtures/session.json" with { type: "json" };
 import positionsEmpty from "./fixtures/positions-empty.json" with { type: "json" };
 import positionsAfterPractice from "./fixtures/positions-after-practice.json" with { type: "json" };
 import proposeAgent from "./fixtures/propose-agent.json" with { type: "json" };
 import proposeByCard from "./fixtures/propose-by-card.json" with { type: "json" };
 import practiceResult from "./fixtures/practice.json" with { type: "json" };
+import fillPrepare from "./fixtures/fill-prepare.json" with { type: "json" };
+import authChallenge from "./fixtures/auth-challenge.json" with { type: "json" };
 import veto from "./fixtures/veto.json" with { type: "json" };
 import noOrder from "./fixtures/no-order.json" with { type: "json" };
 import refusal from "./fixtures/refusal.json" with { type: "json" };
+import coverHealthy from "./fixtures/cover-healthy.json" with { type: "json" };
+import coverTight from "./fixtures/cover-tight.json" with { type: "json" };
+import coverCbbtc from "./fixtures/cover-cbbtc.json" with { type: "json" };
+import coverFarStrike from "./fixtures/cover-far-strike.json" with { type: "json" };
+import coverRefusedMultiCollateral from "./fixtures/cover-refused-multi-collateral.json" with { type: "json" };
+import coverRefusedNoDebt from "./fixtures/cover-refused-no-debt.json" with { type: "json" };
+import coverRefusedAlreadyLiquidatable from "./fixtures/cover-refused-already-liquidatable.json" with { type: "json" };
+import coverRefusedUnsupportedCollateral from "./fixtures/cover-refused-unsupported-collateral.json" with { type: "json" };
+import coverRefusedNoCollateral from "./fixtures/cover-refused-no-collateral.json" with { type: "json" };
+import riskProfileUnset from "./fixtures/risk-profile-unset.json" with { type: "json" };
+import riskProfileBalanced from "./fixtures/risk-profile-balanced.json" with { type: "json" };
+import suggestionUnset from "./fixtures/suggestion-unset.json" with { type: "json" };
+import suggestionEth from "./fixtures/suggestion-eth.json" with { type: "json" };
+import suggestionNoSignal from "./fixtures/suggestion-no-signal.json" with { type: "json" };
+import decisionsAccepted from "./fixtures/decisions-accepted.json" with { type: "json" };
 
 export const API = "http://127.0.0.1:3001";
 
@@ -56,6 +79,10 @@ export const FIXTURE_NOW = Date.UTC(2026, 0, 15, 12, 0, 0);
 
 export const fixtures = {
   deckDown1,
+  deckSolDown1,
+  deckSolDown2,
+  deckSolUp1,
+  markets,
   deckUp1,
   deckCompressed,
   session,
@@ -64,12 +91,87 @@ export const fixtures = {
   veto,
   practiceResult,
   positionsAfterPractice,
+  fillPrepare,
+  authChallenge,
+  depthEth,
+  depthEthMarked,
+  riskProfileUnset,
+  riskProfileBalanced,
+  suggestionUnset,
+  suggestionEth,
+  suggestionNoSignal,
+  decisionsAccepted,
+};
+
+/**
+ * The wallet addresses that route to a specific Cover fixture, issue #44's fixture-backed
+ * replacement for the earlier hand-written placeholder. `GET /cover/quote` is keyed by
+ * `address` alone, so a Playwright test picks a scenario by which address it types into
+ * the form -- named here so a spec never has to retype a raw hex string to pick one.
+ *
+ * The four QUOTE addresses are read straight off their own fixture (each was generated
+ * against a distinct address, so there is nothing to invent); the five REFUSED fixtures
+ * carry no address in their wire shape at all (a `CoverRefusal` is just `{ code, message }`),
+ * so those five are given arbitrary, memorable addresses here -- except `noCollateral`,
+ * whose fixture message happens to name a real address, reused rather than duplicated.
+ */
+export const COVER_ADDRESSES = {
+  healthy: coverHealthy.quote.address,
+  tight: coverTight.quote.address,
+  cbbtc: coverCbbtc.quote.address,
+  farStrike: coverFarStrike.quote.address,
+  multiCollateral: "0x111111111111111111111111111111111111111a",
+  noDebt: "0x222222222222222222222222222222222222222b",
+  alreadyLiquidatable: "0x333333333333333333333333333333333333333c",
+  unsupportedCollateral: "0x444444444444444444444444444444444444444d",
+  noCollateral: "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+} as const;
+
+/**
+ * The nine Cover response bodies, keyed by the address above that selects each one.
+ * Anything else -- including `shell.spec.ts`'s own arbitrary address -- falls back to
+ * the healthy QUOTE, which is what that spec needs: a renderable quote with a real
+ * disclaimer to scroll to.
+ */
+const COVER_RESPONSES: Record<string, unknown> = {
+  [COVER_ADDRESSES.healthy]: coverHealthy,
+  [COVER_ADDRESSES.tight]: coverTight,
+  [COVER_ADDRESSES.cbbtc]: coverCbbtc,
+  [COVER_ADDRESSES.farStrike]: coverFarStrike,
+  [COVER_ADDRESSES.multiCollateral]: coverRefusedMultiCollateral,
+  [COVER_ADDRESSES.noDebt]: coverRefusedNoDebt,
+  [COVER_ADDRESSES.alreadyLiquidatable]: coverRefusedAlreadyLiquidatable,
+  [COVER_ADDRESSES.unsupportedCollateral]: coverRefusedUnsupportedCollateral,
+  [COVER_ADDRESSES.noCollateral]: coverRefusedNoCollateral,
 };
 
 /** Longest shot first, so index 0 is the leftmost Card in the row. */
 export const cards = deckDown1.cards;
 
-export type Scenario = "normal" | "veto" | "no-order" | "empty" | "compressed" | "over-budget";
+/**
+ * "deep-budget" (issue #30): a Risk Budget generous enough that every fixture Card's
+ * $500 Maker Depth is the smaller of the two, so the confirmation's size cap binds on
+ * DEPTH instead of budget -- the opposite branch from every other scenario here, where
+ * the $5 default budget is always the tighter ceiling.
+ */
+export type Scenario =
+  | "normal"
+  | "veto"
+  | "no-order"
+  | "empty"
+  | "compressed"
+  | "over-budget"
+  | "settle-fails"
+  | "settle-pending-once"
+  | "depth-marked"
+  | "deep-budget"
+  /**
+   * A profile that gets saved, but whose Suggestion always comes back with a
+   * null `intent` -- the "nothing to suggest" case (SuggestionCard.tsx's
+   * "no-signal" status), distinct from the default scenario where a saved
+   * profile always fires.
+   */
+  | "no-signal";
 
 export interface Traffic {
   /** Every request the page made to the API, in order. */
@@ -85,6 +187,17 @@ export interface Traffic {
    * with. The surface has to notice on its next poll and say so BEFORE they confirm.
    */
   moveTheQuote: () => void;
+  /**
+   * Issue #32 -- hold the NEXT response to `pathname` open until the test releases it.
+   *
+   * The loading states this ticket is about only exist for the width of one network
+   * round trip, which a local stub answers instantly -- too fast for Playwright to ever
+   * observe. This makes that window as wide as a test needs: the held request sits
+   * unanswered until the returned function is called, so a test can assert on the
+   * loading affordance in between. Only the next matching request is held; the one
+   * after it answers normally, the same way a real slow request eventually completes.
+   */
+  hold: (pathname: string) => () => void;
 }
 
 const json = (route: Route, body: unknown, traffic: Traffic, status = 200) => {
@@ -95,9 +208,21 @@ const json = (route: Route, body: unknown, traffic: Traffic, status = 200) => {
 
 const authorised = (request: Request) => request.headers()["authorization"] === `Bearer ${TEST_API_TOKEN}`;
 
+/**
+ * The Deck for whatever was asked for.
+ *
+ * Keyed on `asset` first, because the surface asking for the wrong Underlying and being
+ * handed an ETH Deck anyway is precisely the failure the required parameter exists to
+ * prevent -- a stub that ignored it would let that bug through.
+ */
 const deckFor = (url: URL) => {
+  const asset = url.searchParams.get("asset");
   const direction = url.searchParams.get("direction");
   const days = url.searchParams.get("horizonDays");
+  if (asset === "SOL") {
+    if (direction === "UP") return deckSolUp1;
+    return days === "2" ? deckSolDown2 : deckSolDown1;
+  }
   if (direction === "UP") return deckUp1;
   if (days === "2") return deckDown2;
   if (days === "3") return deckDown3;
@@ -116,6 +241,107 @@ const reprice = <T extends { cards: Array<{ premiumUsdc: { value: number; displa
 });
 
 /**
+ * A Risk Budget generous enough that Maker Depth binds the confirmation's size cap
+ * instead of the budget (issue #30, the "deep-budget" scenario). Every other scenario
+ * in this stub leaves the $5 default budget as the tighter of the two -- this is the
+ * one place the OTHER branch of "whichever binds first" is reachable.
+ */
+const deepBudget = (base: typeof session): typeof session => ({
+  ...base,
+  riskBudgetUsdc: 1000,
+  remainingUsdc: 1000,
+  figures: {
+    ...base.figures,
+    riskBudgetUsdc: { value: 1000, display: "$1,000.00" },
+    remainingUsdc: { value: 1000, display: "$1,000.00" },
+  },
+});
+
+/**
+ * Money, formatted the way `apps/api/src/format.ts` formats it -- two decimal places,
+ * a thousands separator. A duplicate on purpose: this is test infrastructure standing
+ * in for what the REAL server derives on a resize (issue #30's `priceOrder`), and
+ * `no-arithmetic.test.ts` does not reach `tests/`, so it may do this without being the
+ * violation it would be inside `apps/web/components/` or `apps/web/lib/`.
+ */
+const money = (v: number): string => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/**
+ * What the real POST /rfq answers: always 501, always echoing back the request. This
+ * mirrors `rfqRefusalMessage` in `apps/api/src/rfq.ts` -- test infrastructure standing
+ * in for the server, not the browser originating a figure. ETH spot is fixed at
+ * `deckDown1.spotUsd.value` ($2,445.49) across every fixture Deck.
+ */
+function rfqRefusal(body: { underlying: string; direction: "UP" | "DOWN"; strikeOffsetPct: number; horizonDays: number; sizeUsdc: number }) {
+  const spot = deckDown1.spotUsd.value;
+  const strike = money(spot * (1 + body.strikeOffsetPct / 100));
+  const directionWord = body.direction === "DOWN" ? "below" : "above";
+  return {
+    error:
+      "The sealed-bid RFQ backend is not built yet. Nothing was sent to a maker, nothing was signed, " +
+      "and no USDC moved. " +
+      `You asked for: ${body.underlying} ${directionWord} ${strike}, ${body.horizonDays} days, at most ${money(body.sizeUsdc)}.`,
+  };
+}
+
+/**
+ * What the real POST /rfq answers for the COVER member (issue #43/#46), keyed by the
+ * same addresses `GET /cover/quote` uses. A coverable Loan gets the honest 501,
+ * echoing figures re-derived from that Loan's OWN fixture -- never from the request
+ * body, which for a COVER request carries only an address to begin with. An
+ * uncoverable Loan gets a normal 200 carrying that Loan's own refusal, the same
+ * `CoverRefusal` shape `GET /cover/quote` already answers with.
+ */
+function coverRfqAnswer(address: string): { status: 200 | 501; body: unknown } {
+  const known = COVER_RESPONSES[address] as { refusal?: unknown; quote?: (typeof coverHealthy)["quote"] } | undefined;
+  if (known && known.refusal) {
+    return { status: 200, body: { status: "REFUSED", refusal: known.refusal } };
+  }
+  const quote = known?.quote ?? coverHealthy.quote;
+  return {
+    status: 501,
+    body: {
+      error:
+        "The sealed-bid RFQ backend is not built yet. Nothing was sent to a maker, nothing was signed, " +
+        "and no USDC moved. " +
+        `You asked to cover this Loan: a ${quote.underlying} put struck at ${quote.cover.targetStrike.display}, ` +
+        `${quote.cover.tenorDays.value} days, at most ${quote.cover.premiumCapUsdc.display}.`,
+    },
+  };
+}
+
+/**
+ * What the real `/propose` does when a size changes: re-derive premium, Max Loss and
+ * the contract count for the SAME Order at the new stake. The fixture book quotes a
+ * fixed price per contract, so scaling the base answer by `sizeUsdc / baseSizeUsdc`
+ * reproduces exactly what `priceOrder` would answer -- this is standing in for the
+ * server, not the browser originating a figure.
+ */
+function resizeProposal(answer: any, sizeUsdc: number): any {
+  if (!answer || answer.kind !== "PROPOSAL") return answer;
+  const baseSize = answer.proposal.intent.sizeUsdc;
+  if (sizeUsdc === baseSize) return answer;
+  const scale = sizeUsdc / baseSize;
+  const premium = Number((answer.proposal.premiumUsdc * scale).toFixed(6));
+  const contractsValue = Number((answer.proposal.figures.contracts.value * scale).toFixed(6));
+  return {
+    ...answer,
+    proposal: {
+      ...answer.proposal,
+      intent: { ...answer.proposal.intent, sizeUsdc },
+      premiumUsdc: premium,
+      maxLossUsdc: premium,
+      figures: {
+        ...answer.proposal.figures,
+        premiumUsdc: { value: premium, display: money(premium) },
+        maxLossUsdc: { value: premium, display: money(premium) },
+        contracts: { value: contractsValue, display: contractsValue.toFixed(6) },
+      },
+    },
+  };
+}
+
+/**
  * Install the stub.
  *
  * Returns the traffic log. Nothing is faked beyond the six routes the surface uses --
@@ -129,6 +355,40 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
   // Practice Run exists" is about the surface reacting, not about a canned response.
   let practised = false;
   let moved = false;
+  // What /fill/prepare reserved and /fill/settle has not yet released or kept -- so a
+  // journey that checks the Risk Budget after a failed fill sees the reservation
+  // actually go away, rather than a number that never moved in the first place.
+  let reservedUsdc = 0;
+  // For the "settle-pending-once" scenario: the first settle attempt with a txHash
+  // reports "not visible yet"; every one after succeeds.
+  let settledOnce = false;
+
+  const sessionSnapshot = () => {
+    const spent = session.spentUsdc + reservedUsdc;
+    const remaining = session.remainingUsdc - reservedUsdc;
+    return {
+      ...session,
+      spentUsdc: spent,
+      remainingUsdc: remaining,
+      figures: {
+        ...session.figures,
+        spentUsdc: { value: spent, display: `$${spent.toFixed(2)}` },
+        remainingUsdc: { value: remaining, display: `$${remaining.toFixed(2)}` },
+      },
+    };
+  };
+
+  // Stateful within this stub instance, the same way `practised` is: a PUT stores
+  // the choice, and every GET after that reads it back. "Pick a profile -> it
+  // persists -> a Suggestion follows" is the actual journey; a canned GET would
+  // only prove a fixture can be served.
+  let savedProfile: "conservative" | "balanced" | "aggressive" | null = null;
+
+  // Issue #32's `hold`/`release` pair -- see `Traffic.hold` above for why this exists.
+  // Keyed by pathname; only ONE outstanding hold per path at a time, which is all any
+  // test here needs.
+  const gates = new Map<string, Promise<void>>();
+  const releasers = new Map<string, () => void>();
 
   const traffic: Traffic = {
     all: [],
@@ -137,11 +397,28 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
     moveTheQuote: () => {
       moved = true;
     },
+    hold: (pathname: string) => {
+      const promise = new Promise<void>((resolve) => releasers.set(pathname, resolve));
+      gates.set(pathname, promise);
+      return () => {
+        releasers.get(pathname)?.();
+        gates.delete(pathname);
+        releasers.delete(pathname);
+      };
+    },
   };
 
   await page.route(`${API}/**`, async (route, request) => {
     traffic.all.push(request);
     const url = new URL(request.url());
+
+    // Block here, before the response is decided, so the request is genuinely in
+    // flight from the browser's point of view for as long as the test wants it to be.
+    const gate = gates.get(url.pathname);
+    if (gate) {
+      gates.delete(url.pathname);
+      await gate;
+    }
 
     switch (url.pathname) {
       case "/deck": {
@@ -150,8 +427,17 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         return json(route, moved ? reprice(deckFor(url)) : deckFor(url), traffic);
       }
 
+      case "/markets":
+        return json(route, markets, traffic);
+
+      case "/depth":
+        // The marked variant carries a held Position, a strike dimmed against the
+        // default horizon, and a nonzero excluded count -- three things the real
+        // fixture book does not happen to have, and `depth.spec.ts` asserts on.
+        return json(route, scenario === "depth-marked" ? depthEthMarked : depthEth, traffic);
+
       case "/session":
-        return json(route, session, traffic);
+        return json(route, scenario === "deep-budget" ? deepBudget(sessionSnapshot()) : sessionSnapshot(), traffic);
 
       case "/positions":
         return json(route, practised ? positionsAfterPractice : positionsEmpty, traffic);
@@ -164,10 +450,12 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         if (scenario === "empty" || scenario === "no-order") return json(route, noOrder, traffic);
         if (scenario === "over-budget") return json(route, refusal.body, traffic, refusal.status);
 
-        const body = request.postDataJSON() as { cardRef?: string };
+        const body = request.postDataJSON() as { cardRef?: string; sizeUsdc?: number };
         const answer = body.cardRef ? fixtures.proposeByCard[body.cardRef] : proposeAgent;
         if (!answer) return route.fulfill({ status: 410, contentType: "application/json", body: '{"error":"gone"}' });
-        return json(route, answer, traffic);
+        // Issue #30: a resize is a fresh round trip against the same `cardRef` at a
+        // different `sizeUsdc`. Standing in for what `priceOrder` would re-derive.
+        return json(route, resizeProposal(answer, body.sizeUsdc ?? answer.proposal.intent.sizeUsdc), traffic);
       }
 
       case "/practice":
@@ -175,27 +463,122 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         return json(route, practiceResult, traffic);
 
       /*
+       * Issue #44: a real Cover fixture, keyed by the address the form submitted.
+       *
+       * Every one of these nine bodies came out of the shipped `GET /cover/quote` --
+       * real `liquidation.ts` arithmetic, real `format.ts` strings -- with only the
+       * chain read stubbed (see `apps/api/src/test/stub-loan.ts`). An address this
+       * suite does not specifically recognise falls back to the healthy quote, which
+       * is what `shell.spec.ts` needs: a renderable QUOTE with a real disclaimer to
+       * scroll to.
+       */
+      case "/cover/quote": {
+        const requested = url.searchParams.get("address") ?? "";
+        const body = COVER_RESPONSES[requested] ?? coverHealthy;
+        return json(route, body, traffic);
+      }
+
+      /*
+       * The Risk Profile / Suggestion / Decision routes. Gated on the bearer token,
+       * same as the real routes -- a real `/suggestion` call reaches a paid-for
+       * exchange lookup through the agents service, same reasoning as `/propose`.
+       * The forgeable owner header is gone (re-keyed to the wallet address a
+       * session proved under ADR-0012); the auth journey stubs cover that gate.
+       */
+      case "/risk-profile": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+
+        if (request.method() === "PUT") {
+          const body = request.postDataJSON() as { profile?: string };
+          if (body.profile !== "conservative" && body.profile !== "balanced" && body.profile !== "aggressive") {
+            return json(route, { error: "profile must be one of conservative, balanced, aggressive" }, traffic, 400);
+          }
+          savedProfile = body.profile;
+          return json(route, { profile: savedProfile }, traffic);
+        }
+        return json(route, savedProfile ? { profile: savedProfile } : riskProfileUnset, traffic);
+      }
+
+      case "/suggestion": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+
+        // No saved profile -- the real "No saved profile" branch, never a fetch to
+        // Python. Once one is saved: the no-signal fixture for the "no-signal"
+        // scenario, the fired Suggestion for every other scenario.
+        if (!savedProfile) return json(route, suggestionUnset, traffic);
+        const base = scenario === "no-signal" ? suggestionNoSignal : suggestionEth;
+        return json(route, { ...base, profile: savedProfile }, traffic);
+      }
+
+      case "/decisions": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+
+        const body = request.postDataJSON() as { decision?: "ACCEPTED" | "DISMISSED" };
+        return json(route, { ...decisionsAccepted, decision: body.decision ?? decisionsAccepted.decision }, traffic);
+      }
+
+      /**
+       * Issue #31/#43/#46 -- the RFQ union. TRADER always 501, echoing the request.
+       * COVER is a selector (an address, and nothing else): a coverable Loan still
+       * gets the honest 501, but an uncoverable one gets that Loan's own refusal as a
+       * normal 200 -- see `coverRfqAnswer` above.
+       */
+      case "/rfq": {
+        const body = request.postDataJSON() as
+          | { kind: "TRADER"; underlying: string; direction: "UP" | "DOWN"; strikeOffsetPct: number; horizonDays: number; sizeUsdc: number }
+          | { kind: "COVER"; address: string };
+
+        if (body.kind === "COVER") {
+          const answer = coverRfqAnswer(body.address);
+          return json(route, answer.body, traffic, answer.status);
+        }
+        return json(route, rfqRefusal(body), traffic, 501);
+      }
+
+      /*
        * Deliberately reachable, and deliberately gated.
        *
-       * Reachable because the tests that matter assert `/fill` was never REQUESTED, and
-       * a stub that made the request fail would let a bug where the surface calls it and
-       * swallows the error pass unnoticed.
+       * Reachable because the tests that matter assert `/fill/prepare` was never
+       * REQUESTED, and a stub that made the request fail would let a bug where the
+       * surface calls it and swallows the error pass unnoticed.
        *
        * Gated because the real route is: `requireToken` in `app.ts` answers 401 without
        * the bearer token. A stub that accepted anything would have let the surface ship
        * with no Authorization header at all -- which is exactly the bug that was here.
        */
-      case "/fill": {
+      case "/auth/challenge": {
         if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
-        return json(
-          route,
-          {
-            txHash: "0xTESTTRANSACTION",
-            optionAddress: "0xTESTOPTION",
-            explorerUrl: "https://basescan.org/tx/0xTESTTRANSACTION",
-          },
-          traffic
-        );
+        return json(route, authChallenge, traffic);
+      }
+
+      case "/auth/verify": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        return json(route, { walletAddress: FAKE_WALLET_ADDRESS }, traffic);
+      }
+
+      case "/fill/prepare": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        reservedUsdc = 2; // the stake -- released or kept once /fill/settle reports back
+        return json(route, fillPrepare, traffic);
+      }
+
+      case "/fill/settle": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        const { txHash } = request.postDataJSON() as { txHash?: string };
+        // Simulates the settle call itself failing (a dropped connection, a transient
+        // 502) AFTER the wallet has already broadcast and mined the fill -- the money
+        // has moved regardless of whether this report of it reaches the backend.
+        if (scenario === "settle-fails" && txHash) {
+          return json(route, { error: "Could not update the Risk Budget." }, traffic, 502);
+        }
+        // Simulates the chain briefly not showing the transaction yet -- the second
+        // attempt (and every one after) succeeds.
+        if (scenario === "settle-pending-once" && txHash && !settledOnce) {
+          settledOnce = true;
+          return json(route, { error: "not visible yet" }, traffic, 425);
+        }
+        if (!txHash) reservedUsdc = 0; // released; a confirmed fill instead keeps it spent
+        return json(route, { remainingUsdc: sessionSnapshot().remainingUsdc, confirmed: Boolean(txHash) }, traffic);
       }
 
       default:
@@ -207,11 +590,16 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
 }
 
 /**
- * Anything the browser must never be handed.
+ * Anything the browser must never be handed OUTSIDE of `/fill/prepare`'s own response
+ * (ADR-0011: that route alone returns real transaction calldata, encoding the maker
+ * address of the order it names, because the Trader's own wallet has to see what it is
+ * signing -- there is no way around that once signing happens client-side). Every
+ * OTHER response is still held to the original, absolute guarantee.
  *
  * The fixtures were generated by the real API, so this is a genuine check on the
  * contract and not a check on the stub: a maker address or signature leaking into a
- * response would arrive here the same way it would arrive in production.
+ * response other than /fill/prepare's would arrive here the same way it would in
+ * production.
  */
 export const FORBIDDEN = [
   // The fixture book's own markers.
@@ -226,3 +614,120 @@ export const FORBIDDEN = [
   /"signature"/i,
   /orderId/i,
 ];
+
+export const FAKE_WALLET_ADDRESS = "0x2222222222222222222222222222222222222222";
+
+/**
+ * A fake EIP-1193 provider, injected before the page's own scripts run -- the same
+ * seam a real extension wallet occupies. Just capable enough to drive the app's
+ * `wallet.ts` through connect + two sequential `sendTransaction` calls (approve, then
+ * fill), which is everything the real-fill journeys need.
+ *
+ * `page.addInitScript` runs in the page's own context, so the function body below is
+ * serialised and cannot close over anything from this module -- everything the fake
+ * needs is passed in as its single argument.
+ */
+export async function installFakeWallet(
+  page: Page,
+  opts: { address?: string; fail?: boolean; preAuthorised?: boolean } = {}
+): Promise<void> {
+  const address = opts.address ?? FAKE_WALLET_ADDRESS;
+  await page.addInitScript(
+    (config: { address: string; fail: boolean; preAuthorised: boolean }) => {
+      let authorised = config.preAuthorised;
+      let txCount = 0;
+      let lastHash = "";
+      const BLOCK_HASH = "0x" + "11".repeat(32);
+      const TO_ADDRESS = "0x0000000000000000000000000000000000000b00";
+      (window as any).ethereum = {
+        isMetaMask: true,
+        request: async ({ method }: { method: string }) => {
+          switch (method) {
+            case "eth_accounts":
+              return authorised ? [config.address] : [];
+            case "eth_requestAccounts":
+              authorised = true;
+              return [config.address];
+            case "eth_chainId":
+              return "0x2105"; // 8453
+            case "net_version":
+              return "8453";
+            case "personal_sign":
+              return `0xFAKESIG${config.address.slice(2, 10)}`;
+            // Everything below is machinery ethers' BrowserProvider calls while
+            // populating a transaction (gas, nonce, fee data) before ever asking the
+            // "wallet" to send it -- not behavior this suite is testing, so it gets
+            // plausible fixed answers rather than a real RPC backend.
+            case "eth_blockNumber":
+              return "0x1";
+            case "eth_gasPrice":
+              return "0x3b9aca00";
+            case "eth_estimateGas":
+              return "0x5208";
+            case "eth_getTransactionCount":
+              return "0x0";
+            case "eth_feeHistory":
+              return {
+                baseFeePerGas: ["0x3b9aca00", "0x3b9aca00"],
+                gasUsedRatio: [0.5],
+                oldestBlock: "0x1",
+                reward: [["0x3b9aca00"]],
+              };
+            case "eth_getBlockByNumber":
+              return { number: "0x1", hash: BLOCK_HASH, baseFeePerGas: "0x3b9aca00" };
+            case "eth_sendTransaction": {
+              txCount += 1;
+              lastHash = `0x${"f".repeat(63)}${txCount}`;
+              return lastHash;
+            }
+            // ethers wraps the hash `eth_sendTransaction` returns into a full
+            // TransactionResponse by looking it up here -- a real node has it the
+            // instant it is submitted, so this always answers rather than 404ing, which
+            // is what a real node does for the first few hundred ms after broadcast and
+            // which sent ethers into a real (frozen-clock-proof, still endless) retry
+            // loop here with no answer at all.
+            case "eth_getTransactionByHash":
+              return {
+                hash: lastHash,
+                blockHash: BLOCK_HASH,
+                blockNumber: "0x1",
+                transactionIndex: "0x0",
+                from: config.address,
+                to: TO_ADDRESS,
+                gas: "0x5208",
+                gasPrice: "0x3b9aca00",
+                value: "0x0",
+                nonce: "0x0",
+                input: "0x12345678",
+                type: "0x0",
+                chainId: "0x2105",
+                v: "0x1b",
+                r: "0x" + "11".repeat(32),
+                s: "0x" + "22".repeat(32),
+              };
+            case "eth_getTransactionReceipt":
+              return {
+                transactionHash: lastHash,
+                transactionIndex: "0x0",
+                blockHash: BLOCK_HASH,
+                blockNumber: "0x1",
+                from: config.address,
+                to: TO_ADDRESS,
+                contractAddress: null,
+                cumulativeGasUsed: "0x5208",
+                gasUsed: "0x5208",
+                effectiveGasPrice: "0x3b9aca00",
+                logsBloom: "0x" + "00".repeat(256),
+                logs: [],
+                status: config.fail ? "0x0" : "0x1",
+                type: "0x0",
+              };
+            default:
+              throw new Error(`fake wallet: unhandled method ${method}`);
+          }
+        },
+      };
+    },
+    { address, fail: opts.fail ?? false, preAuthorised: opts.preAuthorised ?? false }
+  );
+}

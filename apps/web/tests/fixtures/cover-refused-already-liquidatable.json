@@ -1,0 +1,7 @@
+{
+  "status": "REFUSED",
+  "refusal": {
+    "code": "ALREADY_LIQUIDATABLE",
+    "message": "Your health factor is 0.947, below 1 -- this Loan can be liquidated right now. A Cover bought at this point would be struck above the current price, so its premium is mostly money you would be handed straight back. Repay or add collateral instead."
+  }
+}

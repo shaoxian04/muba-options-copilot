@@ -6,10 +6,18 @@
   way:
 
   - The Implied Chance ramp (--r0..--r5) is a SEQUENTIAL SINGLE HUE. Red/green for gain
-    and loss was tested and rejected -- the pair separates by only dE 3.1 under
+    and loss was tested and rejected -- the pair separates by only dE 5.5 under
     deuteranopia against a threshold of 8. `tests/support/ramp.test.ts` holds this ramp to
-    same bar under both deuteranopia and protanopia, and to a contrast bar against the
+    the same bar under both deuteranopia and protanopia, and to a contrast bar against the
     text that sits on it, so the palette cannot be edited back into being unreadable.
+
+  - Call and put are BLUE and ORANGE (--call, --put), for the same reason and by the same
+    measurement. The rejected red/green pair separates by dE 5.5 under deuteranopia;
+    blue/orange separates by 67.0 under deuteranopia and 59.5 under protanopia, the
+    strongest of six candidate pairs measured with this repo's own colour module. Both
+    clear WCAG AA against the ground they are painted on, in both themes -- which is what
+    forced the light theme to a deeper pair than the dark one. `ramp.test.ts` reads these
+    tokens out of this file, so editing the palette runs the measurement.
 
   - Every colour is defined on bare `:root` first and only overridden inside the dark
     blocks, so a token can never exist in one theme and not the other.
@@ -25,10 +33,32 @@
   --line-2: #e6ebf0;
   --ink: #111820;
   --ink-2: #4c5a69;
-  --ink-3: #7c8b9a;
-  --hue: #2a78d6;
+  /*
+    Both darkened until they clear 4.5:1 against the page ground, the same bar --good
+    and friends below were held to. The originals measured 3.19 and 4.42, and axe
+    flagged every muted line and the primary button the first time a browser test
+    actually opened the Insights tab.
+  */
+  --ink-3: #5e6c79;
+  --hue: #2470cc;
+  /*
+    Text painted ON --hue. This flips per theme instead of --hue itself, because in
+    dark --hue and --call are deliberately the same blue -- darkening it to clear
+    4.5:1 under white text would drag call/put along with it. White measures 3.64 on
+    dark's blue and fails; near-black measures 5.17 and passes.
+  */
+  --hue-ink: #ffffff;
   --hue-soft: #dceafa;
   --hue-deep: #1c5cab;
+  /*
+    Call and put. Deeper than the dark theme's pair because they have to clear 4.5:1
+    against a pale ground as well as separate from each other: the dark theme's #3987e5
+    measures 3.06 here and would be a label a Trader with low vision cannot read.
+  */
+  --call: #1a5fb4;
+  --put: #9a5000;
+  --call-soft: #dbe7f7;
+  --put-soft: #f8e7d3;
   --r0: #e9edfd;
   --r1: #bdc9f0;
   --r2: #93a6da;
@@ -64,8 +94,13 @@
     --ink-2: #a2b1bf;
     --ink-3: #8497a6;
     --hue: #3987e5;
+    --hue-ink: #0c1218;
     --hue-soft: #14304f;
     --hue-deep: #86b6ef;
+    --call: #3987e5;
+    --put: #f0883e;
+    --call-soft: #12283f;
+    --put-soft: #3a2313;
     --r0: #cfd2d9;
     --r1: #a7b1c6;
     --r2: #8391ad;
@@ -95,8 +130,13 @@
   --ink-2: #a2b1bf;
   --ink-3: #8497a6;
   --hue: #3987e5;
+  --hue-ink: #0c1218;
   --hue-soft: #14304f;
   --hue-deep: #86b6ef;
+  --call: #3987e5;
+  --put: #f0883e;
+  --call-soft: #12283f;
+  --put-soft: #3a2313;
   --r0: #cfd2d9;
   --r1: #a7b1c6;
   --r2: #8391ad;
@@ -159,6 +199,11 @@ body {
   font-size: 14px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
+  /* Shell layout: header sits fixed-height at the top; the content area below it fills
+     the rest. `overflow: hidden` on the body is deliberately kept so that only
+     individual routes decide whether they scroll — `body` never does. */
+  display: flex;
+  flex-direction: column;
 }
 button {
   font: inherit;
@@ -180,6 +225,16 @@ button[disabled] {
 .n {
   font-family: "IBM Plex Mono", ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
+}
+/*
+  Figures in a column, lining up. `tabular-nums` is the load-bearing half: without it a
+  rail of six prices jitters left and right as the last digit changes, and a Trader
+  reads movement into a market that has not moved.
+*/
+.num {
+  font-family: "Martian Mono", "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
 }
 .hero {
   font-family: "Martian Mono", "IBM Plex Mono", monospace;
@@ -206,10 +261,90 @@ button[disabled] {
   border: 0;
 }
 
+/* ================= application shell ================= */
+/*
+  `.shell-header` is fixed-height and never scrolls. It sits at the top of the flex
+  column on `body`, and `.viewport` fills the remaining space below it.
+
+  `.viewport` clips itself (`overflow: hidden`) so that only a route's OWN content
+  decides whether it scrolls. `min-height: 0` is the load-bearing fix for a classic
+  flexbox trap: without it a flex child never shrinks below its content's natural height,
+  so `overflow: hidden` does nothing and the page scrolls instead of the inner pane.
+*/
+.shell-header {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 20px;
+  height: 46px;
+  flex: 0 0 auto;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.shell-header .brand {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-size: 13px;
+}
+.shell-header nav {
+  display: flex;
+  align-self: stretch;
+  align-items: center;
+  gap: 2px;
+  /*
+    Vertical padding is 0 so the nav's interior height matches 44px (header 46px minus
+    1px border top and bottom), which is exactly what the links need for a tap target.
+    The pill background and border-radius supply the visual grouping without adding
+    extra height.
+  */
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--well);
+  border: 1px solid var(--line);
+}
+.shell-header nav a {
+  /*
+    44px minimum height satisfies both WCAG touch target guidance and the repo's own
+    `deck.spec.ts` tap-target check, which scans every `a[href]` on the page.
+    `display: flex; align-items: center` centres the label inside that touch area.
+    Horizontal padding preserves the pill's proportions without affecting the height.
+  */
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  text-decoration: none;
+  font-weight: 500;
+  transition: background 0.16s, color 0.16s;
+}
+.shell-header nav a[aria-current="page"] {
+  background: var(--ink);
+  color: var(--ground);
+}
+
+.viewport {
+  /* Fills the body flex column below the header. `min-height: 0` is critical — without
+     it the element refuses to shrink below its content's natural height inside the flex
+     column, and `overflow: hidden` here does nothing (the body scrolls instead of the
+     trading surface's inner panes). */
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
 .app {
   display: grid;
   grid-template-columns: 344px minmax(0, 1fr);
-  height: 100vh;
+  /* Fill `.viewport` rather than the full viewport height. `.viewport` is already sized
+     to be exactly "viewport height minus the header" via flexbox, so `.app` no longer
+     needs to know the absolute viewport height. Everything inside `.app` — its grid
+     tracks, its overflow panes — is unchanged. */
+  height: 100%;
 }
 
 /* ================= left: language ================= */
@@ -297,6 +432,90 @@ button[disabled] {
 }
 
 /* ================= right: money ================= */
+/* ================= the ticker rail ================= */
+/*
+  Every market that is quoting, across the top. Lifted close to verbatim from
+  `prototype-deck-v2.html` variant E (`.rail-top`, `.trow`), which is the settled design.
+
+  The split bar is the only thing on this surface that carries information as colour and
+  nothing else, which is why `tests/support/ramp.test.ts` holds --call and --put to the
+  same dE 8 bar red/green was held to and failed. Each row also carries the same split as
+  a sentence in `.sr`, so removing colour entirely loses nothing.
+*/
+.rail-top {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--well);
+  /*
+    The rail scrolls INSIDE itself. Six rows at their minimum width are wider than a
+    phone, and without `min-width: 0` a flex item sizes to its content and pushes the
+    whole page sideways -- which `deck.spec.ts` measures and refuses.
+  */
+  overflow-x: auto;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+.trow {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 11px;
+  padding: 13px 20px 11px;
+  /*
+    So the row's `.sr` sentence is contained by it.
+    `.sr` is `position: absolute`, and absolute positioning resolves against the nearest
+    POSITIONED ancestor -- with none, it escapes the rail's `overflow-x` clip entirely
+    and drags the page's scrollWidth out to the far end of the rail. The phone viewport
+    then scrolls sideways, which `deck.spec.ts` measures and refuses.
+  */
+  position: relative;
+  border: 0;
+  border-right: 1px solid var(--line-2);
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.16s, border-color 0.16s;
+  min-width: 168px;
+}
+.trow:hover {
+  background: var(--surface);
+}
+.trow[aria-pressed="true"] {
+  background: var(--surface);
+  border-bottom-color: var(--ink);
+}
+.trow .mk {
+  grid-row: 1 / 3;
+  align-self: center;
+}
+.trow b {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  line-height: 1.15;
+}
+.trow > span.num {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.15;
+}
+.trow .sp {
+  grid-column: 1 / -1;
+  height: 3px;
+  border-radius: 2px;
+  display: flex;
+  overflow: hidden;
+  background: var(--line);
+  margin-top: 6px;
+}
+.trow .sp i {
+  display: block;
+  height: 100%;
+}
+
 .rig {
   display: flex;
   flex-direction: column;
@@ -348,6 +567,60 @@ button[disabled] {
   color: var(--hue-deep);
   font-weight: 500;
 }
+/*
+  Direction and expiry, one row. Variant E's `.chips`.
+
+  The separator is what stops the two groups reading as one set of six equivalent
+  buttons: a direction and an expiry are different questions, and answering the second
+  before the first makes no sense.
+*/
+.chips {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.chips .sep {
+  width: 1px;
+  align-self: stretch;
+  min-height: 24px;
+  background: var(--line);
+}
+
+/*
+  Issue #31 -- the door that names your own strike, pushed to the end of the chips
+  row with `margin-left: auto`. Dashed rather than filled and never a solid pill, so
+  it reads as "ask for something" and not as one more chip to press -- deliberately
+  distinct from both the direction chips and a Card.
+*/
+.chips .rfqbtn {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 13px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  transition: 0.12s;
+  white-space: nowrap;
+}
+.chips .rfqbtn:hover {
+  border-color: var(--warn);
+  color: var(--ink);
+  background: var(--surface);
+}
+.chips .rfqbtn i {
+  font-style: normal;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--warn);
+}
+
 .exp {
   display: flex;
   gap: 2px;
@@ -373,6 +646,240 @@ button[disabled] {
   background: var(--surface);
   color: var(--ink);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+/*
+  An expiry nobody quotes: visibly dead, and still there.
+  Struck through as well as dimmed, so "unavailable" does not rest on colour alone --
+  and `disabled` already announces it to a screen reader. Hiding it instead would be
+  hiding the shape of the book, which is information: the four cash-settled Underlyings
+  quote a short grid, and no Underlying quotes a put beyond three days.
+*/
+.exp button.dead {
+  color: var(--ink-3);
+  text-decoration: line-through;
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+.exp button.dead:hover {
+  background: none;
+}
+
+/*
+  Issue #28 -- the statistics strip and the Maker Depth chart, between the tape and the
+  Deck. Lifted close to verbatim from `prototype-deck-v2.html` variant E (`.statbar`,
+  `.chartwrap`, `.dtip`), the settled design.
+
+  Everything under `.depth` is scoped so it cannot collide with anything the rest of the
+  surface already uses -- `.axis`, `.bar` and `.tick` are common enough names that an
+  unscoped rule here would be a landmine for whoever styles the next chart.
+*/
+.depth {
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+  /*
+    So the `<ul class="sr">` of strikes -- `position: absolute` -- is contained here
+    rather than escaping to the nearest positioned ancestor and dragging the page's
+    scrollWidth sideways, exactly the failure mode `.trow` documents for the rail.
+  */
+  position: relative;
+}
+.depth .statbar {
+  display: flex;
+  gap: 0;
+  /*
+    Wraps rather than scrolling. A scrollable region with no focusable content of its
+    own fails axe-core's scrollable-region-focusable check on a phone -- `.rail-top`
+    avoids it because its cells are buttons a keyboard can already reach; these seven
+    cells are plain text, so wrapping (as `.chips` already does) sidesteps the failure
+    instead of adding a tabIndex to a container with nothing to interact with.
+  */
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line-2);
+  background: var(--surface);
+}
+.depth .st {
+  padding: 10px 18px;
+  border-right: 1px solid var(--line-2);
+  min-width: 108px;
+  flex: none;
+}
+.depth .st small {
+  display: block;
+  font-size: 9.5px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  /*
+    `--ink-2`, not `--ink-3`: at 9.5px, `--ink-3` clears WCAG AA everywhere else on
+    this surface only because it is never alone at this size on a plain background --
+    axe-core measured it at 3.49:1 here, against the required 4.5:1.
+  */
+  color: var(--ink-2);
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+.depth .st b {
+  font-family: "Martian Mono", "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+/* Call/put on the strip, the same pair `tests/support/ramp.test.ts` holds to a dE 8 bar. */
+.depth .st b.up {
+  color: var(--call);
+}
+.depth .st b.dn {
+  color: var(--put);
+}
+
+.depth .chartwrap {
+  position: relative;
+  padding: 12px 18px 4px;
+  background: var(--surface);
+}
+.depth .dchart-hit {
+  display: block;
+  cursor: crosshair;
+  touch-action: none;
+  border-radius: 8px;
+}
+.depth .dchart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.depth .axis {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.depth .gridline {
+  stroke: var(--line-2);
+  stroke-width: 1;
+}
+.depth .tick {
+  fill: var(--ink-2);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9.5px;
+}
+.depth .axlbl {
+  fill: var(--ink-2);
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+}
+.depth .axttl {
+  fill: var(--ink-2);
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+}
+.depth .outside {
+  fill: var(--ink-2);
+  font-size: 10.5px;
+  font-family: "IBM Plex Sans", sans-serif;
+}
+/*
+  Call/put bars. Position carries the meaning -- above the axis is calls, below is puts
+  -- so the colour underneath is reinforcement rather than the only signal, which is
+  what keeps this legible under deuteranopia and protanopia (issue #28's own bar).
+*/
+.depth .bar {
+  transition: opacity 0.15s, height 0.3s ease, y 0.3s ease;
+}
+.depth .bar.dim {
+  opacity: 0.32;
+}
+.depth .dbar.hovered .bar {
+  opacity: 1;
+}
+.depth .cum {
+  fill: none;
+  stroke-width: 1.2;
+  opacity: 0.45;
+  stroke-linejoin: round;
+}
+.depth .cum.call {
+  stroke: var(--call);
+}
+.depth .cum.put {
+  stroke: var(--put);
+}
+/* Open Positions, below the x-axis and sized by count -- never volume, liquidity or open interest in words, and never a headline. */
+.depth .oi {
+  fill: var(--warn);
+  opacity: 0.85;
+}
+.depth .spotline {
+  stroke: var(--warn);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.depth .spotchip {
+  fill: var(--warn);
+}
+.depth .spotchiptx {
+  fill: #1a0f06;
+  font-family: "Martian Mono", monospace;
+  font-size: 9.5px;
+  font-weight: 700;
+}
+.depth .xhair {
+  stroke: var(--ink);
+  stroke-width: 1;
+}
+
+.depth .dtip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 6;
+  transform: translate(10px, -6px);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 8px 11px;
+  box-shadow: var(--lift);
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 2px 14px;
+  min-width: 150px;
+}
+.depth .dtip b {
+  grid-column: 1 / -1;
+  font-family: "Martian Mono", monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  padding-bottom: 3px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--line-2);
+}
+.depth .dtip span {
+  font-size: 11px;
+  color: var(--ink-3);
+  display: flex;
+  align-items: center;
+}
+.depth .dtip em {
+  font-style: normal;
+  font-family: "Martian Mono", monospace;
+  font-size: 11px;
+  color: var(--ink);
+  text-align: right;
+}
+.depth .dtip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+  margin-right: 6px;
+}
+.depth .dtip i.dot {
+  border-radius: 999px;
+  background: var(--warn);
 }
 
 .body {
@@ -430,102 +937,184 @@ button[disabled] {
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.09);
   min-width: 0;
 }
+/*
+  Issue #29: a responsive grid rather than a horizontally-scrolling row, so a Deck of
+  nine Cards and a Deck of one both look deliberate -- `auto-fill` lets one Card sit at
+  its natural width instead of stretching to fill the row.
+*/
 .deck {
-  display: flex;
-  gap: 11px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding: 14px 4px 16px;
-  scroll-snap-type: x proximity;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+  gap: 12px;
+  padding: 2px 2px 4px;
   list-style: none;
   margin: 0;
 }
+/*
+  The Card, redrawn as a labelled data sheet (issue #29). Every figure gets its own row
+  now, so the fixed postage-stamp size is gone -- content sets the height, and the grid
+  track above sets the width.
+*/
 .card {
   position: relative;
-  flex: none;
-  width: 122px;
-  height: 158px;
+  width: 100%;
   border: 1px solid var(--line);
   border-radius: 13px;
   background: var(--surface);
   overflow: hidden;
-  scroll-snap-align: center;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  padding: 13px 13px 11px 26px;
   transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.25, 1.1), box-shadow 0.2s, border-color 0.16s;
 }
 /*
-  The Implied Chance, drawn twice.
-
-  `.rail` is the information carrier: full opacity, so the six ramp steps separate by
-  the dE 8 bar red/green was held to and failed. Nothing is ever printed on top of it,
-  which is what lets it be saturated enough to be told apart.
-
-  `.tint` is atmosphere -- the same colour washed across the card body so the Deck reads
-  as one gradient at a glance. It is deliberately faint: text sits on this, and a tint
-  strong enough to compare would be a tint too strong to read through. Comparing is the
-  rail's job.
+  The left rail now carries DIRECTION (call/put, blue/orange) rather than Implied
+  Chance -- Implied Chance moved to the dial entirely in issue #29, so a Card is never
+  asked to carry the same meaning as two different colours at once.
 */
 .card .rail {
   position: absolute;
   left: 0;
+  top: 0;
   bottom: 0;
-  width: 14px;
-  border-top-right-radius: 3px;
-  border-right: 1px solid rgba(17, 24, 32, 0.14);
-  transition: height 0.45s cubic-bezier(0.3, 0.8, 0.3, 1), background 0.3s;
-}
-.card .tint {
-  position: absolute;
-  left: 14px;
-  right: 0;
-  bottom: 0;
-  opacity: var(--tintA);
-  transition: height 0.45s cubic-bezier(0.3, 0.8, 0.3, 1), background 0.3s;
+  width: 4px;
 }
 .card > * {
   position: relative;
 }
-.card .od {
-  font-size: 29px;
-  font-weight: 700;
-  line-height: 0.9;
+.card .etop {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 15px 12px 18px;
 }
-.card .od i {
-  font-size: 13px;
-  font-weight: 500;
-  font-style: normal;
-  color: var(--ink-2);
-  letter-spacing: 0;
-}
-.card .k {
+.card .etop .k {
   font-family: "IBM Plex Mono", monospace;
   font-variant-numeric: tabular-nums;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
 }
-.card .mi {
-  font-size: 10px;
+/*
+  The distance line: "must fall **2.1%**" or "already below — **must stay**".
+  `--ink-2`, not `--ink-3` -- issue #29's axe pass failed color-contrast at this size on
+  the tertiary ink, the same reason `.mi` and `.words` below were always `--ink-2`.
+*/
+.card .dist {
+  font-size: 12px;
   color: var(--ink-2);
-  line-height: 1.35;
+  margin-top: 3px;
 }
-/* The words that carry what the fill carries, for anyone the fill reaches. */
-.card .words {
-  font-size: 10px;
+.card .dist b {
+  color: var(--ink-2);
+  font-weight: 600;
+  font-family: "IBM Plex Mono", monospace;
+}
+.card .ch {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  text-align: center;
+}
+.card .ch small {
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  font-weight: 600;
+  line-height: 1.25;
+}
+/* The dial's digits: a label on the arc, not the only cue. */
+.dial-num {
+  font-family: "Martian Mono", "IBM Plex Mono", monospace;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: -0.06em;
+  fill: var(--ink);
+  text-anchor: middle;
+}
+.dial-arc {
+  transition: stroke-dashoffset 0.7s cubic-bezier(0.3, 0.8, 0.3, 1);
+}
+/* The chance said in words, same meaning as the arc, for when colour carries nothing. */
+.card .ch .words {
+  font-size: 9.5px;
   color: var(--ink-2);
   line-height: 1.2;
+  max-width: 64px;
+}
+.card dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0;
+  border-top: 1px solid var(--line-2);
+}
+.card dt {
+  font-size: 11px;
+  color: var(--ink-2);
+  padding: 7px 0 7px 18px;
+  letter-spacing: 0.02em;
+}
+.card dd {
+  margin: 0;
+  padding: 7px 15px 7px 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--ink);
+  text-align: right;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.card dd .u {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 10.5px;
+  color: var(--ink-2);
+}
+/* Maker Depth's proportional bar -- a width from `lib/geometry.ts`, never a figure. */
+.card .hbar {
+  width: 26px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+  flex: none;
+}
+.card .hbar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--r2), var(--r5));
+}
+.card .efoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 15px 10px 18px;
+  border-top: 1px solid var(--line-2);
+  background: var(--well);
+  margin-top: auto;
+}
+.card .efoot .clk {
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--ink-2);
+  font-weight: 500;
 }
 .card:hover {
-  transform: translateY(-5px);
+  transform: translateY(-3px);
   border-color: var(--ink-2);
 }
 .card[aria-pressed="true"] {
   border-color: var(--ink);
   box-shadow: var(--lift);
-  transform: translateY(-9px);
+  transform: translateY(-5px);
 }
 .card.dealt::before {
   content: "";
@@ -699,65 +1288,6 @@ button[disabled] {
   font-size: 13px;
 }
 
-/* ---- commit ---- */
-.commit {
-  border-top: 1px solid var(--line);
-  background: var(--surface);
-  padding: 13px 20px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-.maxloss {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 96px;
-}
-.maxloss b {
-  font-family: "Martian Mono", "IBM Plex Mono", monospace;
-  font-variant-numeric: tabular-nums;
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: -0.05em;
-}
-.risk {
-  flex: 1;
-  min-width: 190px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.risk .bar {
-  height: 10px;
-  border-radius: 6px;
-  background: var(--well);
-  border: 1px solid var(--line);
-  overflow: hidden;
-  display: flex;
-}
-.risk .bar i {
-  display: block;
-  height: 100%;
-  background: var(--hue);
-  transition: width 0.3s;
-}
-/* The pending Fill. Hatched as well as faded, so it reads as pending without colour. */
-.risk .bar i.pend {
-  background: repeating-linear-gradient(
-    45deg,
-    var(--hue) 0 3px,
-    color-mix(in srgb, var(--hue) 30%, transparent) 3px 6px
-  );
-}
-.risk .rowx {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 11px;
-  color: var(--ink-2);
-}
 .gate {
   display: flex;
   gap: 5px;
@@ -934,6 +1464,16 @@ button[disabled] {
   color: var(--ink-2);
   font-size: 13px;
 }
+/*
+  Issue #32: the in-place note over a still-visible, stale Deck or Depth chart during a
+  refresh or a transient read error -- deliberately NOT the full block above, which is
+  reserved for the one moment there is genuinely nothing to show yet. Small and quiet on
+  purpose: it says "this is being updated", not "stop looking at what is on screen".
+*/
+.loading.refresh {
+  padding: 2px 2px 8px;
+  font-size: 12px;
+}
 
 @media (prefers-reduced-motion: reduce) {
   * {
@@ -1005,15 +1545,377 @@ button[disabled] {
   color: var(--ink-2);
 }
 
-/* The transaction, after real money has moved. */
-.commit .receipt {
-  flex-basis: 100%;
-  margin: 0;
+/* ==================================================================================
+ * The confirmation (issue #30) -- the commit bar's replacement, and the only Confirm
+ * in the product. Ported from `prototype-deck-v2.html`'s `.scrim` / `.modal` /
+ * `.belief` rules, ADAPTED rather than copied: every figure below still arrives as a
+ * `.display` string off the wire, this file only lays it out.
+ * ================================================================================== */
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 7, 10, 0.6);
+  backdrop-filter: blur(3px);
+  z-index: 60;
+}
+.modal {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 61;
+  width: min(94vw, 468px);
+  max-height: 92vh;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  box-shadow: var(--deal);
+}
+.modal:focus {
+  outline: none;
+}
+.modal header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid var(--line-2);
+}
+.modal header b {
+  display: block;
+  font-family: "Martian Mono", "IBM Plex Mono", monospace;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+.modal header small {
+  display: block;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  /* --ink-2, not --ink-3: at 9.5px, --ink-3 fails WCAG AA (see the same note by .strip .axis). */
+  color: var(--ink-2);
+  font-weight: 600;
+  margin-top: 1px;
+}
+.modal header .x {
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  font-size: 19px;
+  color: var(--ink-3);
+}
+.modal header .x:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+/* The trade restated as a belief, in plain language -- never the instrument. */
+.belief {
+  margin: 16px 18px;
+  padding: 20px 18px;
+  border-radius: 14px;
+  text-align: center;
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.55;
+  color: var(--ink);
+}
+.belief em {
+  font-style: normal;
+  color: var(--warn);
+}
+.belief .ticks {
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.ctl {
+  padding: 14px 18px 0;
+}
+.ctlhead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+.mk2 {
+  font-size: 9.5px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  /* --ink-2, not --ink-3: at 9.5px, --ink-3 fails WCAG AA (see the same note by .strip .axis). */
+  color: var(--ink-2);
+  font-weight: 600;
+}
+.stepper {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--well);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 4px;
+}
+.stepper button {
+  width: 32px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  color: var(--ink);
+  background: var(--surface-2);
+}
+.stepper button:hover:not(:disabled) {
+  background: var(--surface);
+}
+.stepper b {
+  min-width: 78px;
+  text-align: center;
+  font-family: "Martian Mono", "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.presets {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+.pre {
+  padding: 8px 4px;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2);
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
   font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+  transition: 0.12s;
+}
+/* :not([aria-pressed="true"]) matters -- without it the hover rule can outrank the
+   pressed rule under an equal-specificity tie, painting the selected chip like every
+   other one. */
+.pre:hover:not(:disabled):not([aria-pressed="true"]) {
+  border-color: var(--ink-3);
+  color: var(--ink);
+}
+.pre[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--surface);
+  border-color: var(--ink);
+}
+
+.bud {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 9px;
+  font-size: 11px;
+  /* --ink-2, not --ink-3: at this size --ink-3 fails WCAG AA (see the same note by .strip .axis). */
   color: var(--ink-2);
 }
-.commit .receipt a {
+.budbar {
+  flex: none;
+  width: 74px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--well);
+  border: 1px solid var(--line);
+  overflow: hidden;
+  display: flex;
+}
+.budbar i {
+  display: block;
+  height: 100%;
+  background: var(--hue);
+}
+/* The pending Fill: hatched as well as faded, so it reads as pending without colour. */
+.budbar i.pend {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--hue) 0 3px,
+    color-mix(in srgb, var(--hue) 30%, transparent) 3px 6px
+  );
+}
+
+.sub2 {
+  padding: 9px 18px 0;
+  font-size: 11.5px;
+  /* --ink-2, not --ink-3: at this size --ink-3 fails WCAG AA (see the same note by .strip .axis). */
+  color: var(--ink-2);
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.modal dl {
+  margin: 16px 18px 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0;
+  border-top: 1px solid var(--line-2);
+}
+.modal dt {
+  font-size: 12px;
+  /* --ink-2, not --ink-3: at this size --ink-3 fails WCAG AA (see the same note by .strip .axis). */
+  color: var(--ink-2);
+  padding: 8px 0;
+}
+.modal dd {
+  margin: 0;
+  padding: 8px 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  text-align: right;
+  color: var(--ink);
+}
+/* Max Loss: the largest figure in the confirmation, because it is the one guarantee
+   the product makes -- it equals the premium, always (ADR-0002, buy-only). */
+.modal dd.hero {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+}
+
+.modal .gate {
+  margin: 14px 18px 0;
+}
+
+/* The transaction, after real money has moved -- or a Practice Run in its place. */
+.receipt {
+  margin: 14px 18px 0;
+  border-radius: 11px;
+  padding: 11px 13px;
+  border: 1px solid var(--line-2);
+  background: var(--surface-2);
+}
+.receipt b {
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin-bottom: 4px;
+}
+.receipt.ok {
+  border-color: var(--good);
+  background: var(--call-soft);
+}
+.receipt a {
   color: var(--hue-deep);
+}
+
+.modal footer {
+  display: flex;
+  gap: 9px;
+  padding: 16px 18px 18px;
+  margin-top: 14px;
+}
+.modal footer .btn {
+  flex: 1;
+  text-align: center;
+  padding: 13px 14px;
+  min-height: 44px;
+  border-radius: 11px;
+  font-weight: 600;
+  font-size: 13.5px;
+  white-space: nowrap;
+  font-family: "IBM Plex Mono", monospace;
+  transition: transform 0.12s, opacity 0.12s;
+}
+.modal footer .btn:hover:not([disabled]) {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+/*
+  Issue #30: Practice Run is the prominent button and Confirm is the quiet one, so
+  trying the flow costs nothing and spending real USDC is never the path of least
+  resistance -- the exact opposite weighting of the two buttons this modal replaced.
+*/
+.modal footer .btn.primary {
+  background: var(--btn);
+  color: var(--btn-ink);
+}
+.modal footer .btn.ghost {
+  background: transparent;
+  color: var(--ink);
+  border: 1px dashed var(--ink-3);
+  font-weight: 500;
+}
+
+/* ==================================================================================
+ * The RFQ dialog (issue #31). Shares every rule above -- `.modal`, `.belief`, `.ctl`,
+ * `.presets`, `.bud`, `dl`/`dt`/`dd`, `.receipt`, `footer .btn` -- and adds only what
+ * a Card's confirmation never needed: the strike slider and its scale, a wider preset
+ * row for four tenor chips instead of five sizes, and a muted `dd` for "not priced
+ * yet".
+ * ================================================================================== */
+
+/* The strike slider. A native <input type="range">, so it is keyboard-operable by
+   construction rather than by extra wiring. */
+.ctl input.slider {
+  width: 100%;
+  margin-top: 6px;
+  accent-color: var(--hue);
+}
+.ctl .scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  font-size: 10px;
+  /* --ink-2, not --ink-3: at this size --ink-3 fails WCAG AA (see the same note by .strip .axis). */
+  color: var(--ink-2);
+  font-family: "IBM Plex Mono", monospace;
+}
+.ctl .scale .mid {
+  color: var(--warn);
+  font-weight: 600;
+}
+.ctl .off {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.ctl .off b {
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--warn);
+}
+
+/* Four tenor chips rather than five size presets -- its own row width so neither
+   grid inherits a gap sized for the other. */
+.presets.wide {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+/* Premium and Chance it pays, RFQ-side: present but explicitly unpriced, never
+   simply absent. --ink-2, not --ink-3: at this size --ink-3 fails WCAG AA (see the
+   same note by .strip .axis). */
+.modal dd.muted {
+  color: var(--ink-2);
+  font-style: italic;
+  font-weight: 500;
+}
+
+/* The reserve-price paragraph -- why Max Loss is shown when nothing else is. */
+.mnote {
+  margin: 14px 18px 0;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  line-height: 1.5;
 }
 
 /* ================= chat panel: engine tabs ================= */
@@ -1054,6 +1956,189 @@ button[disabled] {
 .chat .from-copilot .err {
   color: var(--crit);
 }
+
+/* The Risk Profile picker and the Suggestion it drives, merged into one card
+   (SuggestionCard.tsx) so the two read as one thought instead of two boxes that both
+   happen to say "Balanced". Sits between the log and the ask-row, borrowing the same
+   margin rhythm as .ask-row below.
+
+   `.chat`'s own background is --surface, so a card in that colour would be
+   invisible against it -- --surface-2 is the token that actually differs from the
+   panel, and `--lift`'s shadow (the same token cards on the Deck use to read as
+   raised) does the rest of the work of separating the card from the page. */
+.suggestion-card {
+  margin: 6px 18px 0;
+  padding: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--lift);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.suggestion-card-note {
+  font-size: 13px;
+  color: var(--ink-2);
+  margin: 0;
+}
+.suggestion-card-note.err {
+  color: var(--crit);
+}
+
+/* Fieldset/legend: same float trick as the rest of the app uses to stop a fieldset's
+   min-content default (and the legend's native straddle-the-border placement) from
+   forcing the card wider than its column at narrow viewports. */
+.suggestion-card-profiles {
+  min-width: 0;
+  display: flow-root;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.suggestion-card-profiles legend {
+  float: left;
+  width: 100%;
+  padding: 0;
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.suggestion-card-profile-row {
+  clear: both;
+  display: flex;
+  gap: 6px;
+}
+.suggestion-card-profile-row button {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 8px 6px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: center;
+  transition: border-color 0.14s, color 0.14s, background 0.14s;
+}
+.suggestion-card-profile-row button:hover {
+  border-color: var(--ink-2);
+}
+.suggestion-card-profile-row button:focus-visible {
+  outline: 2px solid var(--hue);
+  outline-offset: 1px;
+}
+/* Selected is never colour alone: a heavier border, a filled background, bold text,
+   and the ✓ glyph rendered in the button (SuggestionCard.tsx) all move together. */
+.suggestion-card-profile-row button.is-selected {
+  border: 2px solid var(--hue-deep);
+  padding: 7px 5px;
+  background: var(--hue-soft);
+  color: var(--ink);
+  font-weight: 700;
+}
+.suggestion-card-profile-row button:disabled {
+  opacity: 0.6;
+}
+.suggestion-card-meaning {
+  clear: both;
+  font-size: 12px;
+  color: var(--ink-2);
+  margin: 6px 0 0;
+}
+
+.suggestion-card-body {
+  clear: both;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-2);
+}
+/* Three tight lines -- band, point, caveat -- replacing the old name+meta pair.
+   Font sizes and margins are kept small on purpose: three lines must not add up to
+   more than the two lines they replace, or the log above gets clipped. */
+.suggestion-card-band {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  margin: 0;
+  line-height: 1.3;
+}
+.suggestion-card-point {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 1px 0;
+  line-height: 1.25;
+}
+.suggestion-card-caveat {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  margin: 0 0 4px;
+  line-height: 1.3;
+}
+.suggestion-card-blurb {
+  font-size: 12px;
+  color: var(--ink-2);
+  margin: 0;
+}
+.suggestion-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+}
+/* Exactly one prominent action per card: "See what this buys" is the button; Dismiss
+   is plain text so the pair never reads as two equal calls to action. */
+.suggestion-card-primary {
+  flex: 1;
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--hue);
+  color: var(--hue-ink);
+  transition: background 0.14s;
+}
+.suggestion-card-primary:hover {
+  background: var(--hue-deep);
+}
+.suggestion-card-primary:focus-visible {
+  outline: 2px solid var(--hue);
+  outline-offset: 2px;
+}
+.suggestion-card-primary:disabled {
+  opacity: 0.6;
+}
+.suggestion-card-dismiss {
+  min-height: 44px;
+  padding: 0 4px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink-3);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.suggestion-card-dismiss:hover {
+  color: var(--ink-2);
+}
+.suggestion-card-dismiss:focus-visible {
+  outline: 2px solid var(--hue);
+  outline-offset: 1px;
+}
+.suggestion-card-dismiss:disabled {
+  opacity: 0.6;
+  text-decoration: none;
+}
+.suggestion-card-dismissed {
+  color: var(--ink-2);
+}
+
 .ask-row {
   display: flex;
   gap: 8px;
@@ -1073,10 +2158,271 @@ button[disabled] {
   outline: 2px solid var(--hue);
   outline-offset: 1px;
 }
-.ask-row button {
-  background: var(--btn);
-  color: var(--btn-ink);
+/* Enabled reads as a clear, blue call to action (not the same near-black --btn used
+   for neutral chrome elsewhere) with a leading arrow glyph. Disabled (empty input, or
+   a question in flight) drops both the colour and the arrow's affordance -- flat
+   --surface-2 fill, dimmed text -- so the two states are never told apart by colour
+   alone. */
+.ask-row button.ask-submit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  background: var(--hue);
+  color: var(--hue-ink);
+  border: 1px solid transparent;
   border-radius: 10px;
   padding: 0 16px;
+  font-weight: 600;
+  transition: background 0.14s;
+}
+.ask-row button.ask-submit:hover:not(:disabled) {
+  background: var(--hue-deep);
+}
+.ask-row button.ask-submit:focus-visible {
+  outline: 2px solid var(--hue);
+  outline-offset: 2px;
+}
+.ask-row button.ask-submit:disabled {
+  background: var(--surface-2);
+  color: var(--ink-3);
+  border-color: var(--line);
   font-weight: 500;
 }
+.ask-row button.ask-submit:disabled span {
+  opacity: 0.5;
+}
+
+/* ---------------------------------------------------------------------------
+   Liquidation Cover (/cover).
+   A different context from the trading surface and it should read as one: no
+   Deck, no rail, no call/put palette. Sober by construction -- ADR-0009 says
+   this product never celebrates, and a page about being liquidated is the last
+   place to start.
+   --------------------------------------------------------------------------- */
+
+/*
+  The scroll container for the /cover route. This is in `app/cover/layout.tsx`, not on
+  `.cvr`, because issue #44 replaces `.cvr`'s markup and this rule must survive that
+  without change. As a flex child of `.viewport` (the shell content area), it fills the
+  available space and then scrolls its own content as a document. `overflow-x: hidden`
+  prevents horizontal overflow at any viewport width.
+*/
+.cover-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* =========================================================================
+ * Liquidation Cover surface (issue #44, variant B).
+ *
+ * Type scale: px on a 14px base, matching the product's convention.
+ * All tokens (`--surface`, `--well`, `--put`, `--crit`, `--hue`, etc.)
+ * already have dark-mode values defined in the media/[data-theme] blocks
+ * above -- zero new dark-mode rules needed here.
+ * ========================================================================= */
+
+/* Root: the .cvr class is on <main>. No rem sizing here. */
+.cvr {
+  padding: 22px 24px 40px;
+  max-width: 66rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.cvr h1 { font-size: 19px; letter-spacing: -0.02em; margin-bottom: 5px; }
+.cvr .sub { color: var(--ink-2); max-width: 44rem; margin: 0; }
+
+/* Address form (.ask / .fld / .go are declared directly, unscoped, so they don't
+   inherit cruft from surrounding context -- same pattern as .ask-row above). */
+.cvr .ask { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
+.cvr .ask .fld { display: flex; flex-direction: column; gap: 5px; flex: 1 1 22rem; min-width: 0; }
+.cvr .ask label { font-size: 9.5px; letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink-2); font-weight: 500; }
+.cvr .ask input {
+  padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink);
+  font-family: "IBM Plex Mono", monospace; font-size: 13px; min-width: 0;
+}
+.cvr .ask input::placeholder { color: var(--ink-3); }
+.cvr .ask input:focus-visible { outline: 2px solid var(--hue); outline-offset: 1px; }
+.cvr .ask .go {
+  padding: 9px 18px; border-radius: 10px; background: var(--btn); color: var(--btn-ink);
+  font-weight: 550; font-size: 13px; cursor: pointer; border: 0;
+}
+.cvr .ask .go:disabled { opacity: 0.45; cursor: progress; }
+.cvr .ask .go:focus-visible { outline: 2px solid var(--hue); outline-offset: 2px; }
+
+/* Verdict card: health factor (big), cause-and-effect sentence (say), spot chip */
+.cvr .verdict {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+  padding: 18px 20px; box-shadow: var(--lift); display: flex; gap: 22px;
+  align-items: center; flex-wrap: wrap;
+}
+.cvr .verdict .big { display: flex; flex-direction: column; gap: 2px; flex: 0 0 auto; }
+.cvr .verdict .big .v { font-size: 30px; font-weight: 650; }
+.cvr .verdict .say { flex: 1 1 20rem; min-width: 0; line-height: 1.5; color: var(--ink-2); font-size: 14.5px; margin: 0; }
+.cvr .verdict .say b { color: var(--ink); font-weight: 600; }
+.cvr .verdict .chip {
+  flex: 0 0 auto; display: flex; flex-direction: column; gap: 2px;
+  padding-left: 22px; border-left: 1px solid var(--line-2);
+}
+.cvr .verdict .chip .v { font-size: 15px; font-weight: 600; }
+
+/* Price line: one horizontal axis, three labelled dots, a danger band */
+.cvr-line {
+  background: var(--well); border-radius: 14px; padding: 30px 18px 34px;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,.09);
+}
+.cvr-line-axis {
+  position: relative; height: 4px; border-radius: 4px; background: var(--line);
+}
+.cvr-line-danger {
+  position: absolute; top: 0; height: 4px; border-radius: 4px; background: var(--put);
+}
+/* A point: the label above (.cvr-line-k), the dot (i), and the value below (.cvr-line-v).
+   white-space:nowrap keeps labels from wrapping inside the constrained axis area. */
+.cvr-line-pt {
+  position: absolute; top: 50%; transform: translate(-50%, -50%); text-align: center;
+  white-space: nowrap;
+}
+.cvr-line-pt i {
+  display: block; width: 9px; height: 9px; border-radius: 50%; background: var(--ink-3);
+  margin: 0 auto; border: 2px solid var(--well); box-sizing: content-box;
+}
+.cvr-line-k {
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: 20px;
+  font-size: 10.5px; color: var(--ink-2); letter-spacing: 0.04em;
+}
+.cvr-line-v {
+  position: absolute; left: 50%; transform: translateX(-50%); top: 20px;
+  font-size: 13.5px; font-weight: 650;
+}
+/* Liquidation: critical red dot and value */
+.cvr-line-liq i { background: var(--crit); }
+.cvr-line-liq .cvr-line-v { color: var(--crit); }
+/* Strike: put-colour dot and value (orange, not red) */
+.cvr-line-stk i { background: var(--put); }
+.cvr-line-stk .cvr-line-v { color: var(--put); }
+/* Spot: the ink-coloured dot */
+.cvr-line-now i { background: var(--ink); }
+
+/* Cost card: premium cap */
+.cvr .cost {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  padding: 16px 18px; display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap;
+}
+.cvr .cost .amt { flex: 0 0 auto; }
+.cvr .cost .amt .v { font-size: 26px; font-weight: 700; letter-spacing: -0.03em; display: block; margin-top: 2px; }
+.cvr .cost .txt { flex: 1 1 22rem; min-width: 0; color: var(--ink-2); line-height: 1.55; font-size: 13px; }
+.cvr .cost .txt p { margin: 0 0 6px; }
+.cvr .cost .txt p:last-child { margin-bottom: 0; }
+.cvr .cost .txt b { color: var(--ink); font-weight: 600; }
+
+/* Lapse strip: expiry date prominent, no-auto-renewal note */
+.cvr .lapse {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--line);
+  border-left: 3px solid var(--hue); border-radius: 12px; padding: 13px 16px;
+}
+.cvr .lapse .v { font-size: 17px; font-weight: 650; }
+.cvr .lapse p { margin: 0; color: var(--ink-2); font-size: 12.5px; flex: 1 1 18rem; }
+
+/* Two sheets: "Your loan" and "The cover" */
+.cvr .sheets { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 14px; }
+.cvr .sheet {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  padding: 14px 16px 6px;
+}
+.cvr .sheet .cap {
+  display: flex; justify-content: space-between; align-items: center;
+  padding-bottom: 10px; border-bottom: 1px solid var(--line-2);
+}
+.cvr .sheet dl { display: grid; grid-template-columns: 1fr auto; gap: 0; margin: 0; }
+.cvr .sheet dt {
+  color: var(--ink-2); font-size: 12.5px; padding: 9px 0; border-bottom: 1px solid var(--line-2);
+}
+.cvr .sheet dd {
+  margin: 0; text-align: right; font-weight: 600; padding: 9px 0;
+  border-bottom: 1px solid var(--line-2);
+}
+.cvr .sheet dt:last-of-type, .cvr .sheet dd:last-of-type { border-bottom: 0; }
+/* Qualifier line: the small note under a value (e.g. "worth $3,668", "covers the loan in full").
+   --ink-2, not --ink-3: at this size --ink-3 fails WCAG AA (see the same note by .strip .axis). */
+.cvr .sheet dd .q {
+  display: block; font-weight: 400; font-size: 11.5px; color: var(--ink-2);
+  letter-spacing: 0; font-family: "IBM Plex Sans", sans-serif;
+}
+
+/*
+ * The door (issue #46): "Cover this loan", plainer than the primary buttons
+ * elsewhere in the product on purpose -- the weight of the decision belongs to the
+ * confirmation it opens, not to this button's own styling.
+ * --ink-2, not --ink-3, on the note: at this size --ink-3 fails WCAG AA (see the
+ * same note by .strip .axis) -- and unlike a card's own qualifier lines, this sits
+ * directly on the page's ground colour, where the gap is even worse.
+ */
+.cvr .cta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.cvr .cta .go2 {
+  background: var(--btn); color: var(--btn-ink); padding: 12px 22px; border-radius: 12px;
+  font-weight: 600; font-size: 14px; min-height: 44px; border: 0; cursor: pointer;
+}
+.cvr .cta .go2:focus-visible { outline: 2px solid var(--hue); outline-offset: 2px; }
+.cvr .cta .note { color: var(--ink-2); font-size: 12.5px; }
+
+/* Disclosure: the raw Aave numbers, collapsed by default */
+.cvr-disclosure {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-2); padding: 0 14px; max-width: 52rem;
+}
+.cvr-disclosure summary {
+  cursor: pointer; padding: 11px 0; font-size: 12.5px; color: var(--ink-2); font-weight: 500;
+}
+.cvr-disclosure[open] summary { border-bottom: 1px solid var(--line-2); }
+.cvr-disclosure dl { display: grid; grid-template-columns: 1fr auto; gap: 8px 14px; margin: 0; padding: 12px 0; }
+.cvr-disclosure dt { color: var(--ink-2); font-size: 12.5px; }
+.cvr-disclosure dd { margin: 0; text-align: right; font-weight: 600; font-size: 12.5px; }
+
+/* Warnings: present alongside the quote, never replacing it.
+   Kept close to the old .cvr .warn for issue #45 to restyle. */
+.cvr-warn {
+  border: 1px solid var(--line); border-left: 4px solid var(--warn);
+  background: var(--surface); border-radius: 10px; padding: 0.85rem 1.1rem;
+  color: var(--ink-2); line-height: 1.5;
+}
+
+/*
+ * REFUSED: a true answer to a real question, laid out as content -- not an error.
+ * Reuses the warn accent the prototype's own `.declined` rule settles on (issue #40's
+ * design reference), never the crit-red `.cvr-alert` below uses, so the two read as
+ * different KINDS of thing at a glance and not only by their words. (Issue #45)
+ */
+.cvr-declined {
+  border: 1px solid var(--line); border-left: 4px solid var(--warn);
+  background: var(--surface); border-radius: 12px; padding: 16px 18px; max-width: 52rem;
+}
+.cvr-declined h2 { font-size: 15px; margin: 0 0 6px; }
+.cvr-declined p { margin: 0; color: var(--ink-2); line-height: 1.55; }
+/* The refusal code: a label for a bug report or a support conversation, not the
+   sentence a Borrower is meant to read -- small, muted, set apart from the prose. */
+.cvr-declined-code { margin-top: 10px; }
+
+/*
+ * A transport failure or a 4xx: something is actually broken, and it looks like it.
+ * The crit-red accent (never used by a REFUSED block) plus `role="alert"` -- an
+ * assertive live region, interrupting where `.cvr-declined`'s `role="status"` politely
+ * waits -- makes the two distinguishable both visibly and to assistive technology.
+ * (Issue #45)
+ */
+.cvr-alert {
+  border: 1px solid var(--line); border-left: 4px solid var(--crit);
+  background: var(--surface); border-radius: 12px; padding: 16px 18px; max-width: 52rem;
+}
+.cvr-alert h2 { font-size: 15px; margin: 0 0 6px; color: var(--crit); }
+.cvr-alert p { margin: 0; color: var(--ink-2); line-height: 1.55; }
+
+/* Disclaimer: the server's own prose, verbatim.
+   --ink-2, not --ink-3: at this size --ink-3 fails WCAG AA (see the same note by .strip .axis). */
+.cvr .disclaimer { color: var(--ink-2); line-height: 1.5; max-width: 46rem; margin: 0; }

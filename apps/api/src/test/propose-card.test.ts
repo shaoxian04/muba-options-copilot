@@ -17,7 +17,7 @@ vi.mock("../thetanuts/client.js", async () => await import("./stub-client.js"));
 
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
-import { resetStub, state } from "./stub-client.js";
+import { resetStub, state, TRADER_ADDRESS, proveWallet } from "./stub-client.js";
 import { NOW, DEFAULT_BOOK, makeOrder } from "./fixtures.js";
 
 vi.useFakeTimers({ toFake: ["Date"] });
@@ -34,7 +34,7 @@ beforeEach(async () => {
 });
 
 const deck = async (session: string, query = "direction=DOWN&horizonDays=1&sizeUsdc=2") =>
-  (await app.inject({ method: "GET", url: `/deck?${query}`, headers: { "x-session-id": session } })).json();
+  (await app.inject({ method: "GET", url: `/deck?asset=ETH&${query}`, headers: { "x-session-id": session } })).json();
 
 const propose = (session: string, body: Record<string, unknown>) =>
   app.inject({ method: "POST", url: "/propose", headers: { "x-session-id": session }, payload: body });
@@ -190,7 +190,7 @@ describe("POST /propose with a cardRef", () => {
       const rises = (
         await app.inject({
           method: "GET",
-          url: "/deck?direction=UP&horizonDays=1&sizeUsdc=2",
+          url: "/deck?asset=ETH&direction=UP&horizonDays=1&sizeUsdc=2",
           headers: { "x-session-id": session },
         })
       ).json();
@@ -216,7 +216,7 @@ describe("POST /propose with a cardRef", () => {
       const twoDay = (
         await app.inject({
           method: "GET",
-          url: "/deck?direction=DOWN&horizonDays=2&sizeUsdc=2",
+          url: "/deck?asset=ETH&direction=DOWN&horizonDays=2&sizeUsdc=2",
           headers: { "x-session-id": session },
         })
       ).json();
@@ -233,7 +233,7 @@ describe("POST /propose with a cardRef", () => {
       const far = (
         await app.inject({
           method: "GET",
-          url: "/deck?direction=DOWN&horizonDays=3&sizeUsdc=2",
+          url: "/deck?asset=ETH&direction=DOWN&horizonDays=3&sizeUsdc=2",
           headers: { "x-session-id": session },
         })
       ).json();
@@ -297,20 +297,20 @@ describe("POST /propose without a cardRef", () => {
 });
 
 describe("a proposal made from a Card", () => {
-  it("can be filled by its proposalId like any other", async () => {
+  it("can be prepared for a fill by its proposalId like any other", async () => {
     const session = freshSession();
+    await proveWallet(app, session);
     const { cards } = await deck(session);
     const { proposalId } = (await propose(session, { ...INTENT, cardRef: cards[0].cardRef })).json();
 
-    state.canSign = true;
     const res = await app.inject({
       method: "POST",
-      url: "/fill",
+      url: "/fill/prepare",
       headers: { "x-session-id": session },
-      payload: { proposalId },
+      payload: { proposalId, walletAddress: TRADER_ADDRESS },
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json().txHash).toBe("0xTXHASH");
+    expect(res.json().fillTx.data).toBeTruthy();
   });
 });
