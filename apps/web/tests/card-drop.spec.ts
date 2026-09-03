@@ -87,4 +87,34 @@ test.describe("dragging a card into the chat panel", () => {
     expect(dataTransferKeys).toContain(cards[0]!.strike.display);
     expect(dataTransferKeys).not.toMatch(/maker|nonce|signature|orderId/i);
   });
+
+  test("shows a plain note instead of a match when the AI forecast has no clear direction", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("card").first().dragTo(page.locator(".chat"));
+
+    const answer = page.locator(".coin-answer").first();
+    await expect(answer).toContainText("No clear predicted direction to match a strike against.");
+    await expect(page.getByTestId("nearest-order-preview")).toHaveCount(0);
+  });
+});
+
+test.describe("dragging a card whose AI forecast has a real predicted direction", () => {
+  test.beforeEach(async ({ page, isMobile }) => {
+    test.skip(isMobile, "drag-and-drop targets desktop pointer input only");
+    await stubApi(page, "forecast-up");
+    await signIn(page);
+  });
+
+  test("shows the closest live order and opens the confirmation on Place order", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("card").first().dragTo(page.locator(".chat"));
+
+    const preview = page.getByTestId("nearest-order-preview");
+    await expect(preview).toBeVisible();
+    await expect(preview).toContainText("$2,560.00");
+    await expect(preview).toContainText("pays above");
+
+    await page.getByTestId("nearest-order-place").click();
+    await expect(page.getByTestId("confirm-modal")).toBeVisible();
+  });
 });
