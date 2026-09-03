@@ -152,7 +152,9 @@ export type Scenario =
   | "settle-fails"
   | "settle-pending-once"
   | "depth-marked"
-  | "deep-budget";
+  | "deep-budget"
+  /** No maker ever answers the RFQ: the offer window closes empty. */
+  | "rfq-unanswered";
 
 export interface Traffic {
   /** Every request the page made to the API, in order. */
@@ -248,47 +250,121 @@ const deepBudget = (base: typeof session): typeof session => ({
 const money = (v: number): string => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /**
- * What the real POST /rfq answers: always 501, always echoing back the request. This
- * mirrors `rfqRefusalMessage` in `apps/api/src/rfq.ts` -- test infrastructure standing
- * in for the server, not the browser originating a figure. ETH spot is fixed at
- * `deckDown1.spotUsd.value` ($2,445.49) across every fixture Deck.
+ * The sealed-bid auction, faked (ADR-0015).
+ *
+ * Test infrastructure standing in for the server, exactly as `resized` below stands in
+ * for `priceOrder` -- so it may format money, which `no-arithmetic.test.ts` would forbid
+ * anywhere under `components/` or `lib/`. What it must NOT do is invent a shape the real
+ * routes do not answer with, so each field below mirrors `packages/shared/src/rfq.ts`.
+ *
+ * The one liberty it takes is time. A real offer window runs for ten minutes; here a
+ * maker answers on the SECOND status poll, so a test can watch the wait and then watch it
+ * end without holding a browser open for ten minutes. `rfq-unanswered` is the other
+ * branch: nobody ever answers and the window closes empty.
+ *
+ * The maker's address, its signature and its nonce appear nowhere in any of these bodies
+ * -- the leak check in `FORBIDDEN` runs over every one of them, and a sealed bid whose
+ * bidder is published is not sealed.
  */
-function rfqRefusal(body: { underlying: string; direction: "UP" | "DOWN"; strikeOffsetPct: number; horizonDays: number; sizeUsdc: number }) {
+const FIXTURE_EXPIRY = { value: FIXTURE_NOW + 14 * 86_400_000, display: "29 Jan, 08:00 UTC" };
+const FIXTURE_OFFERS_CLOSE = { value: FIXTURE_NOW + 10 * 60_000, display: "15 Jan, 12:10 UTC" };
+/** The premium a maker bids. Under every fixture Reserve Price, so it is always acceptable. */
+const FIXTURE_PREMIUM = { value: 1.25, display: "$1.25" };
+
+interface StubRfq {
+  requestId: string;
+  kind: "TRADER" | "COVER";
+  ask: Record<string, unknown>;
+  phase: "AWAITING_SIGNATURE" | "OPEN" | "OFFERED" | "NO_OFFERS" | "SETTLED" | "CANCELLED";
+  polls: number;
+  reserveUsdc: number;
+}
+
+/** The Ask a TRADER request would be built into, off the fixture spot. */
+function traderAsk(body: { underlying: string; direction: "UP" | "DOWN"; strikeOffsetPct: number; sizeUsdc: number }) {
   const spot = deckDown1.spotUsd.value;
-  const strike = money(spot * (1 + body.strikeOffsetPct / 100));
-  const directionWord = body.direction === "DOWN" ? "below" : "above";
+  const strike = spot * (1 + body.strikeOffsetPct / 100);
+  const optionType = body.direction === "DOWN" ? "PUT" : "CALL";
+  const what = optionType === "PUT" ? "puts" : "calls";
   return {
-    error:
-      "The sealed-bid RFQ backend is not built yet. Nothing was sent to a maker, nothing was signed, " +
-      "and no USDC moved. " +
-      `You asked for: ${body.underlying} ${directionWord} ${strike}, ${body.horizonDays} days, at most ${money(body.sizeUsdc)}.`,
+    underlying: body.underlying,
+    optionType,
+    strike: { value: strike, display: money(strike) },
+    contracts: { value: 1, display: "1.000000" },
+    reservePriceUsdc: { value: body.sizeUsdc, display: money(body.sizeUsdc) },
+    expiry: FIXTURE_EXPIRY,
+    offersCloseAt: FIXTURE_OFFERS_CLOSE,
+    coverage: null,
+    sentence:
+      `1.000000 ${body.underlying} ${what} struck at ${money(strike)}, ending ${FIXTURE_EXPIRY.display}, ` +
+      `for at most ${money(body.sizeUsdc)} in total.`,
+  };
+}
+
+/** The Ask a COVER request would be built into, off that Loan's own fixture quote. */
+function coverAsk(quote: (typeof coverHealthy)["quote"]) {
+  return {
+    underlying: quote.underlying,
+    optionType: "PUT",
+    strike: quote.cover.targetStrike,
+    contracts: quote.cover.requiredContracts,
+    reservePriceUsdc: quote.cover.premiumCapUsdc,
+    expiry: quote.cover.expiry,
+    offersCloseAt: FIXTURE_OFFERS_CLOSE,
+    coverage: { value: 1, display: "100%" },
+    sentence:
+      `${quote.cover.requiredContracts.display} ${quote.underlying} puts struck at ` +
+      `${quote.cover.targetStrike.display}, ending ${quote.cover.expiry.display}, for at most ` +
+      `${quote.cover.premiumCapUsdc.display} in total. That is 100% of what this loan needs.`,
+  };
+}
+
+/** The server's own sentence for each phase, mirroring `phraseFor` in `apps/api/src/rfq.ts`. */
+function rfqSentence(phase: StubRfq["phase"]): string {
+  switch (phase) {
+    case "AWAITING_SIGNATURE":
+      return "Nothing has been sent yet. Your wallet has not signed anything and no USDC has moved.";
+    case "OPEN":
+      return `The request is live. Market makers can answer until ${FIXTURE_OFFERS_CLOSE.display}. Nothing is owed unless you accept an answer.`;
+    case "OFFERED":
+      return "A market maker has answered. Nothing is paid until you confirm, and the price you are shown is the price you would pay -- not an estimate.";
+    case "NO_OFFERS":
+      return `Offers closed ${FIXTURE_OFFERS_CLOSE.display} and nobody answered at or under your Reserve Price. No USDC moved. You can withdraw the request and ask again.`;
+    case "SETTLED":
+      return `Bought. It ends ${FIXTURE_EXPIRY.display}, and nothing renews on its own -- renewing without you would mean signing without you.`;
+    case "CANCELLED":
+      return "The request was withdrawn. Nothing was bought and no USDC moved.";
+  }
+}
+
+function rfqStatusBody(r: StubRfq) {
+  const offers = r.phase === "OFFERED" || r.phase === "SETTLED" ? 1 : 0;
+  return {
+    requestId: r.requestId,
+    kind: r.kind,
+    phase: r.phase,
+    ask: r.ask,
+    quotationId: r.phase === "AWAITING_SIGNATURE" ? null : "7",
+    offers: { value: offers, display: String(offers) },
+    premiumUsdc: r.phase === "OFFERED" || r.phase === "SETTLED" ? FIXTURE_PREMIUM : null,
+    optionAddress: r.phase === "SETTLED" ? "0x00000000000000000000000000000000000000aa" : null,
+    sentence: rfqSentence(r.phase),
   };
 }
 
 /**
- * What the real POST /rfq answers for the COVER member (issue #43/#46), keyed by the
- * same addresses `GET /cover/quote` uses. A coverable Loan gets the honest 501,
- * echoing figures re-derived from that Loan's OWN fixture -- never from the request
- * body, which for a COVER request carries only an address to begin with. An
- * uncoverable Loan gets a normal 200 carrying that Loan's own refusal, the same
- * `CoverRefusal` shape `GET /cover/quote` already answers with.
+ * The COVER door's answer to `POST /rfq`.
+ *
+ * A coverable Loan gets a prepared request; an uncoverable one gets that Loan's own
+ * refusal as a normal 200 -- the same `CoverRefusal` shape `GET /cover/quote` answers
+ * with, because being told "this Loan holds two assets" is an answer, not a failure.
  */
-function coverRfqAnswer(address: string): { status: 200 | 501; body: unknown } {
+function coverRfqAnswer(address: string): { status: 200; body: unknown; ask?: Record<string, unknown> } {
   const known = COVER_RESPONSES[address] as { refusal?: unknown; quote?: (typeof coverHealthy)["quote"] } | undefined;
   if (known && known.refusal) {
     return { status: 200, body: { status: "REFUSED", refusal: known.refusal } };
   }
-  const quote = known?.quote ?? coverHealthy.quote;
-  return {
-    status: 501,
-    body: {
-      error:
-        "The sealed-bid RFQ backend is not built yet. Nothing was sent to a maker, nothing was signed, " +
-        "and no USDC moved. " +
-        `You asked to cover this Loan: a ${quote.underlying} put struck at ${quote.cover.targetStrike.display}, ` +
-        `${quote.cover.tenorDays.value} days, at most ${quote.cover.premiumCapUsdc.display}.`,
-    },
-  };
+  return { status: 200, body: null, ask: coverAsk(known?.quote ?? coverHealthy.quote) };
 }
 
 /**
@@ -344,6 +420,14 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
   // reports "not visible yet"; every one after succeeds.
   let settledOnce = false;
 
+  /**
+   * Sealed-bid requests this run has opened, keyed by id -- the stub's own tiny version
+   * of the server-side store in `sessions.ts`. Per-run, so one test's request cannot be
+   * seen by the next.
+   */
+  const rfqs = new Map<string, StubRfq>();
+  let rfqSeq = 0;
+
   const sessionSnapshot = () => {
     const spent = session.spentUsdc + reservedUsdc;
     const remaining = session.remainingUsdc - reservedUsdc;
@@ -393,6 +477,36 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
     if (gate) {
       gates.delete(url.pathname);
       await gate;
+    }
+
+    /**
+     * `GET /rfq/:requestId` -- the wait.
+     *
+     * Handled before the switch because the path carries an id, and the switch matches
+     * whole pathnames. Every OTHER `/rfq/...` route has a fixed path and falls through to
+     * its own case below.
+     *
+     * A maker answers on the SECOND poll. That is the stub compressing ten real minutes
+     * into two ticks so a test can watch the wait and then watch it end -- the phases
+     * themselves, and the order they come in, are exactly what the server produces.
+     */
+    if (request.method() === "GET" && /^\/rfq\/[^/]+$/.test(url.pathname)) {
+      if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+      const requestId = decodeURIComponent(url.pathname.slice("/rfq/".length));
+      const r = rfqs.get(requestId);
+      if (!r) return json(route, { error: "That request is no longer open." }, traffic, 410);
+
+      if (r.phase === "OPEN") {
+        r.polls += 1;
+        if (scenario === "rfq-unanswered") {
+          // The window closes empty. Not a failure -- a market condition, and the one
+          // outcome a demo is most likely to actually hit.
+          if (r.polls >= 2) r.phase = "NO_OFFERS";
+        } else if (r.polls >= 2) {
+          r.phase = "OFFERED";
+        }
+      }
+      return json(route, rfqStatusBody(r), traffic);
     }
 
     switch (url.pathname) {
@@ -454,21 +568,156 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
       }
 
       /**
-       * Issue #31/#43/#46 -- the RFQ union. TRADER always 501, echoing the request.
-       * COVER is a selector (an address, and nothing else): a coverable Loan still
-       * gets the honest 501, but an uncoverable one gets that Loan's own refusal as a
-       * normal 200 -- see `coverRfqAnswer` above.
+       * The RFQ money path (ADR-0015). Both doors, and all seven routes.
+       *
+       * `POST /rfq` builds the request and hands back the ONE transaction a wallet must
+       * send; nothing is bought and no premium exists yet. `/rfq/confirm` is where the
+       * chain reports whether it opened. `GET /rfq/:id` is the wait. The two `settle`
+       * routes are the second signature -- the first moment a real price is shown at all.
+       *
+       * The Reserve Price is held against the Risk Budget from the moment `/rfq` answers,
+       * the same way `/fill/prepare` reserves a Max Loss, so a journey that watches the
+       * budget sees it actually move.
        */
       case "/rfq": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
         const body = request.postDataJSON() as
-          | { kind: "TRADER"; underlying: string; direction: "UP" | "DOWN"; strikeOffsetPct: number; horizonDays: number; sizeUsdc: number }
+          | { kind: "TRADER"; underlying: string; direction: "UP" | "DOWN"; strikeOffsetPct: number; horizonDays: number; sizeUsdc: number; walletAddress: string }
           | { kind: "COVER"; address: string };
 
+        let ask: Record<string, unknown>;
         if (body.kind === "COVER") {
           const answer = coverRfqAnswer(body.address);
-          return json(route, answer.body, traffic, answer.status);
+          if (!answer.ask) return json(route, answer.body, traffic, answer.status);
+          ask = answer.ask;
+        } else {
+          ask = traderAsk(body);
         }
-        return json(route, rfqRefusal(body), traffic, 501);
+
+        const requestId = `rfq-${++rfqSeq}`;
+        const reserveUsdc = (ask.reservePriceUsdc as { value: number }).value;
+        rfqs.set(requestId, { requestId, kind: body.kind, ask, phase: "AWAITING_SIGNATURE", polls: 0, reserveUsdc });
+        reservedUsdc += reserveUsdc;
+
+        return json(
+          route,
+          {
+            requestId,
+            kind: body.kind,
+            ask,
+            // Real hex: `lib/wallet.ts` feeds this to a genuine ethers `sendTransaction`,
+            // which validates `data` as actual bytes.
+            requestTx: { to: "0x8118dad971debffb49b9280047659174128a8b94", data: "0xa1b2c3d4" },
+            explorerTxUrlBase: "https://basescan.org/tx/",
+            remainingUsdc: session.remainingUsdc - reservedUsdc,
+          },
+          traffic
+        );
+      }
+
+      case "/rfq/confirm": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        const { requestId, txHash } = request.postDataJSON() as { requestId: string; txHash?: string };
+        const r = rfqs.get(requestId);
+        if (!r) return json(route, { error: "That request is no longer open." }, traffic, 410);
+
+        // No hash means the wallet declined: nothing was ever sent, so the reservation is
+        // released -- exactly what the real route does.
+        if (!txHash) {
+          reservedUsdc -= r.reserveUsdc;
+          rfqs.delete(requestId);
+          return json(route, { opened: false, remainingUsdc: session.remainingUsdc - reservedUsdc }, traffic);
+        }
+
+        r.phase = "OPEN";
+        return json(
+          route,
+          { opened: true, remainingUsdc: session.remainingUsdc - reservedUsdc, status: rfqStatusBody(r) },
+          traffic
+        );
+      }
+
+      case "/rfq/settle/prepare": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        const { requestId } = request.postDataJSON() as { requestId: string };
+        const r = rfqs.get(requestId);
+        if (!r) return json(route, { error: "That request is no longer open." }, traffic, 410);
+        if (r.phase !== "OFFERED")
+          return json(
+            route,
+            { error: "No maker has answered at or under your Reserve Price, so there is no price to accept. Nothing was signed and no USDC moved." },
+            traffic,
+            409
+          );
+
+        return json(
+          route,
+          {
+            requestId,
+            approveTx: { to: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", data: "0x095ea7b3" },
+            settleTx: { to: "0x8118dad971debffb49b9280047659174128a8b94", data: "0xdeadbeef" },
+            premiumUsdc: FIXTURE_PREMIUM,
+            ask: r.ask,
+            explorerTxUrlBase: "https://basescan.org/tx/",
+            sentence: `You will pay ${FIXTURE_PREMIUM.display}, and that is the whole of what this can ever cost you. It ends ${FIXTURE_EXPIRY.display}. Nothing renews on its own.`,
+          },
+          traffic
+        );
+      }
+
+      case "/rfq/settle": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        const { requestId, txHash } = request.postDataJSON() as { requestId: string; txHash?: string };
+        const r = rfqs.get(requestId);
+        if (!r) return json(route, { error: "That request is no longer open." }, traffic, 410);
+
+        // The wallet declined. The request is still live on-chain and still holding its
+        // Reserve Price, so nothing is released.
+        if (!txHash)
+          return json(
+            route,
+            { settled: false, remainingUsdc: session.remainingUsdc - reservedUsdc, status: rfqStatusBody(r) },
+            traffic
+          );
+
+        r.phase = "SETTLED";
+        // The ceiling gives way to the real premium: what was held was always the most it
+        // could cost, and the difference comes back.
+        reservedUsdc -= r.reserveUsdc - FIXTURE_PREMIUM.value;
+        return json(
+          route,
+          { settled: true, remainingUsdc: session.remainingUsdc - reservedUsdc, status: rfqStatusBody(r) },
+          traffic
+        );
+      }
+
+      case "/rfq/cancel/prepare": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        const { requestId } = request.postDataJSON() as { requestId: string };
+        const r = rfqs.get(requestId);
+        if (!r) return json(route, { error: "That request is no longer open." }, traffic, 410);
+        return json(
+          route,
+          {
+            requestId,
+            cancelTx: { to: "0x8118dad971debffb49b9280047659174128a8b94", data: "0xfeedface" },
+            explorerTxUrlBase: "https://basescan.org/tx/",
+            sentence: "Withdrawing takes back your commitment to pay. Nothing has been bought and no USDC has moved.",
+          },
+          traffic
+        );
+      }
+
+      case "/rfq/cancel": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        const { requestId, txHash } = request.postDataJSON() as { requestId: string; txHash?: string };
+        const r = rfqs.get(requestId);
+        if (!r) return json(route, { error: "That request is no longer open." }, traffic, 410);
+        if (!txHash) return json(route, { cancelled: false, remainingUsdc: session.remainingUsdc - reservedUsdc }, traffic);
+
+        r.phase = "CANCELLED";
+        reservedUsdc -= r.reserveUsdc;
+        return json(route, { cancelled: true, remainingUsdc: session.remainingUsdc - reservedUsdc }, traffic);
       }
 
       /*
@@ -550,6 +799,40 @@ export const FORBIDDEN = [
   /"signature"/i,
   /orderId/i,
 ];
+
+/**
+ * How often the surface re-reads an open RFQ. Mirrors `RFQ_POLL_MS` in `lib/surface.ts`.
+ *
+ * Duplicated here rather than imported because `lib/surface.ts` is a client React module
+ * and pulling it into a Playwright spec drags React in with it. Kept honest by
+ * `advanceOffers` below, which is the only thing that reads it: if the two ever disagree,
+ * every RFQ journey stops seeing an offer arrive and says so loudly.
+ */
+export const RFQ_POLL_MS = 6_000;
+
+/**
+ * Step the frozen clock until the surface has polled an open request far enough for
+ * `ready` to hold -- normally, until the stub's maker has answered.
+ *
+ * `page.clock.install` freezes time, so a `setInterval` never fires on its own and the
+ * clock has to be driven. Two things make that fiddlier than one `runFor`:
+ *
+ *   - the polling effect RE-ARMS itself whenever the status changes, so a single large
+ *     jump steps straight over the newly-armed timer rather than firing it;
+ *   - each tick starts a real fetch, and how long that takes is real time, not clock
+ *     time. A fixed sleep between steps is a guess that is right on an idle machine and
+ *     wrong under eight parallel workers.
+ *
+ * So: step, check, repeat. Stopping as soon as `ready` holds keeps the fast case fast,
+ * and the generous tick budget is what makes the slow case pass rather than flake.
+ */
+export async function advanceOffers(page: Page, ready?: () => Promise<boolean>, ticks = 12): Promise<void> {
+  for (let i = 0; i < ticks; i++) {
+    if (ready && (await ready().catch(() => false))) return;
+    await page.clock.runFor(RFQ_POLL_MS + 500);
+    await page.waitForTimeout(100);
+  }
+}
 
 export const FAKE_WALLET_ADDRESS = "0x2222222222222222222222222222222222222222";
 
