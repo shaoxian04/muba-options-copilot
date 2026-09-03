@@ -20,6 +20,7 @@ import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
 import { resetStub, spies, state, TRADER_ADDRESS, proveWallet } from "./stub-client.js";
 import { NOW, makePosition } from "./fixtures.js";
+import { DEFAULT_BUDGET } from "../sessions.js";
 
 vi.useFakeTimers({ toFake: ["Date"] });
 vi.setSystemTime(NOW);
@@ -70,7 +71,7 @@ describe("POST /practice", () => {
 
     const s = (await app.inject({ method: "GET", url: "/session", headers: { "x-session-id": session } })).json();
     expect(s.spentUsdc).toBe(0);
-    expect(s.remainingUsdc).toBe(5);
+    expect(s.remainingUsdc).toBe(DEFAULT_BUDGET);
     expect(spies.fillOrder).not.toHaveBeenCalled();
     expect(spies.ensureAllowance).not.toHaveBeenCalled();
   });
