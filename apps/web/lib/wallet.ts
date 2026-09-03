@@ -67,6 +67,45 @@ export function watchAvailableWallets(onChange: (wallets: WalletOption[]) => voi
   return mipdStore.subscribe(() => onChange(listAvailableWallets()));
 }
 
+/**
+ * The one sliver of `mipd`'s `Store` this helper needs -- deliberately narrower than
+ * `Pick<typeof mipdStore, ...>`, which would force every test double to match `Store`'s
+ * real, much stricter signatures (its `subscribe` takes an `{ emitImmediately? }`
+ * options bag, its `getProviders()` returns real `EIP6963ProviderDetail` objects) for no
+ * benefit here -- this function only ever calls `getProviders().length` and
+ * `subscribe(listener)`.
+ */
+type AnnouncementSource = {
+  getProviders(): readonly unknown[];
+  subscribe(listener: () => void): () => void;
+};
+
+/**
+ * Waits briefly for the first extension to announce itself, since EIP-6963 discovery is
+ * asynchronous and a real extension can take a moment after page load -- checking
+ * `getProviders()` exactly once, synchronously, on mount can miss a wallet that has
+ * already authorised this origin simply because it hasn't finished announcing yet.
+ * Resolves the instant one appears, or after `timeoutMs` if none ever do, so a Trader
+ * with nothing installed is never kept waiting for a check that will find nothing.
+ * Takes a store rather than reading the module-level one directly so this timing logic
+ * can be tested with a plain fake object, no real browser or real MIPD store required.
+ */
+export function waitForFirstAnnouncement(store: AnnouncementSource, timeoutMs = 300): Promise<void> {
+  if (store.getProviders().length > 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    let unsubscribe: () => void = () => {};
+    const timer = setTimeout(() => {
+      unsubscribe();
+      resolve();
+    }, timeoutMs);
+    unsubscribe = store.subscribe(() => {
+      clearTimeout(timer);
+      unsubscribe();
+      resolve();
+    });
+  });
+}
+
 /** Builds a fresh `injected({ target })` connector for one MIPD-detected extension. */
 function injectedConnectorFor(rdns: string) {
   const detail = mipdStore.getProviders().find((d) => d.info.rdns === rdns);
@@ -101,6 +140,12 @@ export async function connectWallet(walletId: string): Promise<string> {
 /**
  * The already-authorised address, or null -- never prompts a wallet.
  *
+ * Waits for `waitForFirstAnnouncement` first -- without it, a real extension that
+ * hasn't finished its EIP-6963 announcement yet would be silently missed, since
+ * `mipdStore.getProviders()` would still read empty at the exact moment this runs
+ * (found in code review: a real, if narrow, gap the single-wallet `window.ethereum`
+ * era never had, since that was always synchronously available the instant it existed).
+ *
  * Two different mechanisms, for two different kinds of wallet: an extension is asked
  * directly (`eth_accounts`, which every EIP-1193 provider answers without prompting),
  * matching exactly what this function did before wagmi existed. Finding a live account
@@ -114,6 +159,7 @@ export async function connectWallet(walletId: string): Promise<string> {
  * persisted session, so `reconnect` is the fallback for that case alone.
  */
 export async function connectedAddress(): Promise<string | null> {
+  await waitForFirstAnnouncement(mipdStore);
   for (const detail of mipdStore.getProviders()) {
     try {
       const accounts = (await detail.provider.request({ method: "eth_accounts" })) as string[];
