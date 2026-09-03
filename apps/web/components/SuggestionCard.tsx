@@ -183,7 +183,15 @@ export function SuggestionCard({
     setPosting(true);
     setDealError(null);
     const intent = sugData.intent;
-    const body = decisionBody("ACCEPTED");
+    // Cleared below when `deal` throws, which only happens for a hard failure -- the
+    // network being down, or a malformed intent. It does NOT cover the common case: a
+    // 503 from /propose, a VETO or a NO_ORDER all resolve `deal` normally, because
+    // `ask` swallows ApiRefusal and `loadDeck` catches everything (lib/surface.ts). So
+    // an ACCEPTED is still logged for a Suggestion that produced no proposal.
+    //
+    // Closing that needs `deal` to report its outcome rather than signalling by
+    // throwing, which is a change to surface.ts and not this component's to make.
+    let body = decisionBody("ACCEPTED");
     try {
       // Accept must never spend. This only records the Trader's intent and deals a
       // fresh Deck from it -- a Card still has to be picked and Confirm still has to
@@ -199,6 +207,7 @@ export function SuggestionCard({
       });
       onAccepted();
     } catch {
+      body = null;
       setDealError("Could not deal that Suggestion. Try again from the Deck.");
     }
     try {

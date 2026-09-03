@@ -66,8 +66,11 @@ describe("GET /suggestion", () => {
     const res = await getSuggestion();
 
     expect(res.statusCode).toBe(200);
+    // Every key SuggestionResponse names, so this branch cannot quietly drift into a
+    // narrower shape than the one a fired Suggestion returns.
     expect(res.json()).toEqual({
-      profile: null, strategyId: null, strategyName: null, firedAt: null, intent: null, asOf: null,
+      profile: null, strategyId: null, strategyName: null, firedAt: null,
+      coverSummary: null, marketBand: null, intent: null, asOf: null,
     });
     expect(mockedFetchSuggestion).not.toHaveBeenCalled();
   });

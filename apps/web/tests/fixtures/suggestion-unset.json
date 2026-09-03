@@ -3,6 +3,8 @@
   "strategyId": null,
   "strategyName": null,
   "firedAt": null,
+  "coverSummary": null,
+  "marketBand": null,
   "intent": null,
   "asOf": null
 }

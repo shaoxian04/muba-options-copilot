@@ -666,7 +666,12 @@ export async function buildApp(): Promise<FastifyInstance> {
       return reply.code(502).send(safeErrorResponse(req.log, e, "Could not load your Risk Profile."));
     }
     // No saved profile -- the surface asks them to choose one, not a guessed default.
-    if (!profile) return { profile: null, strategyId: null, strategyName: null, firedAt: null, intent: null, asOf: null };
+    // Every key SuggestionResponse names, so this branch and the fired one are one shape.
+    if (!profile)
+      return {
+        profile: null, strategyId: null, strategyName: null, firedAt: null,
+        coverSummary: null, marketBand: null, intent: null, asOf: null,
+      };
 
     try {
       return await fetchSuggestion(profile);
