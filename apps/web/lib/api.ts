@@ -63,6 +63,9 @@ export interface SessionState {
   spentUsdc: number;
   remainingUsdc: number;
   figures: { riskBudgetUsdc: Figure; spentUsdc: Figure; remainingUsdc: Figure };
+  /** The wallet this session already proved (ADR-0012), or null. Whatever casing it was
+   * signed with -- compare case-insensitively against a connected address. */
+  verifiedWallet: string | null;
 }
 
 export interface Board {

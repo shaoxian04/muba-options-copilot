@@ -12,6 +12,7 @@
  * API suite rather than quietly leaving these tests passing against a fiction.
  */
 import type { Page, Request, Route } from "@playwright/test";
+import type { SessionState } from "../lib/api";
 
 import deckDown1 from "./fixtures/deck-down-1.json" with { type: "json" };
 import deckDown2 from "./fixtures/deck-down-2.json" with { type: "json" };
@@ -361,7 +362,7 @@ const reprice = <T extends { cards: Array<{ premiumUsdc: { value: number; displa
  * in this stub leaves the $5 default budget as the tighter of the two -- this is the
  * one place the OTHER branch of "whichever binds first" is reachable.
  */
-const deepBudget = (base: typeof session): typeof session => ({
+const deepBudget = (base: SessionState): SessionState => ({
   ...base,
   riskBudgetUsdc: 1000,
   remainingUsdc: 1000,
@@ -477,6 +478,9 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
   // For the "settle-pending-once" scenario: the first settle attempt with a txHash
   // reports "not visible yet"; every one after succeeds.
   let settledOnce = false;
+  // Mirrors the real backend's Session.verifiedWallet: null until /auth/verify
+  // succeeds, so a test can prove the "skip re-verify" flow reads this back honestly.
+  let provenWallet: string | null = null;
 
   const sessionSnapshot = () => {
     const spent = session.spentUsdc + reservedUsdc;
@@ -490,6 +494,7 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         spentUsdc: { value: spent, display: `$${spent.toFixed(2)}` },
         remainingUsdc: { value: remaining, display: `$${remaining.toFixed(2)}` },
       },
+      verifiedWallet: provenWallet,
     };
   };
 
@@ -682,6 +687,7 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
       case "/auth/verify": {
         if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
         if (!accountAuthorised(request)) return json(route, { error: "Sign in to continue." }, traffic, 401);
+        provenWallet = FAKE_WALLET_ADDRESS;
         return json(route, { walletAddress: FAKE_WALLET_ADDRESS }, traffic);
       }
 

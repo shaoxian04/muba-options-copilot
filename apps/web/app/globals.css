@@ -2132,6 +2132,23 @@ button[disabled] {
   color: var(--ink);
 }
 
+.chat-signin-gate {
+  display: flex;
+  align-items: center;
+  margin: 8px 18px 0;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--hue);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+}
+.chat-signin-gate:hover {
+  opacity: 0.85;
+}
+
 /* ================= chat panel: insights engine ================= */
 .chat .from-copilot .coin-answer {
   margin: 0 0 8px;

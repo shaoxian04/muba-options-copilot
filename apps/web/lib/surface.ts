@@ -47,7 +47,9 @@ import {
   disconnectWallet as disconnectWalletById,
   lastConnectedWalletId,
   listAvailableWallets,
+  recentConnectionWithinTtl,
   sendTx,
+  WALLETCONNECT_ID,
   WalletConnectionCancelled,
   signMessage,
   walletOptionFor,
@@ -568,25 +570,26 @@ export function useSurface(): Surface {
   }, [walletAddress]);
 
   /**
-   * First paint: check whether a Trader has ever connected a wallet through this app
-   * before, so the picker can offer it as a one-press "reconnect" option (ADR-0014 --
-   * a Trader always makes this choice explicitly; the surface never silently reconnects
-   * or skips straight to Verify on their behalf, even when it safely could).
-   */
-  useEffect(() => {
-    void lastConnectedWalletId().then((id) => setRecentWallet(id ? walletOptionFor(id) : null));
-  }, []);
-
-  /**
    * Proves the connected wallet is who it says it is (ADR-0012) -- a text signature,
    * never a transaction. Separate from `connectWallet` so a Trader whose signature
    * request failed or was dismissed (address set, but never verified) has a "Verify
    * wallet" button to retry with one press, rather than a dead end.
+   *
+   * First checks whether the session already proved this exact address: a refresh (or
+   * reconnecting the same wallet again) doesn't need a fresh signature for something
+   * already established. This reads back a proof already made -- it does not loosen
+   * what counts as one -- and a different address, or nothing proven yet, falls
+   * straight through to the normal challenge/sign/verify round trip.
    */
   const verifyWalletFor = useCallback(async (address: string) => {
     setWalletVerifying(true);
     setWalletError(null);
     try {
+      const current = await getSession().catch(() => null);
+      if (current?.verifiedWallet && current.verifiedWallet.toLowerCase() === address.toLowerCase()) {
+        setWalletVerified(true);
+        return;
+      }
       const { message } = await requestAuthChallenge(address);
       const signature = await signMessage(message);
       await verifyAuthChallenge(signature);
@@ -597,6 +600,40 @@ export function useSurface(): Surface {
       setWalletVerifying(false);
     }
   }, []);
+
+  /**
+   * First paint: if a wallet was connected recently enough (a rolling few-hour idle
+   * window -- `recentConnectionWithinTtl`), silently reconnect it: no picker, no
+   * prompt, since the origin is already authorised and every real extension answers
+   * `eth_requestAccounts` instantly in that case. `verifyWalletFor` immediately after
+   * is what lets this also skip a fresh signature when the session already proved this
+   * exact address.
+   *
+   * WalletConnect is deliberately excluded from this silent path: resuming its session
+   * isn't a local, promptless check the way an extension's is, and could push a real
+   * notification to the Trader's phone before they have clicked anything on this load
+   * at all. It still appears as the ordinary "last used" quick-pick in the picker.
+   *
+   * Falls back to that same picker-only flow whenever nothing recent exists, the
+   * remembered wallet is no longer available, or the silent reconnect itself fails --
+   * a Trader is never left with no way to connect just because this shortcut didn't.
+   */
+  useEffect(() => {
+    const showRecentWalletOption = () =>
+      void lastConnectedWalletId().then((id) => setRecentWallet(id ? walletOptionFor(id) : null));
+
+    const recentId = recentConnectionWithinTtl();
+    if (!recentId || recentId === WALLETCONNECT_ID) {
+      showRecentWalletOption();
+      return;
+    }
+    connectWalletById(recentId)
+      .then((address) => {
+        setWalletAddress(address);
+        void verifyWalletFor(address);
+      })
+      .catch(showRecentWalletOption);
+  }, [verifyWalletFor]);
 
   const openWalletPicker = useCallback(() => {
     setAvailableWallets(listAvailableWallets());

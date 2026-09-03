@@ -285,6 +285,12 @@ export async function buildApp(): Promise<FastifyInstance> {
         spentUsdc: usd(s.spentUsdc),
         remainingUsdc: usd(remaining),
       },
+      // Lets the browser skip re-verifying a wallet a refresh didn't actually forget --
+      // this session already proved it via a real signature (ADR-0012); reporting that
+      // back isn't a new trust decision, just not discarding one already made. Whatever
+      // casing the wallet originally signed with, unchanged -- callers compare
+      // case-insensitively (same convention as `ownerFor`).
+      verifiedWallet: s.verifiedWallet,
     };
   });
 

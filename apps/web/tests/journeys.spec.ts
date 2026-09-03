@@ -15,6 +15,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { cards, fixtures, FORBIDDEN, installFakeWallet, installFakeWallets, signIn, stubApi, TEST_API_TOKEN } from "./stub";
+import { LAST_CONNECTION_KEY } from "../lib/wallet";
 
 const agentCard = fixtures.proposeAgent.cardRef;
 const overrideCard = cards.find((c) => c.cardRef !== agentCard)!;
@@ -31,11 +32,13 @@ const openConfirm = async (page: Page, cardRef: string) => {
 };
 
 /**
- * There is no more agent auto-pick: the chat's seed prompts, and the `deal()` call
- * behind them, were retired along with the persistent seed buttons -- a proposal now
- * only ever exists once a Card is picked directly, which also opens the confirmation.
- * `agentCard` names a fixed Card ref most tests below open, not evidence of an agent
- * having chosen it.
+ * A thin, longstanding alias for `openConfirm(page, agentCard)` -- kept under this name
+ * for continuity with the many existing callers below. `agentCard` names a fixed Card
+ * ref most tests below open, not evidence of an agent having chosen it: issue #30 means
+ * a proposal only ever exists once a Card is picked directly, which also opens the
+ * confirmation. Unrelated to `Surface.deal()` (the Trade tab's seed prompts, exercised in
+ * `insights.spec.ts`'s Suggestion-Accept test) -- an unfortunate name collision between
+ * two features built independently, not the same mechanism.
  */
 const deal = async (page: Page) => {
   await openConfirm(page, agentCard);
@@ -620,37 +623,6 @@ test.describe("finishing, for real and for practice", () => {
     await expect(page.getByTestId("connect-wallet")).toHaveCount(0);
   });
 
-  test("offers a one-press reconnect to the last-used wallet, alongside the full picker", async ({ page }) => {
-    // The surface never auto-reconnects or skips straight to Verify on a Trader's
-    // behalf, even for a wallet it could safely re-authorise silently -- every visit,
-    // "Connect wallet" is a real, explicit choice. What it DOES remember is which
-    // wallet was used last (wagmi's own persisted `recentConnectorId`), offering it as
-    // a one-press option alongside the full picker for choosing a different one.
-    await stubApi(page);
-    await installFakeWallet(page);
-    await signIn(page);
-    await page.goto("/");
-
-    await page.getByTestId("connect-wallet").click();
-    await page.getByTestId("wallet-option-test.fakewallet0").click();
-    await expect(page.getByTestId("wallet-address")).toBeVisible();
-
-    await page.reload();
-    await expect(page.getByTestId("wallet-address")).toHaveCount(0);
-    await expect(page.getByTestId("connect-wallet")).toBeVisible();
-
-    await page.getByTestId("connect-wallet").click();
-    await expect(page.getByTestId("wallet-picker")).toBeVisible();
-    const recent = page.getByTestId("wallet-option-recent");
-    await expect(recent).toBeVisible();
-    await expect(recent).toContainText("Fake Wallet 1");
-    // The full picker is still there too, for choosing a different wallet.
-    await expect(page.getByTestId("wallet-option-test.fakewallet0")).toBeVisible();
-
-    await recent.click();
-    await expect(page.getByTestId("wallet-address")).toBeVisible();
-  });
-
   test("recovers from a transaction the chain hasn't shown it yet", async ({ page }) => {
     const traffic = await stubApi(page, "settle-pending-once");
     await installFakeWallet(page);
@@ -814,6 +786,27 @@ test.describe("sign-in gates the wallet, not the Deck (ADR-0014)", () => {
     await expect(page.getByTestId("signin-link")).toHaveCount(0);
     await expect(page.getByTestId("connect-wallet")).toBeVisible();
   });
+
+  test("the Copilot chat is locked with a sign-in prompt until signed in, on both tabs", async ({ page }) => {
+    await stubApi(page);
+    await page.goto("/");
+
+    await expect(page.getByTestId("chat-signin-gate")).toBeVisible();
+    await expect(page.getByRole("button", { name: "I think ETH drops before Friday" })).toBeDisabled();
+
+    await page.getByRole("tab", { name: "Insights" }).click();
+    await expect(page.getByTestId("chat-signin-gate")).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Ask a question" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Ask" })).toBeDisabled();
+
+    await signIn(page);
+    await page.reload();
+
+    await expect(page.getByTestId("chat-signin-gate")).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "Ask a question" })).toBeEnabled();
+    await page.getByRole("tab", { name: "Trade" }).click();
+    await expect(page.getByRole("button", { name: "I think ETH drops before Friday" })).toBeEnabled();
+  });
 });
 
 test.describe("the wallet picker (multi-wallet connector)", () => {
@@ -904,6 +897,93 @@ test.describe("the wallet picker (multi-wallet connector)", () => {
 
     await page.keyboard.press("Tab");
     await expect(focusable.first()).toBeFocused();
+  });
+});
+
+test.describe("wallet connection survives a refresh, within a TTL", () => {
+  /**
+   * Backdates the stored connection's timestamp directly, rather than advancing the
+   * page's clock -- advancing the clock also ages the fake Supabase session token
+   * (whose `expires_at` was computed off the same clock) and every other timer on the
+   * page, none of which this feature is about. This isolates exactly the one piece of
+   * state `recentConnectionWithinTtl` reads.
+   */
+  const backdateStoredConnection = (page: Page, ageMs: number) =>
+    page.evaluate(
+      ({ key, ageMs }) => {
+        const raw = window.localStorage.getItem(key);
+        if (!raw) throw new Error("no stored connection to backdate");
+        const parsed = JSON.parse(raw) as { id: string; connectedAt: number };
+        parsed.connectedAt = Date.now() - ageMs;
+        window.localStorage.setItem(key, JSON.stringify(parsed));
+      },
+      { key: LAST_CONNECTION_KEY, ageMs }
+    );
+
+  test("reconnects and re-verifies silently within the window -- no picker, no Verify click", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallet(page);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await page.getByTestId("wallet-option-test.fakewallet0").click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+    const address = await page.getByTestId("wallet-address").innerText();
+
+    // Just under the 3-hour TTL.
+    await backdateStoredConnection(page, 2 * 60 * 60 * 1000 + 59 * 60 * 1000 + 59 * 1000);
+    await page.reload();
+
+    // Straight to the verified address -- no Connect wallet, no picker, no Verify
+    // button, and no extra signature: the session already proved this exact address.
+    await expect(page.getByTestId("wallet-address")).toHaveText(address);
+    await expect(page.getByTestId("connect-wallet")).toHaveCount(0);
+    await expect(page.getByTestId("wallet-picker")).toHaveCount(0);
+    await expect(page.getByTestId("verify-wallet")).toHaveCount(0);
+  });
+
+  test("falls back to the normal Connect wallet once the TTL has lapsed", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallet(page);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await page.getByTestId("wallet-option-test.fakewallet0").click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+
+    // One second past the 3-hour TTL.
+    await backdateStoredConnection(page, 3 * 60 * 60 * 1000 + 1000);
+    await page.reload();
+
+    await expect(page.getByTestId("connect-wallet")).toBeVisible();
+    await expect(page.getByTestId("wallet-address")).toHaveCount(0);
+  });
+
+  test("offers the lapsed wallet as the picker's one-press 'last used' option", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallet(page);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await page.getByTestId("wallet-option-test.fakewallet0").click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+
+    await backdateStoredConnection(page, 3 * 60 * 60 * 1000 + 1000);
+    await page.reload();
+
+    await page.getByTestId("connect-wallet").click();
+    await expect(page.getByTestId("wallet-picker")).toBeVisible();
+    const recent = page.getByTestId("wallet-option-recent");
+    await expect(recent).toBeVisible();
+    await expect(recent).toContainText("Fake Wallet 1");
+    // The full picker is still there too, for choosing a different wallet.
+    await expect(page.getByTestId("wallet-option-test.fakewallet0")).toBeVisible();
+
+    await recent.click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
   });
 });
 
@@ -1070,16 +1150,17 @@ test.describe("the golden path", () => {
 
     // Every response EXCEPT /fill/prepare's own -- which legitimately carries the real
     // transaction calldata the Trader's own wallet has to see to sign it (ADR-0011) --
-    // still carries none of this. /auth/challenge and /auth/verify are exempted too,
-    // for a different, narrower reason: they legitimately echo the TRADER'S OWN wallet
-    // address back (proving sign-in, not naming an Order), which happens to be the same
+    // still carries none of this. /auth/challenge, /auth/verify and /session are
+    // exempted too, for a different, narrower reason: they legitimately echo the
+    // TRADER'S OWN wallet address back (proving sign-in, or reporting the session's own
+    // proof of it -- ADR-0012 -- not naming an Order), which happens to be the same
     // 40-hex-character shape FORBIDDEN's generic address pattern watches for. None of
-    // these three are exempted from having been fetched -- only from the scan itself.
-    const exemptPaths = new Set(["/fill/prepare", "/auth/challenge", "/auth/verify"]);
+    // these four are exempted from having been fetched -- only from the scan itself.
+    const exemptPaths = new Set(["/fill/prepare", "/auth/challenge", "/auth/verify", "/session"]);
     const exemptIndexes = new Set(
       traffic.all.flatMap((r, i) => (exemptPaths.has(new URL(r.url()).pathname) ? [i] : []))
     );
-    expect(exemptIndexes.size).toBeGreaterThanOrEqual(3);
+    expect(exemptIndexes.size).toBeGreaterThanOrEqual(4);
     for (const [i, body] of traffic.bodies.entries()) {
       if (exemptIndexes.has(i)) continue;
       for (const forbidden of FORBIDDEN) expect(body).not.toMatch(forbidden);

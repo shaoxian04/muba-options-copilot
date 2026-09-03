@@ -67,13 +67,14 @@ export async function coverRoutes(app: FastifyInstance): Promise<void> {
       // and got a true one. The same reasoning as `rfq.ts`, which refuses rather than
       // pretending, and `NO_ORDER` on /propose, which is a market condition and not a fault.
       const body: CoverQuoteResult = { status: "REFUSED", refusal: read.refusal };
-      return reply.send(body);
+      // Fastify serializes a plain object as JSON (not HTML); no reflected-HTML path exists here.
+      return reply.send(body); // nosemgrep: javascript.express.security.audit.xss.direct-response-write.direct-response-write
     }
 
     const result = assess(read.loan);
     if (!result.ok) {
       const body: CoverQuoteResult = { status: "REFUSED", refusal: result.refusal };
-      return reply.send(body);
+      return reply.send(body); // nosemgrep: javascript.express.security.audit.xss.direct-response-write.direct-response-write
     }
 
     const { loan } = read;
@@ -109,6 +110,6 @@ export async function coverRoutes(app: FastifyInstance): Promise<void> {
       },
     };
 
-    return reply.send(body);
+    return reply.send(body); // nosemgrep: javascript.express.security.audit.xss.direct-response-write.direct-response-write
   });
 }

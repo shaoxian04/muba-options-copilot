@@ -15,6 +15,7 @@ import { config } from "./wagmiConfig";
 import {
   connectWallet,
   disconnectWallet,
+  isConnectionFresh,
   lastConnectedWalletId,
   listAvailableWallets,
   waitForFirstAnnouncement,
@@ -157,5 +158,31 @@ describe("walletOptionFor", () => {
     // the case where a Trader's last-used extension isn't currently announcing (e.g. it
     // was disabled, or hasn't finished its EIP-6963 announcement yet).
     expect(walletOptionFor("io.metamask")).toEqual({ id: "io.metamask", name: "Last used wallet", icon: null });
+  });
+});
+
+describe("isConnectionFresh", () => {
+  const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+
+  it("is fresh well within the TTL", () => {
+    const connectedAt = 1_000_000;
+    expect(isConnectionFresh(connectedAt, connectedAt + 60_000, THREE_HOURS_MS)).toBe(true);
+  });
+
+  it("is fresh at exactly the TTL boundary", () => {
+    const connectedAt = 1_000_000;
+    expect(isConnectionFresh(connectedAt, connectedAt + THREE_HOURS_MS, THREE_HOURS_MS)).toBe(true);
+  });
+
+  it("is stale one millisecond past the TTL", () => {
+    const connectedAt = 1_000_000;
+    expect(isConnectionFresh(connectedAt, connectedAt + THREE_HOURS_MS + 1, THREE_HOURS_MS)).toBe(false);
+  });
+
+  it("is stale for a timestamp from the future (clock skew, or a corrupted value)", () => {
+    // now < connectedAt shouldn't happen, but treating it as "trust it" would let a
+    // corrupted or manipulated stored timestamp auto-reconnect forever.
+    const connectedAt = 2_000_000;
+    expect(isConnectionFresh(connectedAt, 1_000_000, THREE_HOURS_MS)).toBe(false);
   });
 });

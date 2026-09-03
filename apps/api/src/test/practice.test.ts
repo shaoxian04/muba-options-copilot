@@ -392,6 +392,27 @@ describe("account-aware GET /session and POST /session/budget", () => {
     });
     expect(supabaseState.accountSettings.size).toBe(0);
   });
+
+  it("reports the session's proven wallet, so a refresh can skip re-verifying it", async () => {
+    const session = freshSession();
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/session",
+      headers: { "x-session-id": session, "x-account-token": ACCOUNT_TOKEN },
+    });
+    expect(res.json().verifiedWallet).toBe(TRADER_ADDRESS);
+  });
+
+  it("reports verifiedWallet: null before any wallet has been proven this session", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/session",
+      headers: { "x-session-id": freshSession(), "x-account-token": ACCOUNT_TOKEN },
+    });
+    expect(res.json().verifiedWallet).toBeNull();
+  });
 });
 
 describe("account-aware GET /positions and Practice Run persistence", () => {

@@ -8,11 +8,14 @@
  */
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
-import { cards, fixtures, stubApi } from "./stub";
+import { cards, fixtures, signIn, stubApi } from "./stub";
 
 test.beforeEach(async ({ page, isMobile }) => {
   test.skip(isMobile, "drag-and-drop targets desktop pointer input only");
   await stubApi(page);
+  // The whole Copilot chat panel -- drag-drop into it included -- is locked until
+  // signed in (ADR-0013/0014); every journey below exercises it, so all sign in.
+  await signIn(page);
 });
 
 test.describe("dragging a card into the chat panel", () => {

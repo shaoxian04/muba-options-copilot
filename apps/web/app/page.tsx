@@ -73,7 +73,14 @@ export default function Page() {
 
   return (
     <main className="app">
-      <Chat log={s.log} seeds={seeds} busy={s.busy} deal={s.deal} walletVerified={s.walletVerified} />
+      <Chat
+        log={s.log}
+        seeds={seeds}
+        busy={s.busy}
+        deal={s.deal}
+        walletVerified={s.walletVerified}
+        signedIn={!!s.account}
+      />
 
       <div className="rig">
         <AccountControl

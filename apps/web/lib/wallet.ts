@@ -171,7 +171,57 @@ export async function connectWallet(walletId: string): Promise<string> {
   });
   const address = result.accounts[0];
   if (!address) throw new WalletUnavailable("The wallet did not return an address.");
+  rememberConnection(walletId);
   return address;
+}
+
+/** Exported so tests can manipulate a stored connection's age directly, without having
+ * to advance the page's real/mocked clock (which also ages the Supabase session token
+ * and everything else keyed on "now"). */
+export const LAST_CONNECTION_KEY = "copilot-wallet-last-connection";
+
+/** A rolling idle timeout, refreshed on every successful connect (manual or silent). */
+const DEFAULT_RECONNECT_TTL_MS = 3 * 60 * 60 * 1000;
+
+function rememberConnection(id: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LAST_CONNECTION_KEY, JSON.stringify({ id, connectedAt: Date.now() }));
+  } catch {
+    // A private window with site data blocked can throw here -- losing this is fine,
+    // it only means the next page load won't auto-reconnect, not that anything breaks.
+  }
+}
+
+/**
+ * The pure comparison `recentConnectionWithinTtl` is built on -- separated out because
+ * `window`/`localStorage` don't exist in this project's (Node) unit test environment,
+ * matching `waitForFirstAnnouncement`'s reason for taking a store rather than reading
+ * `mipdStore` directly. `now < connectedAt` (clock skew, or a tampered stored value) is
+ * treated as stale, not fresh -- trusting it would let a corrupted timestamp auto-
+ * reconnect forever.
+ */
+export function isConnectionFresh(connectedAt: number, now: number, ttlMs: number): boolean {
+  const age = now - connectedAt;
+  return age >= 0 && age <= ttlMs;
+}
+
+/**
+ * The wallet id to silently reconnect on page load, or null if nothing recent enough
+ * exists (nothing connected yet, the TTL lapsed, or storage is unavailable/corrupted).
+ * Never itself prompts a wallet -- it only says which id, if any, is worth trying.
+ */
+export function recentConnectionWithinTtl(ttlMs: number = DEFAULT_RECONNECT_TTL_MS): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(LAST_CONNECTION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { id?: unknown; connectedAt?: unknown };
+    if (typeof parsed.id !== "string" || typeof parsed.connectedAt !== "number") return null;
+    return isConnectionFresh(parsed.connectedAt, Date.now(), ttlMs) ? parsed.id : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

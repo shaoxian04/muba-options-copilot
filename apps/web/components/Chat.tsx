@@ -92,6 +92,7 @@ export function Chat({
   busy,
   deal,
   walletVerified,
+  signedIn,
 }: {
   log: ChatLine[];
   seeds: Seed[];
@@ -100,6 +101,15 @@ export function Chat({
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
   /** Whether the session has proven wallet ownership (ADR-0012) -- gates the Risk Profile. */
   walletVerified: boolean;
+  /**
+   * Whether an account is signed in (ADR-0013/0014). The gate this panel enforces is
+   * sign-in alone, not a connected wallet -- a signed-in Trader with no wallet yet still
+   * gets full chat access, matching how Connect wallet itself stays unreachable until
+   * signed in but needs no wallet to become reachable. Deck browsing and Practice Run
+   * stay open to anyone regardless (ADR-0014) -- this gate is scoped to the Copilot
+   * panel only.
+   */
+  signedIn: boolean;
 }) {
   // The route this page happened to load from decides the starting tab (so a direct
   // hit or refresh on /insights opens there) -- but switching tabs afterward never
@@ -185,6 +195,10 @@ export function Chat({
       const raw = event.dataTransfer.getData(CARD_DRAG_MIME);
       if (!raw) return;
       event.preventDefault();
+      // The sign-in gate applies here too -- otherwise dragging a card in would be a
+      // second, unlocked door into the same AI answer the disabled ask-input and
+      // seed buttons are refusing to give a signed-out visitor.
+      if (!signedIn) return;
       let card: DroppedCard;
       try {
         card = JSON.parse(raw) as DroppedCard;
@@ -203,7 +217,7 @@ export function Chat({
         true
       );
     },
-    [runInsightsQuestion]
+    [runInsightsQuestion, signedIn]
   );
 
   return (
@@ -233,8 +247,14 @@ export function Chat({
         </button>
       </div>
 
+      {signedIn ? null : (
+        <a href="/login" className="chat-signin-gate" data-testid="chat-signin-gate">
+          Sign in to chat with the Copilot.
+        </a>
+      )}
+
       {engine === "trade" ? (
-        <TradeEngine log={log} seeds={seeds} busy={busy} />
+        <TradeEngine log={log} seeds={seeds} busy={busy} disabled={!signedIn} />
       ) : (
         <InsightsEngine
           log={insightsLog}
@@ -243,13 +263,24 @@ export function Chat({
           deal={deal}
           walletVerified={walletVerified}
           onAccepted={() => selectEngine("trade")}
+          disabled={!signedIn}
         />
       )}
     </div>
   );
 }
 
-function TradeEngine({ log, seeds, busy }: { log: ChatLine[]; seeds: Seed[]; busy: boolean }) {
+function TradeEngine({
+  log,
+  seeds,
+  busy,
+  disabled,
+}: {
+  log: ChatLine[];
+  seeds: Seed[];
+  busy: boolean;
+  disabled: boolean;
+}) {
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -276,7 +307,7 @@ function TradeEngine({ log, seeds, busy }: { log: ChatLine[]; seeds: Seed[]; bus
 
       <div className="seeds">
         {seeds.map((seed) => (
-          <button key={seed.said} type="button" onClick={seed.run} disabled={busy}>
+          <button key={seed.said} type="button" onClick={seed.run} disabled={busy || disabled}>
             {seed.said}
           </button>
         ))}
@@ -299,6 +330,7 @@ function InsightsEngine({
   deal,
   walletVerified,
   onAccepted,
+  disabled,
 }: {
   log: InsightsLine[];
   busy: boolean;
@@ -306,6 +338,7 @@ function InsightsEngine({
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
   walletVerified: boolean;
   onAccepted: () => void;
+  disabled: boolean;
 }) {
   const [question, setQuestion] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
@@ -424,10 +457,10 @@ function InsightsEngine({
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           placeholder="Ask about any coin…"
-          disabled={busy}
+          disabled={busy || disabled}
           aria-label="Ask a question"
         />
-        <button type="submit" className="ask-submit" disabled={busy || !question.trim()}>
+        <button type="submit" className="ask-submit" disabled={busy || disabled || !question.trim()}>
           <span aria-hidden="true">→</span> Ask
         </button>
       </form>
