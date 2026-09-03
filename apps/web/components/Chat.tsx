@@ -207,6 +207,7 @@ export function Chat({
           strikeValue: card.strikeValue,
           strikeDisplay: card.strikeDisplay,
           direction: card.direction,
+          horizonDays: card.horizonDays,
         },
         true
       );
