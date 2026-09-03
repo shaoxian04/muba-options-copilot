@@ -2330,6 +2330,15 @@ button[disabled] {
   color: var(--ink-2);
 }
 
+/* NearestOrderPreview.tsx reuses .suggestion-card-primary's exact look for "Place
+   order", but nested in .coin-detail's column layout instead of .suggestion-card-actions'
+   row -- this keeps it a normal-width button instead of stretching full width. */
+.coin-detail .suggestion-card-primary {
+  flex: none;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
 .ask-row {
   display: flex;
   gap: 8px;
