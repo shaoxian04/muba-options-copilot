@@ -30,7 +30,15 @@ HTTP surface, and the Review Agent is stubbed as always-agreeing. The Insights t
 Risk Profile picker and the Suggestion it drives (`SuggestionCard.tsx`), both gated behind a
 connected and verified wallet; accepting one deals a
 Deck, but the Trade tab's only way to ask for a proposal directly is still the seed prompts on
-the left. Cover has a glossary and an ADR but no code.
+the left.
+
+**Liquidation Cover reads but does not yet buy.** `apps/api/src/insurance/` holds `loan.ts`
+(Aave V3 on Base, single-collateral only), `liquidation.ts` (the arithmetic, pure and unit
+tested) and `http.ts` (`GET /cover/quote`), with the surface at `/cover`. It computes the
+Liquidation Price, the Target Strike and the full hedge for any address, and refuses in
+words otherwise. The RFQ money path -- request, wait out `offerEndTimestamp`, settle on a
+second human confirmation -- is NOT built, and `POST /rfq` is still the honest 501 of issue
+#31. See ADR-0015 and ADR-0016 for the decisions taken while building the read half.
 
 **The book is multi-asset** (issues #23-#27): six Underlyings — BTC, ETH, SOL, BNB, XRP,
 AVAX — keyed by Chainlink **price feed**, never by underlying token (four of them are

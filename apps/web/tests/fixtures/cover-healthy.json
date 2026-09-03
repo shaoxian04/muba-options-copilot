@@ -1,0 +1,66 @@
+{
+  "status": "QUOTE",
+  "quote": {
+    "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "collateral": "WETH",
+    "underlying": "ETH",
+    "spot": {
+      "value": 2445.49,
+      "display": "$2,445.49"
+    },
+    "loan": {
+      "collateralAmount": {
+        "value": 1.5,
+        "display": "1.500000 WETH"
+      },
+      "collateralUsd": {
+        "value": 3668.2349999999997,
+        "display": "$3,668.23"
+      },
+      "debtUsd": {
+        "value": 2500,
+        "display": "$2,500.00"
+      },
+      "liquidationThreshold": {
+        "value": 0.83,
+        "display": "83%"
+      },
+      "healthFactor": {
+        "value": 1.2178540199999999,
+        "display": "1.22"
+      }
+    },
+    "cover": {
+      "liquidationPrice": {
+        "value": 2008.0321285140565,
+        "display": "$2,008.03"
+      },
+      "targetStrike": {
+        "value": 2208.835341365462,
+        "display": "$2,208.84"
+      },
+      "strikeDistanceFromSpot": {
+        "value": -0.09677187747017468,
+        "display": "-9.7%"
+      },
+      "requiredContracts": {
+        "value": 1.2449999999999999,
+        "display": "1.245000"
+      },
+      "tenorDays": {
+        "value": 14,
+        "display": "14d"
+      },
+      "expiry": {
+        "value": 1769673600000,
+        "display": "29 Jan, 08:00 UTC"
+      },
+      "premiumCapUsdc": {
+        "value": 8,
+        "display": "$8.00"
+      }
+    },
+    "warnings": [],
+    "disclaimer": "Nothing has been requested from a maker, nothing has been signed, and no USDC has moved. This is what your Loan would need, read from Aave."
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "status": "REFUSED",
+  "refusal": {
+    "code": "MULTI_COLLATERAL",
+    "message": "This Loan holds both WETH and cbBTC. A Cover can only be priced for a single-collateral Loan -- with a mix, Aave's blended threshold makes the liquidation price wrong by tens of percent and nothing on screen would show it."
+  }
+}
