@@ -18,11 +18,13 @@ const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), [tabin
 export function WalletPicker({
   open,
   wallets,
+  recentWallet,
   onPick,
   onClose,
 }: {
   open: boolean;
   wallets: Array<{ id: string; name: string; icon: string | null }>;
+  recentWallet: { id: string; name: string; icon: string | null } | null;
   onPick: (walletId: string) => void;
   onClose: () => void;
 }) {
@@ -81,26 +83,48 @@ export function WalletPicker({
           </button>
         </header>
 
+        {recentWallet ? (
+          <div className="wallet-recent">
+            <p className="sub2">Last used</p>
+            <button
+              type="button"
+              onClick={() => onPick(recentWallet.id)}
+              data-testid="wallet-option-recent"
+            >
+              {recentWallet.icon ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={recentWallet.icon} alt="" width={24} height={24} />
+              ) : (
+                <span className="wallet-generic-mark" aria-hidden="true" />
+              )}
+              {recentWallet.name}
+            </button>
+          </div>
+        ) : null}
+
         {wallets.length === 0 ? (
           <p className="sub2" data-testid="wallet-picker-empty">
             No wallet extension detected yet.
           </p>
         ) : (
-          <ul className="wallet-list" aria-label="Wallets">
-            {wallets.map((w) => (
-              <li key={w.id}>
-                <button type="button" onClick={() => onPick(w.id)} data-testid={`wallet-option-${w.id}`}>
-                  {w.icon ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={w.icon} alt="" width={24} height={24} />
-                  ) : (
-                    <span className="wallet-generic-mark" aria-hidden="true" />
-                  )}
-                  {w.name}
-                </button>
-              </li>
-            ))}
-          </ul>
+          <>
+            {recentWallet ? <p className="sub2">Or connect a different wallet</p> : null}
+            <ul className="wallet-list" aria-label="Wallets">
+              {wallets.map((w) => (
+                <li key={w.id}>
+                  <button type="button" onClick={() => onPick(w.id)} data-testid={`wallet-option-${w.id}`}>
+                    {w.icon ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={w.icon} alt="" width={24} height={24} />
+                    ) : (
+                      <span className="wallet-generic-mark" aria-hidden="true" />
+                    )}
+                    {w.name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </div>
     </>

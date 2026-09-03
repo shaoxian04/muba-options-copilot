@@ -620,19 +620,34 @@ test.describe("finishing, for real and for practice", () => {
     await expect(page.getByTestId("connect-wallet")).toHaveCount(0);
   });
 
-  test("offers a Verify button when a wallet was already authorised before this page loaded", async ({ page }) => {
-    // installFakeWallet pre-authorises eth_accounts, simulating a wallet the browser
-    // already trusted from a previous visit -- connectedAddress() picks this up on
-    // mount without prompting, but verification is a fresh signature every page load.
+  test("offers a one-press reconnect to the last-used wallet, alongside the full picker", async ({ page }) => {
+    // The surface never auto-reconnects or skips straight to Verify on a Trader's
+    // behalf, even for a wallet it could safely re-authorise silently -- every visit,
+    // "Connect wallet" is a real, explicit choice. What it DOES remember is which
+    // wallet was used last (wagmi's own persisted `recentConnectorId`), offering it as
+    // a one-press option alongside the full picker for choosing a different one.
     await stubApi(page);
-    await installFakeWallet(page, { preAuthorised: true });
+    await installFakeWallet(page);
     await signIn(page);
     await page.goto("/");
 
+    await page.getByTestId("connect-wallet").click();
+    await page.getByTestId("wallet-option-test.fakewallet0").click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+
+    await page.reload();
     await expect(page.getByTestId("wallet-address")).toHaveCount(0);
-    const verify = page.getByTestId("verify-wallet");
-    await expect(verify).toBeVisible();
-    await verify.click();
+    await expect(page.getByTestId("connect-wallet")).toBeVisible();
+
+    await page.getByTestId("connect-wallet").click();
+    await expect(page.getByTestId("wallet-picker")).toBeVisible();
+    const recent = page.getByTestId("wallet-option-recent");
+    await expect(recent).toBeVisible();
+    await expect(recent).toContainText("Fake Wallet 1");
+    // The full picker is still there too, for choosing a different wallet.
+    await expect(page.getByTestId("wallet-option-test.fakewallet0")).toBeVisible();
+
+    await recent.click();
     await expect(page.getByTestId("wallet-address")).toBeVisible();
   });
 
@@ -826,7 +841,7 @@ test.describe("the wallet picker (multi-wallet connector)", () => {
     await page.goto("/");
 
     await page.getByTestId("connect-wallet").click();
-    await expect(page.getByTestId("wallet-option-walletconnect")).toContainText("WalletConnect");
+    await expect(page.getByTestId("wallet-option-walletConnect")).toContainText("WalletConnect");
     await expect(page.getByTestId("wallet-picker-empty")).toHaveCount(0); // WalletConnect alone still means "something to pick"
   });
 

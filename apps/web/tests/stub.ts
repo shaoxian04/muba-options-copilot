@@ -612,14 +612,13 @@ export const FAKE_WALLET_ADDRESS = "0x2222222222222222222222222222222222222222";
  */
 export async function installFakeWallets(
   page: Page,
-  extensions: Array<{ rdns?: string; name?: string; address?: string; fail?: boolean; preAuthorised?: boolean }>
+  extensions: Array<{ rdns?: string; name?: string; address?: string; fail?: boolean }>
 ): Promise<void> {
   const configs = extensions.map((ext, i) => ({
     rdns: ext.rdns ?? `test.fakewallet${i}`,
     name: ext.name ?? `Fake Wallet ${i + 1}`,
     address: ext.address ?? FAKE_WALLET_ADDRESS,
     fail: ext.fail ?? false,
-    preAuthorised: ext.preAuthorised ?? false,
   }));
 
   await page.addInitScript((exts: typeof configs) => {
@@ -627,7 +626,7 @@ export async function installFakeWallets(
     const TO_ADDRESS = "0x0000000000000000000000000000000000000b00";
 
     const providers = exts.map((cfg) => {
-      let authorised = cfg.preAuthorised;
+      let authorised = false;
       let lastHash = "";
       const provider = {
         isFake: true,
@@ -690,7 +689,7 @@ export async function installFakeWallets(
 /** One fake wallet extension, for journeys that only need a single one. */
 export async function installFakeWallet(
   page: Page,
-  opts: { address?: string; fail?: boolean; preAuthorised?: boolean } = {}
+  opts: { address?: string; fail?: boolean } = {}
 ): Promise<void> {
   await installFakeWallets(page, [opts]);
 }

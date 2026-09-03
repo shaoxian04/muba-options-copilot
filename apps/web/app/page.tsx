@@ -62,6 +62,7 @@ export default function Page() {
         <WalletPicker
           open={s.walletPickerOpen}
           wallets={s.availableWallets}
+          recentWallet={s.recentWallet}
           onPick={(walletId) => void s.onPickWallet(walletId)}
           onClose={s.onCloseWalletPicker}
         />

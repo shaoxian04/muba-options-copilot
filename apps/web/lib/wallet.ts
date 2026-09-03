@@ -15,10 +15,8 @@
 import {
   connect,
   disconnect,
-  getConnection,
   getConnectorClient,
   injected,
-  reconnect,
   sendTransaction,
   signMessage as wagmiSignMessage,
 } from "@wagmi/core";
@@ -41,6 +39,18 @@ export class WalletUnavailable extends Error {}
 export class WalletConnectionCancelled extends Error {}
 
 export type WalletOption = { id: string; name: string; icon: string | null };
+
+/**
+ * The id `connectWallet`/`walletOptionFor` use for WalletConnect -- must match
+ * `@wagmi/connectors`' own `walletConnect()` factory's `id: 'walletConnect'` exactly
+ * (confirmed by reading its source), NOT an arbitrary string this app invents. `connect()`
+ * persists a successful connection's real `connector.id` as `recentConnectorId`, and
+ * `lastConnectedWalletId()` reads that same value back -- a mismatched casing here would
+ * make a returning Trader's "reconnect to WalletConnect" option silently fall through to
+ * `injectedConnectorFor`, which only recognises MIPD `rdns` strings, and throw
+ * `WalletUnavailable` instead of ever reaching WalletConnect.
+ */
+export const WALLETCONNECT_ID = "walletConnect";
 
 /**
  * This app's own EIP-6963 discovery store, rather than reading `config.mipd`.
@@ -67,7 +77,7 @@ export function listAvailableWallets(): WalletOption[] {
     name: detail.info.name,
     icon: detail.info.icon,
   }));
-  return [...extensions, { id: "walletconnect", name: "WalletConnect", icon: null }];
+  return [...extensions, { id: WALLETCONNECT_ID, name: "WalletConnect", icon: null }];
 }
 
 /**
@@ -141,7 +151,7 @@ function injectedConnectorFor(rdns: string) {
 
 /**
  * Connects the wallet the Trader picked from `listAvailableWallets()` and returns its
- * address. Every id but `"walletconnect"` names an `rdns` MIPD detected. `"walletconnect"`
+ * address. Every id but `WALLETCONNECT_ID` names an `rdns` MIPD detected. WalletConnect
  * is built on-demand too, via a dynamic import -- `@wagmi/connectors/walletConnect` pulls
  * in Reown's full AppKit stack, and constructing it eagerly (as a static `wagmiConfig.ts`
  * connector, or even a top-level import here) was verified against a real browser to
@@ -150,7 +160,7 @@ function injectedConnectorFor(rdns: string) {
  */
 export async function connectWallet(walletId: string): Promise<string> {
   const connector =
-    walletId === "walletconnect"
+    walletId === WALLETCONNECT_ID
       ? (await import("@wagmi/connectors/walletConnect")).walletConnect({
           projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "",
         })
@@ -176,41 +186,29 @@ export async function disconnectWallet(): Promise<void> {
 }
 
 /**
- * The already-authorised address, or null -- never prompts a wallet.
- *
- * Waits for `waitForFirstAnnouncement` first -- without it, a real extension that
- * hasn't finished its EIP-6963 announcement yet would be silently missed, since
- * `mipdStore.getProviders()` would still read empty at the exact moment this runs
- * (found in code review: a real, if narrow, gap the single-wallet `window.ethereum`
- * era never had, since that was always synchronously available the instant it existed).
- *
- * Two different mechanisms, for two different kinds of wallet: an extension is asked
- * directly (`eth_accounts`, which every EIP-1193 provider answers without prompting),
- * matching exactly what this function did before wagmi existed. Finding a live account
- * that way also establishes a REAL wagmi connection for it (`connect()`, not just a read)
- * -- `eth_requestAccounts` resolves instantly with no prompt when the origin is already
- * authorised (true of every real wallet, and this suite's fake one), so this never
- * surprises a Trader with a popup; it just brings wagmi's own connection state in line
- * with what `eth_accounts` already reported, which `signMessage`/`sendTx` both need to
- * find a connector to work through. WalletConnect has no "ask without prompting"
- * primitive at all -- resuming a previous pairing is only possible through wagmi's own
- * persisted session, so `reconnect` is the fallback for that case alone.
+ * The id of the wallet a Trader last successfully connected through this app, or null if
+ * they never have (in this browser). `@wagmi/core`'s own `connect` action persists this
+ * itself, under the key `"recentConnectorId"`, on every successful connect -- reading it
+ * back is what lets `WalletPicker` offer "reconnect to X" as a one-press option instead
+ * of silently reconnecting on page load (the previous, removed behaviour: a Trader had no
+ * way to choose a *different* wallet without first disconnecting the old one by hand).
  */
-export async function connectedAddress(): Promise<string | null> {
-  await waitForFirstAnnouncement(mipdStore);
-  for (const detail of mipdStore.getProviders()) {
-    try {
-      const accounts = (await detail.provider.request({ method: "eth_accounts" })) as string[];
-      if (accounts[0]) {
-        await connect(config, { connector: injectedConnectorFor(detail.info.rdns) }).catch(() => {});
-        return accounts[0];
-      }
-    } catch {
-      // This extension refused or errored answering eth_accounts -- try the next one.
-    }
-  }
-  await reconnect(config).catch(() => {});
-  return getConnection(config).address ?? null;
+export async function lastConnectedWalletId(): Promise<string | null> {
+  const id = await config.storage?.getItem("recentConnectorId");
+  return typeof id === "string" ? id : null;
+}
+
+/**
+ * A friendly name/icon for a wallet id, for labelling the "last used" option in the
+ * picker -- the id alone (an `rdns` or `WALLETCONNECT_ID`) is not something to show a
+ * Trader directly. Falls back to a generic label when the id names an extension MIPD
+ * hasn't (yet, or any longer) seen announce itself, e.g. it was disabled since the last
+ * visit, or hasn't finished announcing this early after page load.
+ */
+export function walletOptionFor(id: string): WalletOption {
+  if (id === WALLETCONNECT_ID) return { id, name: "WalletConnect", icon: null };
+  const detail = mipdStore.getProviders().find((d) => d.info.rdns === id);
+  return detail ? { id, name: detail.info.name, icon: detail.info.icon } : { id, name: "Last used wallet", icon: null };
 }
 
 /** Signs a plain text message with the connected wallet. No transaction, no gas. */

@@ -44,12 +44,13 @@ import {
 } from "./api";
 import {
   connectWallet as connectWalletById,
-  connectedAddress,
   disconnectWallet as disconnectWalletById,
+  lastConnectedWalletId,
   listAvailableWallets,
   sendTx,
   WalletConnectionCancelled,
   signMessage,
+  walletOptionFor,
   watchAvailableWallets,
   type WalletOption,
 } from "./wallet";
@@ -266,6 +267,7 @@ export interface Surface {
   walletError: string | null;
   walletPickerOpen: boolean;
   availableWallets: WalletOption[];
+  recentWallet: WalletOption | null;
   onOpenWalletPicker: () => void;
   onCloseWalletPicker: () => void;
   onPickWallet: (walletId: string) => void;
@@ -483,6 +485,7 @@ export function useSurface(): Surface {
   const [walletError, setWalletError] = useState<string | null>(null);
   const [walletPickerOpen, setWalletPickerOpen] = useState(false);
   const [availableWallets, setAvailableWallets] = useState<WalletOption[]>([]);
+  const [recentWallet, setRecentWallet] = useState<WalletOption | null>(null);
 
   /**
    * Google puts the profile photo under `avatar_url` in Supabase's normalized
@@ -561,16 +564,21 @@ export function useSurface(): Surface {
     setBoardLoading(false);
   }, [walletAddress]);
 
-  // First paint: pick up a wallet the browser already authorised, without prompting.
+  /**
+   * First paint: check whether a Trader has ever connected a wallet through this app
+   * before, so the picker can offer it as a one-press "reconnect" option (ADR-0013 --
+   * a Trader always makes this choice explicitly; the surface never silently reconnects
+   * or skips straight to Verify on their behalf, even when it safely could).
+   */
   useEffect(() => {
-    void connectedAddress().then(setWalletAddress);
+    void lastConnectedWalletId().then((id) => setRecentWallet(id ? walletOptionFor(id) : null));
   }, []);
 
   /**
    * Proves the connected wallet is who it says it is (ADR-0012) -- a text signature,
-   * never a transaction. Separate from `connectWallet` so a Trader whose wallet was
-   * already authorised before this page loaded (`connectedAddress()`, which never
-   * prompts) has a way to complete verification with one press, rather than a dead end.
+   * never a transaction. Separate from `connectWallet` so a Trader whose signature
+   * request failed or was dismissed (address set, but never verified) has a "Verify
+   * wallet" button to retry with one press, rather than a dead end.
    */
   const verifyWalletFor = useCallback(async (address: string) => {
     setWalletVerifying(true);
@@ -1170,6 +1178,7 @@ export function useSurface(): Surface {
     walletError,
     walletPickerOpen,
     availableWallets,
+    recentWallet,
     onOpenWalletPicker: openWalletPicker,
     onCloseWalletPicker: closeWalletPicker,
     onPickWallet: pickWallet,
