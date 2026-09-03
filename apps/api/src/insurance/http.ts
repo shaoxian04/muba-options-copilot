@@ -19,6 +19,7 @@ import type { CoverQuoteResult } from "@copilot/shared";
 import { usd, contracts, percent, movePercent, ratio, days, moment } from "../format.js";
 import { readLoan } from "./loan.js";
 import { assess, PREMIUM_CAP_USDC, TENOR_DAYS } from "./liquidation.js";
+import { safeErrorResponse } from "../errors.js";
 
 const Query = z.object({ address: z.string().trim().min(1, "An address is required") });
 
@@ -52,7 +53,15 @@ export async function coverRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed.success)
       return reply.code(400).send({ error: "An address is required", issues: parsed.error.issues });
 
-    const read = await readLoan(parsed.data.address);
+    let read: Awaited<ReturnType<typeof readLoan>>;
+    try {
+      read = await readLoan(parsed.data.address);
+    } catch (e) {
+      // Anything here may be a raw ethers/RPC error -- THETANUTS_RPC_URL carries the
+      // provider API key as a URL path segment, and that key must never reach a
+      // response body. See errors.ts.
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not read that Loan. Try again."));
+    }
     if (!read.ok) {
       // 200, not an error status. A refusal is an ANSWER -- the Borrower asked a question
       // and got a true one. The same reasoning as `rfq.ts`, which refuses rather than

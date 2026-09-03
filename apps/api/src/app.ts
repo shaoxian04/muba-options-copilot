@@ -151,6 +151,30 @@ function requireToken(req: any, reply: any): boolean {
 }
 
 /**
+ * Guards the four /forecast/* GET routes specifically (news, price, risk-benefit,
+ * indicators) -- nothing else calls this.
+ *
+ * `requireToken`'s "no token configured -> loopback-only trust" fallback does not hold
+ * here. Every one of these routes is a plain GET, which the Fetch/CORS spec treats as
+ * a "simple" request: a cross-site page's `<img src=...>` or a `no-cors` fetch still
+ * reaches and fully executes the handler even though `@fastify/cors`'s allowlist keeps
+ * the browser from reading the JSON back -- CORS never rejects the request server-side,
+ * it only withholds the response. With COPILOT_API_TOKEN unset that left every billed
+ * AI/CoinGecko call behind these routes forgeable by any page the operator's browser
+ * happened to load. So unlike every other token-gated route in this file, a missing
+ * token here refuses the request instead of falling back to trusting the loopback bind.
+ */
+function requireForecastToken(req: any, reply: any): boolean {
+  if (!apiToken()) {
+    reply.code(503).send({
+      error: "Forecast routes require COPILOT_API_TOKEN to be configured on the server. See .env.example.",
+    });
+    return false;
+  }
+  return requireToken(req, reply);
+}
+
+/**
  * Who a row belongs to: the wallet this session proved it holds (ADR-0012), lowercased
  * so one Trader is one key whatever case their wallet reports.
  *
@@ -614,7 +638,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   const forecast = <T>(analyse: (scenario: Awaited<ReturnType<typeof buildScenario>>) => Promise<T>) =>
     async (req: any, reply: any) => {
-      if (!requireToken(req, reply)) return;
+      if (!requireForecastToken(req, reply)) return;
       const parsed = parseForecastQuery((req.query ?? {}) as Record<string, unknown>);
       if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
       try {
@@ -638,7 +662,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    * 503 when the service is down, per ADR-0007. The other Forecast routes keep working.
    */
   app.get("/forecast/indicators", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
-    if (!requireToken(req, reply)) return;
+    if (!requireForecastToken(req, reply)) return;
     const symbol = typeof (req.query as any)?.symbol === "string" ? (req.query as any).symbol.trim() : "";
     if (!symbol) return reply.code(400).send({ error: "symbol query parameter is required" });
     try {

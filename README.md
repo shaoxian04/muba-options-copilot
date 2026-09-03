@@ -23,6 +23,11 @@ Trading needs nothing else. The Forecast routes additionally need at least one o
 each falling through when its key is absent or its call fails. Without any of them the
 rest of the app runs exactly as before; only `/forecast/*` refuses.
 
+The four `/forecast/*` GET routes (`news`, `price`, `risk-benefit`, `indicators`) also need
+`COPILOT_API_TOKEN` set — unlike every other route in this app, they refuse rather than
+running unauthenticated, since a plain GET is forgeable cross-site even without a matching
+CORS origin (see the API section below).
+
 The Risk Profile / Suggestion / Decision routes need `SUPABASE_URL` and
 `SUPABASE_SERVICE_ROLE_KEY` — already present, empty, in `.env.example`. Without them those
 five routes 502. The schema for the two tables they use (`risk_profiles`, `decisions`) lives
@@ -162,6 +167,22 @@ not just `/fill`. `/propose` and `/forecast/*` are also rate-limited (30/min per
 regardless of the token, since they cost real Thetanuts/AI API usage even though they never
 move funds. Do not bind it to `0.0.0.0` on shared WiFi -- anyone on the network could then
 spend from the wallet, or run up your API bill.
+
+`$COPILOT_API_TOKEN` does not make a non-loopback bind safe by itself: `$NEXT_PUBLIC_COPILOT_API_TOKEN`
+puts the same value in the public frontend bundle, so anyone who loads the site can read it
+back out and replay it directly against the API from outside the browser, bypassing CORS
+entirely -- CORS governs what a browser script may read, not what a plain HTTP client can send.
+So `apps/api/src/server.ts` refuses to start on any `HOST` other than `127.0.0.1`/`localhost`
+unless `EXTERNAL_AUTH_IN_FRONT=true` is also set, which is an explicit acknowledgment that some
+other, non-client-embedded authentication mechanism (a reverse proxy that authenticates callers
+itself, mTLS, a private network with no public ingress) is genuinely in front of this process.
+
+The four `/forecast/*` GET routes (`news`, `price`, `risk-benefit`, `indicators`) are the one
+exception to "whenever that is set": they refuse with 503 if `COPILOT_API_TOKEN` is unset,
+rather than falling back to loopback-only trust. A plain GET is a CORS-simple request -- a
+cross-site page's `<img src>` or a `no-cors` fetch still reaches the handler and runs a real,
+billed AI/CoinGecko call even though the browser can't read the response back, so an unset
+token left those four routes forgeable by any page the operator's browser happened to load.
 
 The Risk Profile / Suggestion / Decision routes are gated by `$COPILOT_API_TOKEN` when set,
 and then again by the wallet the session proved it holds. They key their data on

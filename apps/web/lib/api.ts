@@ -39,11 +39,17 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:30
  * `Authorization: Bearer ...`" -- and without this Confirm answers 401 for anyone who
  * followed the documented security posture.
  *
- * It is inlined into the bundle, which is the honest cost of a browser holding it. That
- * is acceptable for what the token actually defends against: a page on another origin
- * POSTing to loopback. Such a page cannot read this bundle (the CORS allowlist in
- * `app.ts` sees to that), so it cannot learn the token. It is NOT a secret from the
- * person sitting at the browser, and it was never meant to be -- the wallet is theirs.
+ * It is inlined into the bundle, which is the honest cost of a browser holding it. It IS
+ * a real defense against CSRF -- a page on another origin cannot read this bundle (the
+ * CORS allowlist in `app.ts` sees to that), so it cannot learn the token to attach to a
+ * forged cross-origin request. It is NOT a secret from the person sitting at the browser
+ * (the wallet is theirs), and CORS does nothing at all for a non-browser client: anyone
+ * who loads this bundle once can read the literal token out of it and replay it directly
+ * against the backend from curl/Postman, outside any browser and outside CORS entirely.
+ * That is not this token's job to prevent -- `apps/api/src/server.ts` refuses to bind
+ * beyond loopback in the first place unless a real, non-client-embedded authentication
+ * mechanism is confirmed in front of it (`EXTERNAL_AUTH_IN_FRONT`), which is what actually
+ * stands between this token and being replayed by anyone who ever loaded the page.
  */
 const API_TOKEN = process.env.NEXT_PUBLIC_COPILOT_API_TOKEN ?? "";
 
