@@ -154,7 +154,10 @@ These are needed on every task. Violating one silently breaks the product's cent
   and every number re-derived, so an override passes every check an agent-chosen Card does.
 - **A Suggestion crosses the Strategy Agent boundary as a nested Trade Intent and nothing
   else** — no name, no reasoning, no confidence. Enforced by `extra="forbid"` in
-  `apps/agents/strategy/schema.py` (ADR-0005).
+  `apps/agents/strategy/schema.py` (ADR-0005). A second, separate channel — the drag-drop
+  closest-order search on the Insights tab — may use an AI's predicted price to select a
+  strike, but only ever as an existing, already-priced order's `cardRef`, confined to the
+  analysis surface. (ADR-0018)
 - **A Risk Profile and a Decision belong to a wallet, never to a browser.** `owner_id` is
   the address the session proved under ADR-0012, lowercased — read off the session, never
   off a header. No client-supplied value may name an owner, and there is no fallback
@@ -192,14 +195,16 @@ it here with a one-line lesson.
 - **`apps/api/src/insurance/CONTEXT.md`** — Borrower, Loan, Cover, Liquidation Price, Lapse.
   **Read before any Liquidation Cover work.**
 - **`docs/adr/`** — the decisions and why they went that way. 0001 and 0004 are superseded;
-  0006–0016 are current — 0009 is why the surface may look like a game but never celebrates a
-  Fill, 0010 is why an Underlying is keyed by price feed and not by token, 0011 is why a
-  Trader's own wallet signs a fill instead of the backend, 0012 is why a session must prove
-  wallet ownership and the chain alone decides whether a fill succeeded, 0013 is why a Risk
-  Profile and a Decision are keyed on the proven wallet rather than a browser-minted id, 0014
-  is why an account (Supabase Auth) is required before wallet-connect or Confirm, though Deck
-  browsing and Practice Run stay open to anyone, and 0015/0016 are why Cover's Liquidation
-  Price is Aave's own and a Cover is partial rather than all-or-nothing. **Read before
+  0006–0016 and 0018 are current — 0009 is why the surface may look like a game but never
+  celebrates a Fill, 0010 is why an Underlying is keyed by price feed and not by token, 0011 is
+  why a Trader's own wallet signs a fill instead of the backend, 0012 is why a session must
+  prove wallet ownership and the chain alone decides whether a fill succeeded, 0013 is why a
+  Risk Profile and a Decision are keyed on the proven wallet rather than a browser-minted id,
+  0014 is why an account (Supabase Auth) is required before wallet-connect or Confirm, though
+  Deck browsing and Practice Run stay open to anyone, 0015/0016 are why Cover's Liquidation
+  Price is Aave's own and a Cover is partial rather than all-or-nothing, and 0018 is why the
+  drag-drop closest-order search may let an AI's predicted price choose a strike without
+  breaking ADR-0005. **Read before
   changing architecture, or when code looks deliberately odd and you're tempted to "fix" it.**
 - **`README.md`** — API route table, repo layout, setup, security posture of the API process.
   **Read before running or wiring anything.**

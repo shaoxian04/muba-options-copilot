@@ -27,6 +27,7 @@ export function NearestOrderPreview({
   predictedRange,
   probeHorizonDays,
   pick,
+  onAccepted,
 }: {
   underlying: UnderlyingSymbol;
   predictedDirection: "up" | "down" | "flat";
@@ -34,6 +35,14 @@ export function NearestOrderPreview({
   /** The dropped card's own expiry -- the search's starting point for discovering which other expiries are live for this direction. */
   probeHorizonDays: number;
   pick: (cardRef: string, on: { underlying: UnderlyingSymbol; direction: Direction; horizonDays: number }) => Promise<void>;
+  /**
+   * Switches Chat off Insights and onto the Trade tab. Called unconditionally once `pick`
+   * resolves -- unlike SuggestionCard's own conditional call, `pick` already opens
+   * ConfirmModal before it knows the outcome (a real proposal, a refusal, or a veto all
+   * render inside that modal), so the Trader must be off the forecast text regardless of
+   * which of those `pick` lands on (ADR-0018).
+   */
+  onAccepted: () => void;
 }) {
   const [status, setStatus] = useState<Status>("loading");
   const [match, setMatch] = useState<(OrderCandidate & { direction: Direction }) | null>(null);
@@ -98,6 +107,7 @@ export function NearestOrderPreview({
       await pick(match.cardRef, { underlying, direction: match.direction, horizonDays: match.horizonDays });
     } finally {
       setPlacing(false);
+      onAccepted();
     }
   }
 

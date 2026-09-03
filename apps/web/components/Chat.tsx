@@ -452,6 +452,7 @@ function InsightsEngine({
                           predictedRange={r.price.predictedRange}
                           probeHorizonDays={cardContext.horizonDays}
                           pick={pick}
+                          onAccepted={onAccepted}
                         />
                       ) : null}
 

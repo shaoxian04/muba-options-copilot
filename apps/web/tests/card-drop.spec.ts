@@ -115,6 +115,13 @@ test.describe("dragging a card whose AI forecast has a real predicted direction"
   });
 
   test("shows the closest live order and opens the confirmation on Place order", async ({ page }) => {
+    // Re-installs the same "forecast-up" stub the describe-level beforeEach above
+    // already set up (shadowing it, per that hook's own comment) purely to get this
+    // test its own `Traffic` handle -- the beforeEach's own return value has nowhere
+    // to go, so every spec in this suite that needs `traffic` calls `stubApi` again
+    // locally instead (see journeys.spec.ts).
+    const traffic = await stubApi(page, "forecast-up");
+    await signIn(page);
     await page.goto("/");
     await page.getByTestId("card").first().dragTo(page.locator(".chat"));
 
@@ -125,5 +132,15 @@ test.describe("dragging a card whose AI forecast has a real predicted direction"
 
     await page.getByTestId("nearest-order-place").click();
     await expect(page.getByTestId("confirm-modal")).toBeVisible();
+
+    // The fixture keyed by "card-0" happens to belong to the DOWN deck, so
+    // confirm-modal becoming visible alone can't tell an UP/1-day match from a
+    // silently broken one -- it would render either way. What actually proves Task
+    // 4's chip-switching logic ran is the /propose request itself: direction and
+    // horizon must have followed the AI-matched order, not whatever the Trade tab's
+    // chips defaulted to.
+    const proposals = traffic.all.filter((r) => new URL(r.url()).pathname === "/propose");
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]!.postDataJSON()).toMatchObject({ direction: "UP", horizonDays: 1, cardRef: "card-0" });
   });
 });
