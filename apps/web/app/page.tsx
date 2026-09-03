@@ -49,7 +49,6 @@ export default function Page() {
         busy={s.busy}
         submitTradeMessage={s.submitTradeMessage}
         deal={s.deal}
-        walletVerified={s.walletVerified}
         signedIn={!!s.account}
       />
 

@@ -14,8 +14,9 @@
  * and buy something. "Insights" is the Forecast subsystem (ADR-0005): real market data,
  * news, price predictions, risk/benefit views, and comparisons across coins, answered
  * from a free-text question. It also carries the Risk Profile picker and the Suggestion
- * it drives (`SuggestionCard.tsx`), gated behind a verified wallet -- accepting one
- * deals a Deck via `Surface.deal()` and switches back to the Trade tab.
+ * it drives (`SuggestionCard.tsx`), gated behind sign-in alone -- no wallet required
+ * (ADR-0017) -- accepting one deals a Deck via `Surface.deal()` and switches back to
+ * the Trade tab.
  *
  * Dropping a Deck card (DeckRow.tsx is the drag source) anywhere on this panel is a
  * third way into Insights: it builds one precise, strike-anchored question from the
@@ -86,7 +87,6 @@ export function Chat({
   busy,
   submitTradeMessage,
   deal,
-  walletVerified,
   signedIn,
 }: {
   log: ChatLine[];
@@ -94,15 +94,14 @@ export function Chat({
   submitTradeMessage: (text: string) => void;
   /** Same signature as `Surface.deal` -- threaded down to Suggestion for Accept. */
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
-  /** Whether the session has proven wallet ownership (ADR-0012) -- gates the Risk Profile. */
-  walletVerified: boolean;
   /**
-   * Whether an account is signed in (ADR-0013/0014). The gate this panel enforces is
+   * Whether an account is signed in (ADR-0014). The gate this panel enforces is
    * sign-in alone, not a connected wallet -- a signed-in Trader with no wallet yet still
    * gets full chat access, matching how Connect wallet itself stays unreachable until
    * signed in but needs no wallet to become reachable. Deck browsing and Practice Run
    * stay open to anyone regardless (ADR-0014) -- this gate is scoped to the Copilot
-   * panel only.
+   * panel only. The Risk Profile card inside Insights uses this same flag, not a wallet
+   * check, to decide whether it fetches (ADR-0017).
    */
   signedIn: boolean;
 }) {
@@ -256,7 +255,7 @@ export function Chat({
           busy={insightsBusy}
           onAsk={(q) => void runInsightsQuestion(q)}
           deal={deal}
-          walletVerified={walletVerified}
+          signedIn={signedIn}
           onAccepted={() => selectEngine("trade")}
           disabled={!signedIn}
         />
@@ -338,7 +337,7 @@ function InsightsEngine({
   busy,
   onAsk,
   deal,
-  walletVerified,
+  signedIn,
   onAccepted,
   disabled,
 }: {
@@ -346,7 +345,7 @@ function InsightsEngine({
   busy: boolean;
   onAsk: (question: string) => void;
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
-  walletVerified: boolean;
+  signedIn: boolean;
   onAccepted: () => void;
   disabled: boolean;
 }) {
@@ -452,7 +451,7 @@ function InsightsEngine({
         {busy ? <p className="from-copilot">Asking…</p> : null}
       </div>
 
-      <SuggestionCard deal={deal} walletVerified={walletVerified} onAccepted={onAccepted} />
+      <SuggestionCard deal={deal} signedIn={signedIn} onAccepted={onAccepted} />
 
       <form
         className="ask-row"
