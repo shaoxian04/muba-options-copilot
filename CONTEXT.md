@@ -98,6 +98,15 @@ opens, so no maker can see another's price before quoting. An Offer has a premiu
 answers does not, until one wins.
 _Avoid_: quote, bid, response, order
 
+**Reserve Price**:
+The most a Trader will pay for an RFQ, committed **before** any maker has answered. It is
+deliberately not a premium: in a sealed-bid request the price is discovered at settlement, so
+what is agreed up front is a ceiling. Enforced on-chain by the OptionFactory, not only in
+TypeScript, and held against the Risk Budget from the moment the request is built. The same
+term the Cover context uses -- see `apps/api/src/insurance/CONTEXT.md` -- because it is the
+same thing on the same protocol.
+_Avoid_: quote, premium (unqualified), limit price, budget
+
 ### Risk
 
 **Max Loss**:
