@@ -99,6 +99,15 @@ test.describe("dragging a card into the chat panel", () => {
 });
 
 test.describe("dragging a card whose AI forecast has a real predicted direction", () => {
+  // The file-level `beforeEach` above (line 13) still runs first for every test in this
+  // block too -- Playwright scopes a `beforeEach` to the whole file when it's declared
+  // outside any `describe`, not just to the sibling block it's written next to. So this
+  // hook doesn't replace that one; it runs after it and re-installs a different stub
+  // scenario (`"forecast-up"` instead of the file-level hook's default/flat one) and
+  // signs in a second time. The second `stubApi(page, ...)` call's `page.route()`
+  // registrations shadow the first's for the same paths -- Playwright resolves
+  // `page.route()` by last-registered-wins -- so this test still ends up answered by the
+  // "forecast-up" fixtures despite two stubs being active.
   test.beforeEach(async ({ page, isMobile }) => {
     test.skip(isMobile, "drag-and-drop targets desktop pointer input only");
     await stubApi(page, "forecast-up");
