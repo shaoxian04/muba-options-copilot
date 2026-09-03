@@ -1,0 +1,14 @@
+{
+  "id": "decision-1",
+  "strategyId": "rsi-oversold-eth",
+  "strategyName": "RSI oversold bounce",
+  "firedAt": "2026-01-14T00:00:00Z",
+  "then": {
+    "underlying": "ETH",
+    "direction": "DOWN",
+    "sizeUsdc": 2,
+    "horizonDays": 1
+  },
+  "decision": "ACCEPTED",
+  "decidedAt": "2026-01-15T00:00:05Z"
+}

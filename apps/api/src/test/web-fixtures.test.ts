@@ -17,6 +17,24 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 
 vi.mock("../thetanuts/client.js", async () => await import("./stub-client.js"));
 
+// The Risk Profile / Suggestion / Decision routes reach Supabase and the agents
+// service -- neither exists in this test process, so they're mocked at the same
+// module boundary suggestion.test.ts mocks them at. See the comment above
+// `generated["risk-profile-unset"]` below for which of these fixtures that makes a
+// mocked-passthrough capture versus genuine server code.
+vi.mock("../supabase/riskProfiles.js", () => ({
+  getRiskProfile: vi.fn(),
+  setRiskProfile: vi.fn(),
+}));
+vi.mock("../strategy/suggest.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../strategy/suggest.js")>();
+  return { ...actual, fetchSuggestion: vi.fn() };
+});
+vi.mock("../supabase/decisions.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../supabase/decisions.js")>();
+  return { ...actual, recordDecision: vi.fn() };
+});
+
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -24,6 +42,14 @@ import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
 import { resetStub, state, chain, TRADER_ADDRESS, proveWallet } from "./stub-client.js";
 import { NOW, DEFAULT_BOOK, makeOrder } from "./fixtures.js";
+import { getRiskProfile, setRiskProfile } from "../supabase/riskProfiles.js";
+import { fetchSuggestion } from "../strategy/suggest.js";
+import { recordDecision } from "../supabase/decisions.js";
+
+const mockedGetProfile = vi.mocked(getRiskProfile);
+const mockedSetProfile = vi.mocked(setRiskProfile);
+const mockedFetchSuggestion = vi.mocked(fetchSuggestion);
+const mockedRecordDecision = vi.mocked(recordDecision);
 
 vi.useFakeTimers({ toFake: ["Date"] });
 vi.setSystemTime(NOW);
@@ -66,6 +92,12 @@ const NAMES = [
   "veto",
   "no-order",
   "refusal",
+  "risk-profile-unset",
+  "risk-profile-balanced",
+  "suggestion-unset",
+  "suggestion-eth",
+  "suggestion-no-signal",
+  "decisions-accepted",
 ] as const;
 
 /**
@@ -109,7 +141,23 @@ const post = async (url: string, payload: Record<string, unknown>, session = SES
   await app.inject({ method: "POST", url, headers: { "x-session-id": session }, payload });
 
 const DOWN_1 = "/deck?asset=ETH&direction=DOWN&horizonDays=1&sizeUsdc=2";
-const intent = { underlying: "ETH", direction: "DOWN", sizeUsdc: 2, horizonDays: 1 };
+const intent = { underlying: "ETH", direction: "DOWN", sizeUsdc: 2, horizonDays: 1 } as const;
+
+// The Risk Profile / Suggestion / Decision routes now key on the session's own proven
+// wallet (ADR-0012), not a caller-named header -- so these fixtures need a session that
+// has actually been through /auth/challenge + /auth/verify, same as SESSION above once
+// proveWallet(app, SESSION) runs. OWNER is what that verification resolves to: the
+// TRADER_ADDRESS stub-client.ts's proveWallet proves, lowercased.
+const OWNER = TRADER_ADDRESS.toLowerCase();
+
+const getAsOwner = async (url: string) =>
+  (await app.inject({ method: "GET", url, headers: { "x-session-id": SESSION } })).json();
+
+const putAsOwner = async (url: string, payload: Record<string, unknown>) =>
+  (await app.inject({ method: "PUT", url, headers: { "x-session-id": SESSION }, payload })).json();
+
+const postAsOwner = async (url: string, payload: Record<string, unknown>) =>
+  (await app.inject({ method: "POST", url, headers: { "x-session-id": SESSION }, payload })).json();
 
 beforeAll(async () => {
   resetStub();
@@ -230,6 +278,85 @@ beforeAll(async () => {
   await post("/session/budget", { riskBudgetUsdc: 1 }, "broke-session");
   const refused = await post("/propose", intent, "broke-session");
   generated["refusal"] = { status: refused.statusCode, body: refused.json() };
+
+  // --- Risk Profile / Suggestion / Decisions --------------------------------
+  //
+  // Two different kinds of fixture here, and the difference matters:
+  //
+  // "risk-profile-unset" and "suggestion-unset" are GENUINE server code: with no
+  // saved profile, GET /risk-profile answers `{ profile: null }` and GET /suggestion
+  // builds its own all-null object (app.ts, "No saved profile" branch) without ever
+  // calling the agents service. Nothing about the ROUTE is mocked for those two --
+  // only the Supabase accessor beneath it, the same way the fixture book stands in
+  // for the chain elsewhere in this file.
+  //
+  // "risk-profile-balanced", "suggestion-eth", "suggestion-no-signal" and
+  // "decisions-accepted" are mocked-passthrough captures: the value returned is
+  // whatever this file told the mock to return, not something the server derived.
+  // What they're actually worth is capturing the ENVELOPE the route builds around
+  // that value -- so a route rename or a response-shape change still breaks
+  // generation loudly, even though the payload inside is fabricated here rather
+  // than computed by real Supabase or Python code.
+  mockedGetProfile.mockResolvedValueOnce(null);
+  generated["risk-profile-unset"] = await getAsOwner("/risk-profile");
+
+  mockedGetProfile.mockResolvedValueOnce(null);
+  generated["suggestion-unset"] = await getAsOwner("/suggestion");
+
+  mockedSetProfile.mockResolvedValueOnce({
+    ownerId: OWNER,
+    profile: "balanced",
+    createdAt: "2026-09-01T00:00:00Z",
+    updatedAt: "2026-09-01T00:00:00Z",
+  });
+  generated["risk-profile-balanced"] = await putAsOwner("/risk-profile", { profile: "balanced" });
+
+  mockedGetProfile.mockResolvedValueOnce("balanced");
+  mockedFetchSuggestion.mockResolvedValueOnce({
+    profile: "balanced",
+    strategyId: "rsi-oversold-eth",
+    strategyName: "RSI oversold bounce",
+    firedAt: "2026-01-14T00:00:00Z",
+    coverSummary: "Buys a modest cover and holds it only briefly.",
+    marketBand: "weak",
+    intent,
+    asOf: "2026-01-15T00:00:00Z",
+  });
+  generated["suggestion-eth"] = await getAsOwner("/suggestion");
+
+  // A saved profile, but the Strategy Agent's RSI check did not fire -- the "nothing
+  // to suggest" case, distinct from an unset profile (which never calls Python at
+  // all, per the comment above).
+  mockedGetProfile.mockResolvedValueOnce("balanced");
+  mockedFetchSuggestion.mockResolvedValueOnce({
+    profile: "balanced",
+    strategyId: null,
+    strategyName: null,
+    firedAt: null,
+    coverSummary: null,
+    marketBand: null,
+    intent: null,
+    asOf: "2026-01-15T00:00:00Z",
+  });
+  generated["suggestion-no-signal"] = await getAsOwner("/suggestion");
+
+  mockedRecordDecision.mockResolvedValueOnce({
+    id: "decision-1",
+    ownerId: OWNER,
+    strategyId: "rsi-oversold-eth",
+    strategyName: "RSI oversold bounce",
+    firedAt: "2026-01-14T00:00:00Z",
+    then: intent as any,
+    decision: "ACCEPTED",
+    decidedAt: "2026-01-15T00:00:05Z",
+  });
+  generated["decisions-accepted"] = await postAsOwner("/decisions", {
+    strategyId: "rsi-oversold-eth",
+    strategyName: "RSI oversold bounce",
+    firedAt: "2026-01-14T00:00:00Z",
+    intent,
+    decision: "ACCEPTED",
+  });
 });
 
 /**

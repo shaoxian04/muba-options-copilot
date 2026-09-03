@@ -36,6 +36,12 @@ import authChallenge from "./fixtures/auth-challenge.json" with { type: "json" }
 import veto from "./fixtures/veto.json" with { type: "json" };
 import noOrder from "./fixtures/no-order.json" with { type: "json" };
 import refusal from "./fixtures/refusal.json" with { type: "json" };
+import riskProfileUnset from "./fixtures/risk-profile-unset.json" with { type: "json" };
+import riskProfileBalanced from "./fixtures/risk-profile-balanced.json" with { type: "json" };
+import suggestionUnset from "./fixtures/suggestion-unset.json" with { type: "json" };
+import suggestionEth from "./fixtures/suggestion-eth.json" with { type: "json" };
+import suggestionNoSignal from "./fixtures/suggestion-no-signal.json" with { type: "json" };
+import decisionsAccepted from "./fixtures/decisions-accepted.json" with { type: "json" };
 
 export const API = "http://127.0.0.1:3001";
 
@@ -80,6 +86,12 @@ export const fixtures = {
   authChallenge,
   depthEth,
   depthEthMarked,
+  riskProfileUnset,
+  riskProfileBalanced,
+  suggestionUnset,
+  suggestionEth,
+  suggestionNoSignal,
+  decisionsAccepted,
 };
 
 /** Longest shot first, so index 0 is the leftmost Card in the row. */
@@ -101,7 +113,14 @@ export type Scenario =
   | "settle-fails"
   | "settle-pending-once"
   | "depth-marked"
-  | "deep-budget";
+  | "deep-budget"
+  /**
+   * A profile that gets saved, but whose Suggestion always comes back with a
+   * null `intent` -- the "nothing to suggest" case (SuggestionCard.tsx's
+   * "no-signal" status), distinct from the default scenario where a saved
+   * profile always fires.
+   */
+  | "no-signal";
 
 export interface Traffic {
   /** Every request the page made to the API, in order. */
@@ -282,6 +301,12 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
     };
   };
 
+  // Stateful within this stub instance, the same way `practised` is: a PUT stores
+  // the choice, and every GET after that reads it back. "Pick a profile -> it
+  // persists -> a Suggestion follows" is the actual journey; a canned GET would
+  // only prove a fixture can be served.
+  let savedProfile: "conservative" | "balanced" | "aggressive" | null = null;
+
   // Issue #32's `hold`/`release` pair -- see `Traffic.hold` above for why this exists.
   // Keyed by pathname; only ONE outstanding hold per path at a time, which is all any
   // test here needs.
@@ -359,6 +384,45 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
       case "/practice":
         practised = true;
         return json(route, practiceResult, traffic);
+
+      /*
+       * The Risk Profile / Suggestion / Decision routes. Gated on the bearer token,
+       * same as the real routes -- a real `/suggestion` call reaches a paid-for
+       * exchange lookup through the agents service, same reasoning as `/propose`.
+       * The forgeable owner header is gone (re-keyed to the wallet address a
+       * session proved under ADR-0012); the auth journey stubs cover that gate.
+       */
+      case "/risk-profile": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+
+        if (request.method() === "PUT") {
+          const body = request.postDataJSON() as { profile?: string };
+          if (body.profile !== "conservative" && body.profile !== "balanced" && body.profile !== "aggressive") {
+            return json(route, { error: "profile must be one of conservative, balanced, aggressive" }, traffic, 400);
+          }
+          savedProfile = body.profile;
+          return json(route, { profile: savedProfile }, traffic);
+        }
+        return json(route, savedProfile ? { profile: savedProfile } : riskProfileUnset, traffic);
+      }
+
+      case "/suggestion": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+
+        // No saved profile -- the real "No saved profile" branch, never a fetch to
+        // Python. Once one is saved: the no-signal fixture for the "no-signal"
+        // scenario, the fired Suggestion for every other scenario.
+        if (!savedProfile) return json(route, suggestionUnset, traffic);
+        const base = scenario === "no-signal" ? suggestionNoSignal : suggestionEth;
+        return json(route, { ...base, profile: savedProfile }, traffic);
+      }
+
+      case "/decisions": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+
+        const body = request.postDataJSON() as { decision?: "ACCEPTED" | "DISMISSED" };
+        return json(route, { ...decisionsAccepted, decision: body.decision ?? decisionsAccepted.decision }, traffic);
+      }
 
       /** Issue #31 -- always 501, the honest refusal, echoing back the request. */
       case "/rfq": {
