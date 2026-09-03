@@ -562,6 +562,39 @@ button[disabled] {
 .account-menu button:hover {
   background: var(--surface-2);
 }
+
+.wallet-picker .wallet-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wallet-picker .wallet-list button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+}
+.wallet-picker .wallet-list button:hover {
+  border-color: var(--ink-2);
+}
+.wallet-picker .wallet-generic-mark {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  flex-shrink: 0;
+}
 .tape {
   display: flex;
   align-items: center;
