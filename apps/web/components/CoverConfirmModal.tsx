@@ -160,7 +160,7 @@ export function CoverConfirmModal({
                 {quote.cover.requiredContracts.display} {quote.underlying} puts
               </dd>
               {/*
-               * ADR-0014: a Coverage is shown wherever a premium is. The Ask always buys
+               * ADR-0016: a Coverage is shown wherever a premium is. The Ask always buys
                * the whole hedge -- the cap binds as a ceiling on price, not on size -- so
                * this reads 100%, and saying so out loud is the point. "Cover" must never
                * be left to imply "fully covered" by default.

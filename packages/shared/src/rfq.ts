@@ -8,7 +8,7 @@ import { UnsignedTx } from "./fill.js";
  * single act against a price that already exists; an RFQ is a sealed-bid auction the
  * requester opens, waits out, and then chooses to settle -- two signatures with a
  * genuine wait between them, and a price that does not exist until the wait is over.
- * (ADR-0015)
+ * (ADR-0017)
  *
  * Both doors share these shapes. The trading surface's door (`kind: "TRADER"`) names a
  * strike the book does not carry; the Cover door (`kind: "COVER"`) names a Loan and lets
@@ -40,7 +40,7 @@ export const RfqAsk = z.object({
   underlying: UnderlyingSymbol,
   optionType: RfqOptionType,
   strike: Figure,
-  /** How many contracts are being asked for. For a Cover, the full hedge. (ADR-0014) */
+  /** How many contracts are being asked for. For a Cover, the full hedge. (ADR-0016) */
   contracts: Figure,
   /**
    * The Reserve Price: the most the requester will pay, in total, committed before any
@@ -54,7 +54,7 @@ export const RfqAsk = z.object({
   offersCloseAt: Figure,
   /**
    * What this Ask would protect, as a fraction of the hedge the Loan actually needs.
-   * COVER only -- null on the trading door, which hedges nothing. (ADR-0014)
+   * COVER only -- null on the trading door, which hedges nothing. (ADR-0016)
    */
   coverage: Figure.nullable(),
   /** The whole Ask as one sentence a requester can read back. */

@@ -4,7 +4,7 @@
  * Driven through the network seam against the checked-in Cover fixtures. The dialog is
  * the same shape `ConfirmModal`/`RfqModal` already use on the trading surface -- this
  * suite checks the Cover-specific content (the belief, the cap, the gate, the Coverage)
- * and the invariants ADR-0008 and ADR-0015 exist to enforce:
+ * and the invariants ADR-0008 and ADR-0017 exist to enforce:
  *
  *   - no request reaches `/rfq` before a deliberate click;
  *   - no premium is shown until a maker has actually answered;

@@ -18,7 +18,7 @@
  *
  * They do not overlap and neither knows about the other, so a board reading only the
  * first would show a Borrower nothing at all after they bought a Cover -- which is the
- * one moment they most need to see it. (ADR-0015)
+ * one moment they most need to see it. (ADR-0017)
  *
  * NOTE: the field mapping below follows the SDK's `Position` type declaration and has
  * NOT been checked against a live open Position -- doing so needs a funded wallet with

@@ -12,7 +12,7 @@
  * amount and nonce we decrypted, so the number on the confirmation screen is the number
  * the chain will charge -- and if it is not, the transaction reverts rather than
  * overcharging. No signature without a human confirmation means nothing if the human is
- * confirming a blank. (ADR-0008, ADR-0015)
+ * confirming a blank. (ADR-0008, ADR-0017)
  */
 import type { RFQRequest } from "@thetanuts-finance/thetanuts-client";
 import { getClient, chain } from "../client.js";

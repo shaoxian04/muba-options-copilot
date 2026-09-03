@@ -20,7 +20,7 @@
  *      Loan touches only `GET /cover/quote`. `POST /rfq` is reached from the
  *      confirmation's own "Request cover" button and nowhere else, and the second
  *      signature -- the one that actually pays -- needs its own separate press on a
- *      button that names the price. No unattended renewal, ever. (ADR-0008, ADR-0015)
+ *      button that names the price. No unattended renewal, ever. (ADR-0008, ADR-0017)
  *   4b. A Cover is bought by the wallet that holds the Loan, and only that wallet. A put
  *      pays whoever holds it, so a Cover bought for someone else's Loan protects the
  *      buyer and leaves the Borrower exactly as exposed as before. The page can READ any
@@ -86,7 +86,7 @@ export default function CoverPage() {
   const [doorRefusal, setDoorRefusal] = useState<string | null>(null);
   const doorOpenerRef = useRef<HTMLElement | null>(null);
 
-  // The live Cover Request (ADR-0015). Null until the Borrower has actually opened one.
+  // The live Cover Request (ADR-0017). Null until the Borrower has actually opened one.
   const [coverStatus, setCoverStatus] = useState<RfqStatus | null>(null);
   const [coverSettle, setCoverSettle] = useState<PreparedRfqSettle | null>(null);
   const [coverReceipt, setCoverReceipt] = useState<FillReceipt | null>(null);
@@ -473,7 +473,7 @@ export default function CoverPage() {
                   />
                   {/*
                     * "covers the loan in full" describes the SIZE asked for, which is
-                    * always the whole hedge (ADR-0014). It is the price that is capped,
+                    * always the whole hedge (ADR-0016). It is the price that is capped,
                     * not the size -- so the sentence is true of what is requested, and
                     * the request either gets answered at that size or not at all.
                     */}

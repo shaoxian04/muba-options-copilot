@@ -173,7 +173,7 @@ export const RfqTraderRequest = z.object({
   /** The reserve price a future Offer would have to respect -- not a premium, because none exists yet. */
   sizeUsdc: z.number().positive().max(1000),
   /**
-   * The wallet that will open this request and, later, pay for it (ADR-0015). Required
+   * The wallet that will open this request and, later, pay for it (ADR-0017). Required
    * because the OptionFactory records the requester on-chain and pays the option to
    * them: a request opened for someone else's wallet buys protection for someone else.
    * The session must already have proven ownership of it (ADR-0012).
@@ -205,7 +205,7 @@ export const RfqCoverRequest = z.object({
  * cannot be two different wallets. A put pays whoever holds it, so a Cover bought by
  * Alice against Bob's Loan protects Alice and leaves Bob exactly as exposed as before --
  * a Cover in name only. `POST /rfq` refuses unless the session has proven ownership of
- * this very address (ADR-0012, ADR-0015).
+ * this very address (ADR-0012, ADR-0017).
  */
 export type RfqCoverRequest = z.infer<typeof RfqCoverRequest>;
 
@@ -658,7 +658,7 @@ export const CoverQuote = z.object({
   /**
    * AAVE's price, not the options market's. The Liquidation Price is a fact about Aave, so
    * it is derived from the price Aave liquidates on. The two are cross-checked and a
-   * divergence refuses rather than picking one. (ADR-0013)
+   * divergence refuses rather than picking one. (ADR-0015)
    */
   spot: Figure,
   loan: z.object({
@@ -676,7 +676,7 @@ export const CoverQuote = z.object({
     /**
      * The hedge that matches the Loan exactly: `collateralAmount * liquidationThreshold`.
      * What a Cover SHOULD be. What it can actually buy is decided when a maker answers,
-     * and the gap between the two is the Coverage. (ADR-0014)
+     * and the gap between the two is the Coverage. (ADR-0016)
      */
     requiredContracts: Figure,
     tenorDays: Figure,
@@ -698,6 +698,16 @@ export const CoverQuoteResult = z.discriminatedUnion("status", [
 export type CoverQuoteResult = z.infer<typeof CoverQuoteResult>;
 
 export * from "./forecast.js";
+
+import { strategySchemas, RiskProfileName, RiskProfileResponse, DecisionStatsResponse } from "./strategy.js";
+export { RiskProfileName, RiskProfileResponse, DecisionStatsResponse };
+
+// Built here, not in strategy.ts, so TradeIntent is reused (never redeclared) without
+// a circular import back into this file -- see the comment on strategySchemas.
+export const { SuggestionResponse, DecisionRequest } = strategySchemas(TradeIntent);
+export type SuggestionResponse = z.infer<typeof SuggestionResponse>;
+export type DecisionRequest = z.infer<typeof DecisionRequest>;
+
 export * from "./fill.js";
 export * from "./rfq.js";
 export * from "./auth.js";

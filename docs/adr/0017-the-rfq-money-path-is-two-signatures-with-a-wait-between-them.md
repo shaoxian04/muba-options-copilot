@@ -45,7 +45,7 @@ unusable at rest is a bug, not a guardrail.
 
 ## Sizing: ask for the whole hedge and let the cap bind
 
-ADR-0014 says compute the full hedge, buy what the premium cap permits, and state the
+ADR-0016 says compute the full hedge, buy what the premium cap permits, and state the
 Coverage. Turning a dollar cap into a contract count needs a premium per contract -- and
 nobody has quoted one, which is the entire reason an RFQ exists. Estimating one off the
 nearest resting Order would put a second pricing path in the codebase, for a number that is
@@ -54,7 +54,7 @@ not even the one being paid.
 So a Cover Request asks for `A * LT` contracts -- the whole hedge -- with the 8 USDC cap as
 its Reserve Price. **Coverage is therefore 100% by construction**, and it is stated
 explicitly rather than left implicit: either a maker sells the whole hedge inside the cap or
-nobody answers, and both of those are true sentences a Borrower can act on. ADR-0014's
+nobody answers, and both of those are true sentences a Borrower can act on. ADR-0016's
 warning still holds and is now enforced by wording rather than by arithmetic -- "Cover"
 never implies "fully covered" on its own.
 

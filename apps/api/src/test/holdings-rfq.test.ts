@@ -4,7 +4,7 @@
  * Thetanuts has two, and they do not overlap: the OptionBook's, which knows what was
  * filled against a resting Order, and the OptionFactory's State API, which knows what was
  * minted by settling a sealed-bid request. Every Cover and every custom strike lands in
- * the second one (ADR-0015).
+ * the second one (ADR-0017).
  *
  * A board reading only the first is not obviously broken -- it renders, it is fast, and
  * it is empty. A Borrower who has just bought a Cover, at the exact moment they most want

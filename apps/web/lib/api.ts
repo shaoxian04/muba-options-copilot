@@ -11,16 +11,18 @@
  * same id.
  */
 import type {
-  Card, ConversationTurn, CoinAskResult, Deck, DepthView, ExpiryOption, Figure, Holding,
-  MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, UnderlyingSymbol,
-  CoverQuote, CoverQuoteResult, CoverRefusal,
+  Card, ConversationTurn, CoinAskResult, CoverQuote, CoverQuoteResult, CoverRefusal,
+  DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding,
+  MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, RiskProfileName,
+  RiskProfileResponse, SuggestionResponse, UnderlyingSymbol,
   PreparedRfq, PreparedRfqCancel, PreparedRfqSettle, RfqAsk, RfqPhase, RfqStatus,
 } from "@copilot/shared";
 
 export type {
-  Card, ConversationTurn, CoinAskResult, Deck, DepthView, ExpiryOption, Figure, Holding,
-  MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, UnderlyingSymbol,
-  CoverQuote, CoverQuoteResult, CoverRefusal,
+  Card, ConversationTurn, CoinAskResult, CoverQuote, CoverQuoteResult, CoverRefusal,
+  DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding,
+  MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, RiskProfileName,
+  RiskProfileResponse, SuggestionResponse, UnderlyingSymbol,
   PreparedRfq, PreparedRfqCancel, PreparedRfqSettle, RfqAsk, RfqPhase, RfqStatus,
 };
 
@@ -251,7 +253,7 @@ export const practice = (proposalId: string): Promise<{ holding: Holding }> =>
   call<{ holding: Holding }>("/practice", { method: "POST", body: JSON.stringify({ proposalId }) });
 
 /**
- * Open a sealed-bid request for a strike the book does not carry (issue #31, ADR-0015).
+ * Open a sealed-bid request for a strike the book does not carry (issue #31, ADR-0017).
  *
  * Returns the request already built and the ONE transaction the Trader's own wallet must
  * send to open it. Nothing has been signed at this point and no USDC has moved -- but the
@@ -371,3 +373,39 @@ export const getCoverQuote = (q: {
   signal?: AbortSignal;
 }): Promise<CoverQuoteResult> =>
   call<CoverQuoteResult>(`/cover/quote?address=${encodeURIComponent(q.address)}`, { signal: q.signal });
+
+/**
+ * The Trader's saved Risk Profile, or `null` if they have never chosen one -- not an
+ * error, same as an empty board is not an error. Token-gated like /forecast/*.
+ */
+export const getRiskProfile = (): Promise<RiskProfileName | null> =>
+  call<RiskProfileResponse>("/risk-profile", { headers: authHeaders() }).then((r) => r.profile);
+
+/** Saves the Trader's Risk Profile. Asked once; this is also how they change it later. */
+export const setRiskProfile = (profile: RiskProfileName): Promise<RiskProfileName> =>
+  call<RiskProfileResponse>("/risk-profile", {
+    method: "PUT",
+    body: JSON.stringify({ profile }),
+    headers: authHeaders(),
+  }).then((r) => r.profile as RiskProfileName);
+
+/**
+ * The ETH Suggestion for the Trader's saved Risk Profile. `profile`/`intent` come back
+ * null together when nothing has fired or nothing is saved yet -- not an error, same as
+ * `getRiskProfile` returning null. Token-gated, same as /risk-profile.
+ */
+export const getSuggestion = (): Promise<SuggestionResponse> =>
+  call<SuggestionResponse>("/suggestion", { headers: authHeaders() });
+
+/**
+ * Records what the Trader did with a Suggestion -- accepted it or dismissed it. Spends
+ * nothing and signs nothing (see apps/api/src/app.ts's POST /decisions doc comment):
+ * it's a note about their choice, not an act on their behalf. Token-gated and
+ * rate-limited on the server like the other DB-touching routes.
+ */
+export const recordDecision = (body: DecisionRequest): Promise<unknown> =>
+  call<unknown>("/decisions", {
+    method: "POST",
+    body: JSON.stringify(body),
+    headers: authHeaders(),
+  });

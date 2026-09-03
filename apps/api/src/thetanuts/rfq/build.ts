@@ -47,7 +47,7 @@ export interface RfqAskInput {
   strike: number;
   /** Unix seconds. When the option itself expires: the Lapse. */
   expirySeconds: number;
-  /** How many contracts. For a Cover, the full hedge `A * LT`. (ADR-0014) */
+  /** How many contracts. For a Cover, the full hedge `A * LT`. (ADR-0016) */
   contracts: number;
   /**
    * The most the requester will pay IN TOTAL, in USDC. The SDK takes a per-contract
@@ -72,7 +72,7 @@ export interface BuiltRfq {
  * `numContracts` is carried in the collateral token's decimals -- 6 for USDC -- so a
  * hedge below one millionth of a contract rounds to zero on chain. A zero-size request
  * is accepted by nothing and would fail with a revert string no requester could act on,
- * so it is refused here with a sentence instead. Reachable in practice: ADR-0014's demo
+ * so it is refused here with a sentence instead. Reachable in practice: ADR-0016's demo
  * Loan of 0.001 WETH needs 0.00083 contracts, which is fine -- a Loan a thousand times
  * smaller is not.
  */

@@ -999,7 +999,7 @@ test.describe("the golden path", () => {
  *
  * Unlike the Card confirmation, this journey has a WAIT in the middle: an RFQ opens a
  * sealed-bid auction, so there are two signatures with a real pause between them and no
- * price at all until a maker answers (ADR-0015). What these tests hold is that the pause
+ * price at all until a maker answers (ADR-0017). What these tests hold is that the pause
  * is told truthfully -- no invented premium, no fake pending trade, a clear answer when
  * nobody bids -- alongside the same shape and accessibility bar every other dialog on
  * this surface is held to.

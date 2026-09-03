@@ -48,7 +48,18 @@ export async function fetchIndicators(symbol: string, deps: IndicatorsDeps = def
   // status rides along so the route can say that, rather than blame an outage.
   if (!res.ok) throw new IndicatorsUnavailable(`Agents service returned ${res.status} for ${trimmed}`, res.status);
 
-  const parsed = Indicators.safeParse(await res.json());
+  let payload: unknown;
+  try {
+    payload = await res.json();
+  } catch (e: any) {
+    throw new IndicatorsUnavailable(
+      `Agents service sent a body that isn't JSON for ${trimmed}`,
+      undefined,
+      e?.message ?? String(e)
+    );
+  }
+
+  const parsed = Indicators.safeParse(payload);
   if (!parsed.success)
     throw new IndicatorsUnavailable(
       `Agents service sent an unrecognized Indicators shape for ${trimmed}`,

@@ -30,7 +30,7 @@ import type { PracticePosition } from "./practice.js";
  *   - `request` carries the full on-chain parameters, including the requester key.
  *   - `keyPair` is the ECDH private key makers encrypt their bids to. It decrypts and
  *     does nothing else -- it cannot sign a transaction and it never touches money
- *     (ADR-0015). It is generated per request rather than per wallet, so one request's
+ *     (ADR-0017). It is generated per request rather than per wallet, so one request's
  *     bids stay unreadable to every other.
  *   - `reservedUsdc` is what this request is holding against the Risk Budget. A Cover's
  *     premium counts against the same ceiling a Fill does (CONTEXT-MAP), and until a
@@ -82,7 +82,7 @@ export interface Session {
    * Sealed-bid requests this session has opened, keyed by the opaque id the browser was
    * given. Held for the same reason a proposal is: the request, the key that reads its
    * bids and the figures the requester was shown must all survive the wait in the middle
-   * without any of them crossing the wire. (ADR-0015)
+   * without any of them crossing the wire. (ADR-0017)
    */
   rfqs: Map<string, RfqRecord>;
   /** An outstanding sign-in challenge this session has not yet completed, if any. */

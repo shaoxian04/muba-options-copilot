@@ -15,7 +15,7 @@
  * price that already exists. An RFQ opens a sealed-bid auction, waits out a window the
  * protocol sets, and then settles against a price discovered inside it. That is two
  * signatures with a real wait between them, and no amount of interface polish collapses
- * it into one. (ADR-0015)
+ * it into one. (ADR-0017)
  *
  * **Nothing here originates a price.** There is no premium to derive: an option nobody
  * has quoted has no price, and the only number that ever appears as one comes out of a
@@ -99,7 +99,7 @@ function buildAsk(input: {
   reservePriceUsdc: number;
   expiryIso: string;
   offerEndSeconds: number;
-  /** COVER only: the hedge the Loan actually needs, so Coverage can be stated. (ADR-0014) */
+  /** COVER only: the hedge the Loan actually needs, so Coverage can be stated. (ADR-0016) */
   requiredContracts: number | null;
 }): RfqAsk {
   const coverageFigure =
@@ -112,7 +112,7 @@ function buildAsk(input: {
   const offersCloseAt = moment(new Date(input.offerEndSeconds * 1000).toISOString());
 
   const what = input.optionType === "PUT" ? "puts" : "calls";
-  // ADR-0014: a Coverage is shown wherever a premium is, and the sentence is where this
+  // ADR-0016: a Coverage is shown wherever a premium is, and the sentence is where this
   // Ask carries one. Under this door's sizing it is always the whole hedge, and saying so
   // is the point -- "Cover" must never be read as "fully covered" by default.
   const coverageClause = coverageFigure ? ` That is ${coverageFigure.display} of what this loan needs.` : "";
@@ -154,7 +154,7 @@ type Derivation =
  * read-only `/cover/quote` uses. A stale or tampered browser cannot change what is
  * actually requested. (ADR-0006, issue #43)
  *
- * Sizing is ADR-0014's first half taken literally: ask for the whole hedge and let the
+ * Sizing is ADR-0016's first half taken literally: ask for the whole hedge and let the
  * premium cap bind as the Reserve Price. Coverage is therefore 100% by construction --
  * either a maker sells the full hedge inside the cap or nobody answers, and both of those
  * are true sentences a Borrower can act on. What this deliberately does NOT do is shrink
@@ -511,7 +511,7 @@ export async function rfqRoutes(app: FastifyInstance): Promise<void> {
    * The premium returned here is a maker's own decrypted bid -- not an estimate, and not
    * the Reserve Price. That is the whole reason for settling early rather than waiting out
    * the reveal window: a requester confirms a number rather than a blank, and "no
-   * signature without a human confirmation" means nothing otherwise. (ADR-0008, ADR-0015)
+   * signature without a human confirmation" means nothing otherwise. (ADR-0008, ADR-0017)
    */
   app.post("/rfq/settle/prepare", async (req, reply): Promise<PreparedRfqSettle | undefined> => {
     if (!requireToken(req, reply)) return;

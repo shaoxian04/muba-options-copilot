@@ -8,7 +8,7 @@
  * have to learn a second interface for the rarer thing.
  *
  * What differs is that this dialog has THREE states rather than one, because an RFQ is
- * not a Fill (ADR-0015):
+ * not a Fill (ADR-0017):
  *
  *   1. **Asking.** Controls live, no price anywhere, because none exists. The size is
  *      labelled the Reserve Price and the Max Loss, which is what it actually is.

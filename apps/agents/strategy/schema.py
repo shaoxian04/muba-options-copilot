@@ -146,6 +146,15 @@ class StrategyDefinition(BaseModel):
     enabled: bool
     # analysis surface (ADR-0005): free text lives here, never in `then`
     notes: str = ""
+    # short, non-numeric line for the Suggestion card (ADR-0005 keeps the card
+    # figure-free) -- must never contain a digit. Optional so the four
+    # user-authored examples/*.json keep validating without it.
+    summary: str = ""
+    # which market condition this band fires in, for the card's own first line
+    # rather than the frontend parsing it out of `name`. Optional/empty for the
+    # same reason as `summary`: the four user-authored examples/*.json must
+    # keep validating without it.
+    band: Literal["weak", "calm", ""] = ""
     # empty list would vacuously "always fire", which nobody means, so reject it
     when: list[Condition] = Field(min_length=1)
     then: Then
