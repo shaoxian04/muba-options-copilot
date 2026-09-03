@@ -14,7 +14,7 @@
  */
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { cards, fixtures, FORBIDDEN, installFakeWallet, signIn, stubApi, TEST_API_TOKEN } from "./stub";
+import { cards, fixtures, FORBIDDEN, installFakeWallet, installFakeWallets, signIn, stubApi, TEST_API_TOKEN } from "./stub";
 
 const agentCard = fixtures.proposeAgent.cardRef;
 const overrideCard = cards.find((c) => c.cardRef !== agentCard)!;
@@ -42,15 +42,20 @@ const deal = async (page: Page) => {
 };
 
 /**
- * Signs in (ADR-0013) and connects the fake wallet. `AccountControl` is a persistent,
- * always-visible control -- NOT inside `ConfirmModal` -- so this must run before any
- * confirmation opens: the modal's `.scrim` covers the full viewport at a higher
- * z-index, and would make the button underneath unclickable once one is open.
+ * Signs in (ADR-0013) and connects the fake wallet through the picker (the multi-wallet
+ * connector). `AccountControl` is a persistent, always-visible control -- NOT inside
+ * `ConfirmModal` -- so this must run before any confirmation opens: the modal's
+ * `.scrim` covers the full viewport at a higher z-index, and would make the button
+ * underneath unclickable once one is open.
  */
 const connectWallet = async (page: Page) => {
   await signIn(page);
   await page.reload();
   await page.getByTestId("connect-wallet").click();
+  await expect(page.getByTestId("wallet-picker")).toBeVisible();
+  // installFakeWallet always registers rdns "test.fakewallet0" as its one extension --
+  // picking it is what every existing single-wallet journey means by "connect the wallet."
+  await page.getByTestId("wallet-option-test.fakewallet0").click();
   await expect(page.getByTestId("wallet-address")).toBeVisible();
 };
 
@@ -610,6 +615,7 @@ test.describe("finishing, for real and for practice", () => {
     const connect = page.getByTestId("connect-wallet");
     await expect(connect).toHaveText("Connect wallet");
     await connect.click();
+    await page.getByTestId("wallet-option-test.fakewallet0").click();
     await expect(page.getByTestId("wallet-address")).toBeVisible();
     await expect(page.getByTestId("connect-wallet")).toHaveCount(0);
   });
@@ -792,6 +798,97 @@ test.describe("sign-in gates the wallet, not the Deck (ADR-0013)", () => {
 
     await expect(page.getByTestId("signin-link")).toHaveCount(0);
     await expect(page.getByTestId("connect-wallet")).toBeVisible();
+  });
+});
+
+test.describe("the wallet picker (multi-wallet connector)", () => {
+  test("lists every detected extension by its own name, and connects to the one clicked", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallets(page, [
+      { rdns: "io.metamask", name: "MetaMask" },
+      { rdns: "com.coinbase.wallet", name: "Coinbase Wallet" },
+    ]);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await expect(page.getByTestId("wallet-option-io.metamask")).toContainText("MetaMask");
+    await expect(page.getByTestId("wallet-option-com.coinbase.wallet")).toContainText("Coinbase Wallet");
+
+    await page.getByTestId("wallet-option-io.metamask").click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+    await expect(page.getByTestId("wallet-picker")).toHaveCount(0);
+  });
+
+  test("shows WalletConnect even with no extension installed at all", async ({ page }) => {
+    await stubApi(page);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await expect(page.getByTestId("wallet-option-walletconnect")).toContainText("WalletConnect");
+    await expect(page.getByTestId("wallet-picker-empty")).toHaveCount(0); // WalletConnect alone still means "something to pick"
+  });
+
+  test("closing the picker without choosing connects nothing", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await installFakeWallets(page, [{ rdns: "io.metamask", name: "MetaMask" }]);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await expect(page.getByTestId("wallet-picker")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("wallet-picker")).toHaveCount(0);
+    await expect(page.getByTestId("wallet-address")).toHaveCount(0);
+    expect(traffic.paths()).not.toContain("/auth/challenge");
+  });
+
+  test("a backdrop click also dismisses the picker", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallets(page, [{ rdns: "io.metamask", name: "MetaMask" }]);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await page.getByTestId("wallet-picker-scrim").click({ position: { x: 2, y: 2 } });
+    await expect(page.getByTestId("wallet-picker")).toHaveCount(0);
+  });
+
+  test("has no critical or serious accessibility violations", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallets(page, [{ rdns: "io.metamask", name: "MetaMask" }]);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await expect(page.getByTestId("wallet-picker")).toBeVisible();
+
+    const { violations } = await new AxeBuilder({ page }).analyze();
+    expect(violations.filter((v) => v.impact === "critical" || v.impact === "serious").map((v) => v.id)).toEqual([]);
+  });
+
+  test("traps focus inside the dialog", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallets(page, [
+      { rdns: "io.metamask", name: "MetaMask" },
+      { rdns: "com.coinbase.wallet", name: "Coinbase Wallet" },
+    ]);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    const dialog = page.getByTestId("wallet-picker");
+    const focusable = dialog.locator('button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])');
+    const count = await focusable.count();
+    expect(count).toBeGreaterThan(1);
+
+    await focusable.first().focus();
+    await page.keyboard.press("Shift+Tab");
+    await expect(focusable.last()).toBeFocused();
+
+    await page.keyboard.press("Tab");
+    await expect(focusable.first()).toBeFocused();
   });
 });
 

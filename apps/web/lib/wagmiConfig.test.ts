@@ -7,10 +7,13 @@ describe("the wagmi config", () => {
     expect(config.chains[0]!.id).toBe(8453);
   });
 
-  it("registers exactly one static connector -- WalletConnect", () => {
-    // Extensions are never statically registered here (wallet.ts builds one on demand
-    // from what MIPD has actually detected) -- this config's only fixed connector is
-    // WalletConnect, since that one is always the same regardless of what's installed.
-    expect(config.connectors).toHaveLength(1);
+  it("registers no connectors statically -- every one is built on demand, per click", () => {
+    // Verified against a real browser: registering walletConnect() here eagerly
+    // constructs it at THIS MODULE'S OWN load time (createConfig invokes every
+    // connector factory immediately, not lazily on first connect), which pulls in
+    // Reown's full AppKit stack and fires a real network call to its telemetry
+    // endpoint on every single page load. wallet.ts builds a fresh connector --
+    // injected() or walletConnect() -- only once a Trader actually picks one.
+    expect(config.connectors).toHaveLength(0);
   });
 });

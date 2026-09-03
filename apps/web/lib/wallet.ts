@@ -15,14 +15,15 @@
 import {
   connect,
   getConnection,
-  getTransactionReceipt,
+  getConnectorClient,
   injected,
   reconnect,
   sendTransaction,
   signMessage as wagmiSignMessage,
 } from "@wagmi/core";
+import { getTransactionReceipt as viemGetTransactionReceipt } from "viem/actions";
 import type { UnsignedTx } from "@copilot/shared";
-import type { Store as MipdStore } from "mipd";
+import { createStore as createMipdStore } from "mipd";
 import { config } from "./wagmiConfig";
 
 export class WalletUnavailable extends Error {}
@@ -30,14 +31,17 @@ export class WalletUnavailable extends Error {}
 export type WalletOption = { id: string; name: string; icon: string | null };
 
 /**
- * `config.mipd` exists on the real object at runtime (verified directly against the
- * installed package) -- `@wagmi/core@3.6.5`'s own published types just don't expose it
- * through `createConfig`'s inferred return type. One cast, here, rather than one at
- * every call site below.
+ * This app's own EIP-6963 discovery store, rather than reading `config.mipd`.
+ * `@wagmi/core`'s own internal wiring of one was verified, against a real production
+ * build in a real browser, to leave `config.mipd` `undefined` even with `window`
+ * present, a static `injected()` connector registered, and
+ * `multiInjectedProviderDiscovery` passed explicitly -- some bundling interaction broke
+ * it in a way this investigation didn't fully resolve. `mipd`'s own `createStore()`,
+ * called directly here, was verified to work correctly in that same build. `createStore()`
+ * is itself safe under Node (no `window`) -- its internal `requestProviders` call
+ * checks for `window` before touching it and simply no-ops otherwise.
  */
-function mipdStore(): MipdStore | undefined {
-  return (config as unknown as { mipd: MipdStore | undefined }).mipd;
-}
+const mipdStore = createMipdStore();
 
 /**
  * Every wallet a Trader can pick right now: one entry per browser extension MIPD has
@@ -46,7 +50,7 @@ function mipdStore(): MipdStore | undefined {
  * what's installed, since it needs nothing detected to be offered.
  */
 export function listAvailableWallets(): WalletOption[] {
-  const extensions: WalletOption[] = (mipdStore()?.getProviders() ?? []).map((detail) => ({
+  const extensions: WalletOption[] = mipdStore.getProviders().map((detail) => ({
     id: detail.info.rdns,
     name: detail.info.name,
     icon: detail.info.icon,
@@ -57,33 +61,37 @@ export function listAvailableWallets(): WalletOption[] {
 /**
  * Extensions can announce themselves asynchronously, up to roughly a second after page
  * load -- a Trader who opens the picker immediately may see it grow by one or two
- * entries while it's open. Returns a no-op unsubscribe when there is nothing to watch
- * (no browser, or multi-injected discovery unavailable), so callers never have to check
- * for that themselves.
+ * entries while it's open.
  */
 export function watchAvailableWallets(onChange: (wallets: WalletOption[]) => void): () => void {
-  if (!mipdStore()) return () => {};
-  return mipdStore()!.subscribe(() => onChange(listAvailableWallets()));
+  return mipdStore.subscribe(() => onChange(listAvailableWallets()));
+}
+
+/** Builds a fresh `injected({ target })` connector for one MIPD-detected extension. */
+function injectedConnectorFor(rdns: string) {
+  const detail = mipdStore.getProviders().find((d) => d.info.rdns === rdns);
+  if (!detail) throw new WalletUnavailable("That wallet is no longer available. Refresh and try again.");
+  return injected({
+    target: { id: detail.info.rdns, name: detail.info.name, icon: detail.info.icon, provider: detail.provider },
+  });
 }
 
 /**
  * Connects the wallet the Trader picked from `listAvailableWallets()` and returns its
- * address. `"walletconnect"` uses the one connector already registered in
- * `wagmiConfig.ts`; every other id names an `rdns` MIPD detected, and a fresh
- * `injected({ target })` connector is built for it on the spot -- there is nothing to
- * pre-register, since which extensions exist is only known at click time.
+ * address. Every id but `"walletconnect"` names an `rdns` MIPD detected. `"walletconnect"`
+ * is built on-demand too, via a dynamic import -- `@wagmi/connectors/walletConnect` pulls
+ * in Reown's full AppKit stack, and constructing it eagerly (as a static `wagmiConfig.ts`
+ * connector, or even a top-level import here) was verified against a real browser to
+ * fire a real network call to Reown's telemetry endpoint on every page load, whether or
+ * not a Trader ever touches WalletConnect at all.
  */
 export async function connectWallet(walletId: string): Promise<string> {
   const connector =
     walletId === "walletconnect"
-      ? config.connectors[0]!
-      : (() => {
-          const detail = (mipdStore()?.getProviders() ?? []).find((d) => d.info.rdns === walletId);
-          if (!detail) throw new WalletUnavailable("That wallet is no longer available. Refresh and try again.");
-          return injected({
-            target: { id: detail.info.rdns, name: detail.info.name, icon: detail.info.icon, provider: detail.provider },
-          });
-        })();
+      ? (await import("@wagmi/connectors/walletConnect")).walletConnect({
+          projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "",
+        })
+      : injectedConnectorFor(walletId);
   const result = await connect(config, { connector });
   const address = result.accounts[0];
   if (!address) throw new WalletUnavailable("The wallet did not return an address.");
@@ -95,16 +103,24 @@ export async function connectWallet(walletId: string): Promise<string> {
  *
  * Two different mechanisms, for two different kinds of wallet: an extension is asked
  * directly (`eth_accounts`, which every EIP-1193 provider answers without prompting),
- * matching exactly what this function did before wagmi existed. WalletConnect has no
- * such "ask without prompting" primitive at all -- resuming a previous pairing is only
- * possible through wagmi's own persisted session, so `reconnect` is the fallback for
- * that case alone.
+ * matching exactly what this function did before wagmi existed. Finding a live account
+ * that way also establishes a REAL wagmi connection for it (`connect()`, not just a read)
+ * -- `eth_requestAccounts` resolves instantly with no prompt when the origin is already
+ * authorised (true of every real wallet, and this suite's fake one), so this never
+ * surprises a Trader with a popup; it just brings wagmi's own connection state in line
+ * with what `eth_accounts` already reported, which `signMessage`/`sendTx` both need to
+ * find a connector to work through. WalletConnect has no "ask without prompting"
+ * primitive at all -- resuming a previous pairing is only possible through wagmi's own
+ * persisted session, so `reconnect` is the fallback for that case alone.
  */
 export async function connectedAddress(): Promise<string | null> {
-  for (const detail of mipdStore()?.getProviders() ?? []) {
+  for (const detail of mipdStore.getProviders()) {
     try {
       const accounts = (await detail.provider.request({ method: "eth_accounts" })) as string[];
-      if (accounts[0]) return accounts[0];
+      if (accounts[0]) {
+        await connect(config, { connector: injectedConnectorFor(detail.info.rdns) }).catch(() => {});
+        return accounts[0];
+      }
     } catch {
       // This extension refused or errored answering eth_accounts -- try the next one.
     }
@@ -124,10 +140,21 @@ export async function signMessage(message: string): Promise<string> {
  * (`eth_blockNumber`, `eth_getBlockByNumber`, `eth_getTransactionByHash`) to support
  * multi-confirmation waits this app has never needed. A direct poll needs only
  * `eth_getTransactionReceipt`, verified against a real `viem` client.
+ *
+ * Deliberately asks the CONNECTED WALLET's own provider (`getConnectorClient` + viem's
+ * plain `getTransactionReceipt`), not `@wagmi/core`'s own `getTransactionReceipt(config,
+ * ...)` -- that one is a *public*-client action, always backed by `wagmiConfig.ts`'s
+ * `http()` transport (a real Base RPC endpoint) regardless of which wallet is connected.
+ * Verified directly: it made this poll query real mainnet for a test's fake transaction
+ * hash, which real mainnet correctly never finds, hanging the whole confirmation. Every
+ * real wallet (MetaMask included) answers `eth_getTransactionReceipt` itself, and this
+ * is exactly what `wallet.ts` did before wagmi existed (through the same injected
+ * provider used for everything else).
  */
 async function pollForReceipt(hash: `0x${string}`, attempts = 40, intervalMs = 1000) {
+  const client = await getConnectorClient(config);
   for (let i = 0; i < attempts; i++) {
-    const receipt = await getTransactionReceipt(config, { hash }).catch(() => null);
+    const receipt = await viemGetTransactionReceipt(client, { hash }).catch(() => null);
     if (receipt) return receipt;
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
