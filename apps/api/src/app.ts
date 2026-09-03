@@ -175,15 +175,6 @@ function requireForecastToken(req: any, reply: any): boolean {
 }
 
 /**
- * Who a row belongs to: the wallet this session proved it holds (ADR-0012), lowercased
- * so one Trader is one key whatever case their wallet reports.
- *
- * Nothing the client says is involved. The old x-copilot-owner header let any caller name
- * any owner and read or overwrite that owner's row; this cannot be asserted, only proven.
- */
-const ownerFor = (s: Session): string | null => s.verifiedWallet?.toLowerCase() ?? null;
-
-/**
  * A Card reference, resolved back to the Order it names.
  *
  * Unknown, expired and another session's references are all one answer, deliberately.
@@ -289,7 +280,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       // this session already proved it via a real signature (ADR-0012); reporting that
       // back isn't a new trust decision, just not discarding one already made. Whatever
       // casing the wallet originally signed with, unchanged -- callers compare
-      // case-insensitively (same convention as `ownerFor`).
+      // case-insensitively, same as any other wallet address comparison in this file.
       verifiedWallet: s.verifiedWallet,
     };
   });
@@ -709,8 +700,8 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.get("/risk-profile", async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const owner = ownerFor(sessionFor(req.headers));
-    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    const owner = await requireAccount(req, reply);
+    if (!owner) return;
     try {
       return { profile: await getRiskProfile(owner) };
     } catch (e) {
@@ -720,8 +711,8 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.put("/risk-profile", async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const owner = ownerFor(sessionFor(req.headers));
-    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    const owner = await requireAccount(req, reply);
+    if (!owner) return;
     const parsed = RiskProfileName.safeParse((req.body as any)?.profile);
     if (!parsed.success) return reply.code(400).send({ error: "profile must be one of conservative, balanced, aggressive" });
     try {
@@ -739,8 +730,8 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.get("/suggestion", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const owner = ownerFor(sessionFor(req.headers));
-    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    const owner = await requireAccount(req, reply);
+    if (!owner) return;
 
     let profile;
     try {
@@ -795,8 +786,8 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.post("/decisions", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const owner = ownerFor(sessionFor(req.headers));
-    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    const owner = await requireAccount(req, reply);
+    if (!owner) return;
     const parsed = DecisionRequest.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid decision", issues: parsed.error.issues });
     try {
@@ -811,8 +802,8 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.get("/decisions/stats", async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const owner = ownerFor(sessionFor(req.headers));
-    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    const owner = await requireAccount(req, reply);
+    if (!owner) return;
     const strategyId = typeof (req.query as any)?.strategyId === "string" ? (req.query as any).strategyId : undefined;
     try {
       return await decisionStats(owner, strategyId);

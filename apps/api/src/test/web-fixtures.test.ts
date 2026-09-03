@@ -174,21 +174,21 @@ const post = async (url: string, payload: Record<string, unknown>, session = SES
 const DOWN_1 = "/deck?asset=ETH&direction=DOWN&horizonDays=1&sizeUsdc=2";
 const intent = { underlying: "ETH", direction: "DOWN", sizeUsdc: 2, horizonDays: 1 } as const;
 
-// The Risk Profile / Suggestion / Decision routes now key on the session's own proven
-// wallet (ADR-0012), not a caller-named header -- so these fixtures need a session that
-// has actually been through /auth/challenge + /auth/verify, same as SESSION above once
-// proveWallet(app, SESSION) runs. OWNER is what that verification resolves to: the
-// TRADER_ADDRESS stub-client.ts's proveWallet proves, lowercased.
+// The Risk Profile / Suggestion / Decision routes now key on the signed-in account
+// (ADR-0017), not a wallet -- so these three helpers below just need an account token,
+// no wallet proof. OWNER is still used purely to compose the mocked response bodies
+// below (riskProfiles.js/decisions.js are mocked at the module boundary in this file,
+// so nothing here actually reads it off a session).
 const OWNER = TRADER_ADDRESS.toLowerCase();
 
 const getAsOwner = async (url: string) =>
-  (await app.inject({ method: "GET", url, headers: { "x-session-id": SESSION } })).json();
+  (await app.inject({ method: "GET", url, headers: { "x-session-id": SESSION, "x-account-token": ACCOUNT_TOKEN } })).json();
 
 const putAsOwner = async (url: string, payload: Record<string, unknown>) =>
-  (await app.inject({ method: "PUT", url, headers: { "x-session-id": SESSION }, payload })).json();
+  (await app.inject({ method: "PUT", url, headers: { "x-session-id": SESSION, "x-account-token": ACCOUNT_TOKEN }, payload })).json();
 
 const postAsOwner = async (url: string, payload: Record<string, unknown>) =>
-  (await app.inject({ method: "POST", url, headers: { "x-session-id": SESSION }, payload })).json();
+  (await app.inject({ method: "POST", url, headers: { "x-session-id": SESSION, "x-account-token": ACCOUNT_TOKEN }, payload })).json();
 
 beforeAll(async () => {
   resetStub();
