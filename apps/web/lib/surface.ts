@@ -49,7 +49,7 @@ import {
   listAvailableWallets,
   recentConnectionWithinTtl,
   sendTx,
-  WALLETCONNECT_ID,
+  setWalletMemoryScope,
   WalletConnectionCancelled,
   signMessage,
   walletOptionFor,
@@ -289,7 +289,8 @@ export interface Surface {
   recentWallet: WalletOption | null;
   onOpenWalletPicker: () => void;
   onCloseWalletPicker: () => void;
-  onPickWallet: (walletId: string) => void;
+  /** `fresh`: force a new WalletConnect pairing rather than resuming a stale session -- see `wallet.ts`'s `connectWallet`. */
+  onPickWallet: (walletId: string, options?: { fresh?: boolean }) => void;
   verifyWallet: () => Promise<void>;
   onDisconnectWallet: () => void;
 
@@ -507,6 +508,20 @@ export function useSurface(): Surface {
   const [recentWallet, setRecentWallet] = useState<WalletOption | null>(null);
 
   /**
+   * The same "latest wins" reasoning as `beginLatestOnly`/`isLatest` below, applied to
+   * wallet connects rather than Deck polls: two different things can now try to connect
+   * a wallet -- the silent on-load reconnect (below) and an explicit `pickWallet` click
+   * -- where before only the latter ever existed. Without this, a Trader who clicks
+   * "WalletConnect" to switch wallets while the page's own silent "Last used" reconnect
+   * is still resolving could see that stale attempt land afterward and overwrite their
+   * deliberate choice -- exactly the bug this pattern already exists to close for /deck
+   * and /depth. Every attempt claims the next number before doing anything async, and
+   * only applies its result if it's still the most recent one claimed by the time it
+   * resolves.
+   */
+  const walletConnectSeqRef = useRef(0);
+
+  /**
    * Google puts the profile photo under `avatar_url` in Supabase's normalized
    * `user_metadata` -- `picture` is the raw OAuth claim some providers use instead,
    * kept as a fallback rather than assumed absent. Email/password sign-in has neither,
@@ -535,12 +550,22 @@ export function useSurface(): Surface {
 
   // Picks up an existing sign-in on first paint, then reacts to every sign-in/sign-out
   // from then on -- including the redirect back from /login (ADR-0014).
+  //
+  // `setWalletMemoryScope` runs synchronously in the SAME callback as `setAccount`,
+  // never in a separate effect reacting to `account` state -- that ordering is what
+  // guarantees `wallet.ts`'s account-scoped storage is already pointed at the right
+  // account by the time the render this triggers commits and the wallet-reconnect
+  // effect below (which depends on `account`) runs. See `setWalletMemoryScope`'s own
+  // comment in `wallet.ts` for why this exists: a shared device must never let a newly
+  // signed-in Trader see, or silently reconnect to, the previous Trader's wallet.
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
+      setWalletMemoryScope(data.session?.user.id ?? null);
       if (data.session) setAccount(accountFrom(data.session));
       scrubTokenFromUrl();
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setWalletMemoryScope(session?.user.id ?? null);
       setAccount(session ? accountFrom(session) : null);
       scrubTokenFromUrl();
     });
@@ -584,70 +609,128 @@ export function useSurface(): Surface {
   }, [walletAddress]);
 
   /**
+   * The half of wallet verification that's safe to run without a click: only checks
+   * whether this address is already proven, via `GET /session` -- which may itself
+   * report that back from `accountStore.ts`'s durable `linked_wallets` record, not just
+   * this exact in-memory session (`app.ts`'s `/session` handler seeds it either way, so
+   * "recently proven in another tab" and "proven in this one" read the same here).
+   * Never falls through to a live challenge/sign/verify round trip on its own -- that
+   * half must always follow an explicit Trader click (see `verifyWalletFor`), never a
+   * silent page-load effect, or WalletConnect could push a surprise notification to a
+   * Trader's phone before they have done anything at all.
+   */
+  const verifyIfAlreadyProven = useCallback(async (address: string): Promise<boolean> => {
+    const current = await getSession().catch(() => null);
+    const proven = !!current?.verifiedWallet && current.verifiedWallet.toLowerCase() === address.toLowerCase();
+    if (proven) setWalletVerified(true);
+    return proven;
+  }, []);
+
+  /**
    * Proves the connected wallet is who it says it is (ADR-0012) -- a text signature,
    * never a transaction. Separate from `connectWallet` so a Trader whose signature
    * request failed or was dismissed (address set, but never verified) has a "Verify
    * wallet" button to retry with one press, rather than a dead end.
    *
-   * First checks whether the session already proved this exact address: a refresh (or
-   * reconnecting the same wallet again) doesn't need a fresh signature for something
-   * already established. This reads back a proof already made -- it does not loosen
-   * what counts as one -- and a different address, or nothing proven yet, falls
+   * First checks whether this is already proven (`verifyIfAlreadyProven`): a refresh, a
+   * new tab, or reconnecting the same wallet again doesn't need a fresh signature for
+   * something already established. This reads back a proof already made -- it does not
+   * loosen what counts as one -- and a different address, or nothing proven yet, falls
    * straight through to the normal challenge/sign/verify round trip.
    */
-  const verifyWalletFor = useCallback(async (address: string) => {
-    setWalletVerifying(true);
-    setWalletError(null);
-    try {
-      const current = await getSession().catch(() => null);
-      if (current?.verifiedWallet && current.verifiedWallet.toLowerCase() === address.toLowerCase()) {
+  const verifyWalletFor = useCallback(
+    async (address: string) => {
+      setWalletVerifying(true);
+      setWalletError(null);
+      try {
+        if (await verifyIfAlreadyProven(address)) return;
+        const { message } = await requestAuthChallenge(address);
+        const signature = await signMessage(message);
+        await verifyAuthChallenge(signature);
         setWalletVerified(true);
-        return;
+      } catch (e) {
+        setWalletError(e instanceof Error ? e.message : "Could not verify this wallet.");
+      } finally {
+        setWalletVerifying(false);
       }
-      const { message } = await requestAuthChallenge(address);
-      const signature = await signMessage(message);
-      await verifyAuthChallenge(signature);
-      setWalletVerified(true);
-    } catch (e) {
-      setWalletError(e instanceof Error ? e.message : "Could not verify this wallet.");
-    } finally {
-      setWalletVerifying(false);
-    }
-  }, []);
+    },
+    [verifyIfAlreadyProven]
+  );
 
   /**
-   * First paint: if a wallet was connected recently enough (a rolling few-hour idle
-   * window -- `recentConnectionWithinTtl`), silently reconnect it: no picker, no
-   * prompt, since the origin is already authorised and every real extension answers
-   * `eth_requestAccounts` instantly in that case. `verifyWalletFor` immediately after
-   * is what lets this also skip a fresh signature when the session already proved this
-   * exact address.
+   * A different account than a moment ago -- signing in, switching accounts, or signing
+   * all the way out -- must never keep showing a PREVIOUS Trader's wallet as connected
+   * or verified. `undefined` (not `null`) marks "haven't run yet", so the very first
+   * render (nothing was ever connected regardless) doesn't fire a pointless reset; every
+   * actual change after that does. Ordered before the reconnect effect below,
+   * deliberately: React runs one component's effects in declaration order within a
+   * commit, so any stale wallet from a previous account is always cleared before this
+   * account's own reconnect attempt (if any) has a chance to run.
+   */
+  const previousAccountIdRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const currentId = account?.userId ?? null;
+    const changed = previousAccountIdRef.current !== undefined && previousAccountIdRef.current !== currentId;
+    previousAccountIdRef.current = currentId;
+    if (!changed) return;
+    setWalletAddress(null);
+    setRecentWallet(null);
+    setWalletVerified(false);
+    setWalletVerifying(false);
+    setWalletError(null);
+  }, [account]);
+
+  /**
+   * Once an account is known: if a wallet was connected recently enough (a rolling
+   * few-hour idle window -- `recentConnectionWithinTtl`), silently reconnect it: no
+   * picker, no prompt, since the origin is already authorised and every real extension
+   * answers `eth_requestAccounts` instantly in that case. This includes WalletConnect --
+   * resuming its own session is the same local, cached-account check an extension's
+   * reconnect is; nothing about that step alone reaches a Trader's phone.
    *
-   * WalletConnect is deliberately excluded from this silent path: resuming its session
-   * isn't a local, promptless check the way an extension's is, and could push a real
-   * notification to the Trader's phone before they have clicked anything on this load
-   * at all. It still appears as the ordinary "last used" quick-pick in the picker.
+   * Gated on `account` for two reasons: ADR-0014 requires signing in before wallet
+   * actions at all, and `recentConnectionWithinTtl`/`lastConnectedWalletId` now read
+   * `wallet.ts`'s account-scoped storage (`setWalletMemoryScope`, set synchronously
+   * alongside `setAccount` above) -- attempting this before the account is known would
+   * always see empty, unscoped storage and never retry once it resolves. Depending on
+   * `account` is what makes this effect run again the moment that scope is actually set.
    *
-   * Falls back to that same picker-only flow whenever nothing recent exists, the
-   * remembered wallet is no longer available, or the silent reconnect itself fails --
-   * a Trader is never left with no way to connect just because this shortcut didn't.
+   * Only `verifyIfAlreadyProven` runs after, deliberately, never the full
+   * `verifyWalletFor`: this is a page-load effect nobody clicked, so it may only
+   * confirm a proof that already exists, never request a fresh signature on its own --
+   * that would mean WalletConnect could push a surprise notification to a Trader's
+   * phone before they have done anything at all. An address that isn't already proven
+   * just leaves `walletVerified` false, same as it would if this whole effect never
+   * ran -- AccountControl's ordinary "Verify wallet" retry button covers it from there.
+   *
+   * Falls back to the picker-only flow whenever nothing recent exists, the remembered
+   * wallet is no longer available, or the silent reconnect itself fails -- a Trader is
+   * never left with no way to connect just because this shortcut didn't.
    */
   useEffect(() => {
     const showRecentWalletOption = () =>
       void lastConnectedWalletId().then((id) => setRecentWallet(id ? walletOptionFor(id) : null));
 
+    if (!account) return;
+
     const recentId = recentConnectionWithinTtl();
-    if (!recentId || recentId === WALLETCONNECT_ID) {
+    if (!recentId) {
       showRecentWalletOption();
       return;
     }
+    const seq = ++walletConnectSeqRef.current;
     connectWalletById(recentId)
       .then((address) => {
+        // A Trader who clicked something in the picker while this was still resolving
+        // already has priority -- see `walletConnectSeqRef`'s own comment. Applying a
+        // stale "Last used" result on top of their deliberate pick would be exactly the
+        // "stuck on the wrong wallet" bug this guard exists to prevent.
+        if (walletConnectSeqRef.current !== seq) return;
         setWalletAddress(address);
-        void verifyWalletFor(address);
+        void verifyIfAlreadyProven(address);
       })
       .catch(showRecentWalletOption);
-  }, [verifyWalletFor]);
+  }, [account, verifyIfAlreadyProven]);
 
   const openWalletPicker = useCallback(() => {
     setAvailableWallets(listAvailableWallets());
@@ -665,23 +748,30 @@ export function useSurface(): Surface {
   }, [walletPickerOpen]);
 
   const pickWallet = useCallback(
-    async (walletId: string) => {
+    async (walletId: string, options?: { fresh?: boolean }) => {
+      // Claimed before anything async, so an explicit pick always outranks whatever
+      // came before it -- the silent on-load reconnect included. See
+      // `walletConnectSeqRef`'s own comment for the failure this closes.
+      const seq = ++walletConnectSeqRef.current;
       setWalletPickerOpen(false);
       setWalletConnecting(true);
       setWalletError(null);
       setWalletVerified(false);
       try {
-        const address = await connectWalletById(walletId);
+        const address = await connectWalletById(walletId, options);
+        if (walletConnectSeqRef.current !== seq) return; // superseded by a newer pick
         setWalletAddress(address);
         await verifyWalletFor(address);
       } catch (e) {
+        if (walletConnectSeqRef.current !== seq) return;
         // A Trader closing the wallet's own connect/QR dialog is a plain cancel, not a
         // failure worth an error banner -- surfacing viem's raw rejection message here
         // would read as a scary, jargon-filled error for what was just a closed dialog.
         if (e instanceof WalletConnectionCancelled) return;
         setWalletError(e instanceof Error ? e.message : "Could not connect a wallet.");
       } finally {
-        setWalletConnecting(false);
+        // A superseded attempt must not clear the flag a newer, still-running one set.
+        if (walletConnectSeqRef.current === seq) setWalletConnecting(false);
       }
     },
     [verifyWalletFor]

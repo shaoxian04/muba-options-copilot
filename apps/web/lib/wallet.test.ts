@@ -7,7 +7,10 @@ vi.mock("@wagmi/core", async (importOriginal) => {
 });
 
 vi.mock("./wagmiConfig", () => ({
-  config: { storage: { getItem: vi.fn(), setItem: vi.fn(), removeItem: vi.fn() } },
+  config: {
+    storage: { getItem: vi.fn(), setItem: vi.fn(), removeItem: vi.fn() },
+    _internal: { connectors: { setup: vi.fn() } },
+  },
 }));
 
 import { connect, disconnect, getConnection } from "@wagmi/core";
@@ -16,8 +19,12 @@ import {
   connectWallet,
   disconnectWallet,
   isConnectionFresh,
+  LAST_CONNECTION_KEY,
   lastConnectedWalletId,
   listAvailableWallets,
+  recentConnectionWithinTtl,
+  resetWalletConnectConnectorForTests,
+  setWalletMemoryScope,
   waitForFirstAnnouncement,
   WALLETCONNECT_ICON,
   WALLETCONNECT_PEER_KEY,
@@ -26,17 +33,34 @@ import {
   watchAvailableWallets,
 } from "./wallet";
 
+/** An arbitrary but fixed account id -- what a real caller would pass a Supabase user id. */
+const TEST_ACCOUNT_ID = "acct-1";
+const OTHER_ACCOUNT_ID = "acct-2";
+
+// `connectWallet` now caches its one WalletConnect connector per page load (see
+// `walletConnectConnector` in wallet.ts) -- this test file is one process shared across
+// every `it()` below, so without resetting both of these here, an earlier test's cached
+// connector (and its accumulated call count on the shared `setup` spy) would silently
+// answer a later test's, e.g. a test asserting `config._internal` was never touched, or
+// called exactly once, would fail only because an earlier, unrelated test already
+// touched it. `setWalletMemoryScope(null)` is the same reasoning applied to which
+// account's storage keys `rememberConnection`/`recentConnectionWithinTtl`/the
+// WalletConnect-peer cache read and write -- every test starts scoped to nobody, the
+// same way a real page load does before an account is known.
+afterEach(() => {
+  resetWalletConnectConnectorForTests();
+  vi.mocked(config._internal.connectors.setup).mockReset();
+  setWalletMemoryScope(null);
+});
+
 /**
- * No real browser in this (Node) test environment -- `window` is undefined by default,
- * same reason the rest of this file never exercises `rememberConnection` or
- * `recentConnectionWithinTtl` directly (that localStorage round trip is covered by the
- * Playwright suite instead, via `backdateStoredConnection`). The WalletConnect-peer cache
- * is the one piece of that same storage this file does need to unit test, since the
- * "which real wallet answered" part isn't reachable at all from a fake MIPD extension --
- * only `getConnection(config).connector.getProvider()` can produce it, and that's already
- * mocked here rather than a real relay connection.
+ * No real browser in this (Node) test environment -- `window` is undefined by default.
+ * Scopes wallet memory to `TEST_ACCOUNT_ID` by default (pass `null` for a test that
+ * specifically wants to exercise "no account known yet") -- real code never reads or
+ * writes `LAST_CONNECTION_KEY`/`WALLETCONNECT_PEER_KEY` without a scope, and neither
+ * should these tests.
  */
-function stubBrowserLocalStorage(): void {
+function stubBrowserLocalStorage(accountId: string | null = TEST_ACCOUNT_ID): void {
   const store = new Map<string, string>();
   vi.stubGlobal("window", {
     localStorage: {
@@ -45,6 +69,7 @@ function stubBrowserLocalStorage(): void {
       removeItem: (key: string) => void store.delete(key),
     },
   });
+  setWalletMemoryScope(accountId);
 }
 
 describe("listAvailableWallets", () => {
@@ -198,6 +223,146 @@ describe("connectWallet", () => {
       expect(getConnection).not.toHaveBeenCalled();
     });
   });
+
+  describe("the fresh option (forcing a new WalletConnect pairing, not a silent resume)", () => {
+    it("ends an existing WalletConnect session before connecting, and connects through that same instance", async () => {
+      const fakeProvider = { session: { peer: {} }, disconnect: vi.fn().mockResolvedValue(undefined) };
+      const fakeConnector = { getProvider: vi.fn().mockResolvedValue(fakeProvider) };
+      vi.mocked(config._internal.connectors.setup).mockReturnValue(fakeConnector as never);
+      vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
+
+      await connectWallet("walletConnect", { fresh: true });
+
+      expect(fakeProvider.disconnect).toHaveBeenCalledTimes(1);
+      // The exact same registered instance is what gets connected -- not a second,
+      // freshly-registered connector -- so the provider (and its now-ended session
+      // state) is only ever initialised once for this one pick.
+      expect(connect).toHaveBeenCalledWith(config, { connector: fakeConnector });
+      expect(config._internal.connectors.setup).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not try to disconnect anything when there is no session to end", async () => {
+      const fakeConnector = { getProvider: vi.fn().mockResolvedValue({}) };
+      vi.mocked(config._internal.connectors.setup).mockReturnValue(fakeConnector as never);
+      vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
+
+      await expect(connectWallet("walletConnect", { fresh: true })).resolves.toBe("0xabc");
+    });
+
+    it("still connects even if reading the stale session throws", async () => {
+      const fakeConnector = { getProvider: vi.fn().mockRejectedValue(new Error("network blip")) };
+      vi.mocked(config._internal.connectors.setup).mockReturnValue(fakeConnector as never);
+      vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
+
+      await expect(connectWallet("walletConnect", { fresh: true })).resolves.toBe("0xabc");
+    });
+
+    it("never checks for a stale session when fresh is omitted -- 'Last used' keeps resuming as before", async () => {
+      const fakeConnector = { getProvider: vi.fn() };
+      vi.mocked(config._internal.connectors.setup).mockReturnValue(fakeConnector as never);
+      vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
+
+      await connectWallet("walletConnect");
+
+      // No `endStaleWalletConnectSession` call for this path -- that's what lets
+      // `@wagmi/connectors`' own connect() see the untouched, still-live session and
+      // resume it, which is the entire point of "Last used".
+      expect(fakeConnector.getProvider).not.toHaveBeenCalled();
+      expect(connect).toHaveBeenCalledWith(config, { connector: fakeConnector });
+    });
+
+    it("is meaningless for an extension id -- fresh never registers anything", async () => {
+      vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
+
+      await expect(connectWallet("io.metamask", { fresh: true })).rejects.toBeInstanceOf(Error); // no MIPD in this env
+      expect(config._internal.connectors.setup).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("reusing one WalletConnect connector across repeated picks in a page load", () => {
+    it("registers the connector only once across several picks, fresh or not", async () => {
+      const fakeConnector = { getProvider: vi.fn().mockResolvedValue({}) };
+      vi.mocked(config._internal.connectors.setup).mockReturnValue(fakeConnector as never);
+      vi.mocked(connect).mockResolvedValue({ accounts: ["0xabc"], chainId: 8453 });
+
+      await connectWallet("walletConnect"); // "Last used"
+      await connectWallet("walletConnect", { fresh: true }); // a fresh pick from the list
+      await connectWallet("walletConnect"); // "Last used" again
+
+      // One EthereumProvider for the whole page load, not one per pick -- this is what
+      // keeps @walletconnect/core from registering a new internal Core (and leaking
+      // listeners onto its shared one) every single time WalletConnect gets picked.
+      expect(config._internal.connectors.setup).toHaveBeenCalledTimes(1);
+      expect(connect).toHaveBeenCalledTimes(3);
+      for (const call of vi.mocked(connect).mock.calls) {
+        expect(call[1].connector).toBe(fakeConnector);
+      }
+    });
+  });
+
+  describe("remembering a connection per account, not per browser", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("a connection remembered for one account is invisible to a different one, and comes back on switching back", async () => {
+      stubBrowserLocalStorage(TEST_ACCOUNT_ID);
+      vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
+      await connectWallet("walletConnect");
+
+      expect(recentConnectionWithinTtl()).toBe("walletConnect");
+      await expect(lastConnectedWalletId()).resolves.toBe("walletConnect");
+
+      setWalletMemoryScope(OTHER_ACCOUNT_ID);
+      expect(recentConnectionWithinTtl()).toBeNull();
+      await expect(lastConnectedWalletId()).resolves.toBeNull();
+
+      setWalletMemoryScope(TEST_ACCOUNT_ID);
+      expect(recentConnectionWithinTtl()).toBe("walletConnect");
+      await expect(lastConnectedWalletId()).resolves.toBe("walletConnect");
+    });
+
+    it("remembers nothing at all when connecting before any account is known", async () => {
+      stubBrowserLocalStorage(null);
+      vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
+      await connectWallet("walletConnect");
+
+      setWalletMemoryScope(TEST_ACCOUNT_ID);
+      expect(recentConnectionWithinTtl()).toBeNull();
+      await expect(lastConnectedWalletId()).resolves.toBeNull();
+    });
+  });
+});
+
+describe("recentConnectionWithinTtl", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("returns the remembered id well within the TTL", () => {
+    stubBrowserLocalStorage();
+    window.localStorage.setItem(
+      `${LAST_CONNECTION_KEY}:${TEST_ACCOUNT_ID}`,
+      JSON.stringify({ id: "io.metamask", connectedAt: Date.now() })
+    );
+    expect(recentConnectionWithinTtl()).toBe("io.metamask");
+  });
+
+  it("returns null once the connection is older than the TTL", () => {
+    stubBrowserLocalStorage();
+    const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+    window.localStorage.setItem(
+      `${LAST_CONNECTION_KEY}:${TEST_ACCOUNT_ID}`,
+      JSON.stringify({ id: "io.metamask", connectedAt: Date.now() - THREE_HOURS_MS - 1000 })
+    );
+    expect(recentConnectionWithinTtl()).toBeNull();
+  });
+
+  it("returns null with no account scope set, even with a fresh connection on file under some account", () => {
+    stubBrowserLocalStorage(TEST_ACCOUNT_ID);
+    window.localStorage.setItem(
+      `${LAST_CONNECTION_KEY}:${TEST_ACCOUNT_ID}`,
+      JSON.stringify({ id: "io.metamask", connectedAt: Date.now() })
+    );
+    setWalletMemoryScope(null);
+    expect(recentConnectionWithinTtl()).toBeNull();
+  });
 });
 
 describe("disconnectWallet", () => {
@@ -218,18 +383,52 @@ describe("disconnectWallet", () => {
 });
 
 describe("lastConnectedWalletId", () => {
-  afterEach(() => {
-    vi.mocked(config.storage!.getItem).mockReset();
-  });
+  afterEach(() => vi.unstubAllGlobals());
 
-  it("returns the connector id wagmi persisted from the last successful connect", async () => {
-    vi.mocked(config.storage!.getItem).mockResolvedValueOnce("walletConnect");
+  it("returns the id last remembered for the current account", async () => {
+    stubBrowserLocalStorage();
+    window.localStorage.setItem(
+      `${LAST_CONNECTION_KEY}:${TEST_ACCOUNT_ID}`,
+      JSON.stringify({ id: "walletConnect", connectedAt: Date.now() })
+    );
+
     await expect(lastConnectedWalletId()).resolves.toBe("walletConnect");
   });
 
-  it("returns null when nothing has ever been connected in this browser", async () => {
-    vi.mocked(config.storage!.getItem).mockResolvedValueOnce(null);
+  it("returns null when this account has never connected anything", async () => {
+    stubBrowserLocalStorage();
     await expect(lastConnectedWalletId()).resolves.toBeNull();
+  });
+
+  it("returns null with no account scope set at all", async () => {
+    stubBrowserLocalStorage(null);
+    await expect(lastConnectedWalletId()).resolves.toBeNull();
+  });
+
+  it("does not care how old the connection is -- unlike recentConnectionWithinTtl, this has no TTL", async () => {
+    stubBrowserLocalStorage();
+    window.localStorage.setItem(
+      `${LAST_CONNECTION_KEY}:${TEST_ACCOUNT_ID}`,
+      JSON.stringify({ id: "walletConnect", connectedAt: Date.now() - 999 * 60 * 60 * 1000 })
+    );
+
+    // The picker's "Last used" quick-pick keeps offering a one-press reconnect long
+    // after the silent auto-reconnect window (recentConnectionWithinTtl) has lapsed.
+    await expect(lastConnectedWalletId()).resolves.toBe("walletConnect");
+  });
+
+  it("never lets one account see another account's last-used wallet", async () => {
+    stubBrowserLocalStorage(TEST_ACCOUNT_ID);
+    window.localStorage.setItem(
+      `${LAST_CONNECTION_KEY}:${TEST_ACCOUNT_ID}`,
+      JSON.stringify({ id: "walletConnect", connectedAt: Date.now() })
+    );
+
+    setWalletMemoryScope(OTHER_ACCOUNT_ID);
+    await expect(lastConnectedWalletId()).resolves.toBeNull();
+
+    setWalletMemoryScope(TEST_ACCOUNT_ID);
+    await expect(lastConnectedWalletId()).resolves.toBe("walletConnect");
   });
 });
 
@@ -257,7 +456,7 @@ describe("walletOptionFor", () => {
     it("prefers the cached peer's own name and icon over the generic WalletConnect label", () => {
       stubBrowserLocalStorage();
       window.localStorage.setItem(
-        WALLETCONNECT_PEER_KEY,
+        `${WALLETCONNECT_PEER_KEY}:${TEST_ACCOUNT_ID}`,
         JSON.stringify({ name: "Trust Wallet", icon: "https://trust.example/icon.png" })
       );
 
@@ -270,7 +469,10 @@ describe("walletOptionFor", () => {
 
     it("falls back to the generic icon when the cached peer never reported one", () => {
       stubBrowserLocalStorage();
-      window.localStorage.setItem(WALLETCONNECT_PEER_KEY, JSON.stringify({ name: "Some Wallet", icon: null }));
+      window.localStorage.setItem(
+        `${WALLETCONNECT_PEER_KEY}:${TEST_ACCOUNT_ID}`,
+        JSON.stringify({ name: "Some Wallet", icon: null })
+      );
 
       expect(walletOptionFor("walletConnect")).toEqual({
         id: "walletConnect",
@@ -281,7 +483,7 @@ describe("walletOptionFor", () => {
 
     it("ignores a corrupted cache entry rather than showing a broken name", () => {
       stubBrowserLocalStorage();
-      window.localStorage.setItem(WALLETCONNECT_PEER_KEY, "{not json");
+      window.localStorage.setItem(`${WALLETCONNECT_PEER_KEY}:${TEST_ACCOUNT_ID}`, "{not json");
 
       expect(walletOptionFor("walletConnect")).toEqual({
         id: "walletConnect",
@@ -293,11 +495,40 @@ describe("walletOptionFor", () => {
     it("never lets a cached WalletConnect peer bleed into an unrelated extension id", () => {
       stubBrowserLocalStorage();
       window.localStorage.setItem(
-        WALLETCONNECT_PEER_KEY,
+        `${WALLETCONNECT_PEER_KEY}:${TEST_ACCOUNT_ID}`,
         JSON.stringify({ name: "Trust Wallet", icon: "https://trust.example/icon.png" })
       );
 
       expect(walletOptionFor("io.metamask")).toEqual({ id: "io.metamask", name: "Last used wallet", icon: null });
+    });
+
+    it("never lets one account see another account's cached WalletConnect peer", () => {
+      stubBrowserLocalStorage(TEST_ACCOUNT_ID);
+      window.localStorage.setItem(
+        `${WALLETCONNECT_PEER_KEY}:${TEST_ACCOUNT_ID}`,
+        JSON.stringify({ name: "Trust Wallet", icon: "https://trust.example/icon.png" })
+      );
+
+      setWalletMemoryScope(OTHER_ACCOUNT_ID);
+      expect(walletOptionFor("walletConnect")).toEqual({
+        id: "walletConnect",
+        name: "WalletConnect",
+        icon: WALLETCONNECT_ICON,
+      });
+
+      setWalletMemoryScope(TEST_ACCOUNT_ID);
+      expect(walletOptionFor("walletConnect").name).toBe("Trust Wallet");
+    });
+
+    it("caches nothing, and reads nothing back, with no account scope set", () => {
+      stubBrowserLocalStorage(null);
+      // Nothing to write against -- this just documents that walletOptionFor stays
+      // generic rather than throwing when no account is known yet.
+      expect(walletOptionFor("walletConnect")).toEqual({
+        id: "walletConnect",
+        name: "WalletConnect",
+        icon: WALLETCONNECT_ICON,
+      });
     });
   });
 });

@@ -95,7 +95,8 @@ export class ApiRefusal extends Error {
   }
 }
 
-const SESSION_KEY = "copilot-session-id";
+/** Exported so tests can simulate a new tab -- a fresh backend session -- by clearing it. */
+export const SESSION_KEY = "copilot-session-id";
 
 /**
  * A stable id for this tab.

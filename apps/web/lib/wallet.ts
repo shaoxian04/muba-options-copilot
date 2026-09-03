@@ -42,6 +42,32 @@ export class WalletConnectionCancelled extends Error {}
 export type WalletOption = { id: string; name: string; icon: string | null };
 
 /**
+ * Which account's "recently used wallet" memory this module reads and writes -- null
+ * while nobody is signed in. Set once, by `surface.ts`, whenever the signed-in account
+ * changes (including to signed out); never read from Supabase directly here, the same
+ * way `wallet.ts` has never asked the SDK anything -- this file stays decoupled from
+ * accounts, just aware of whichever opaque id currently owns its storage.
+ *
+ * The reason this exists at all: `LAST_CONNECTION_KEY` and `WALLETCONNECT_PEER_KEY` used
+ * to be one shared key per browser, not per account. On a shared device, a second Trader
+ * signing in after the first would see -- and silently reconnect to -- the FIRST
+ * Trader's wallet, both in the "Last used" picker and via the on-load silent reconnect.
+ * Every read and write of either key goes through `scopedKey` below, and while no
+ * account is known (signed out, or not yet resolved), there is deliberately no key at
+ * all: nothing gets remembered, and nothing gets read back, until an account is set.
+ */
+let walletMemoryScope: string | null = null;
+
+export function setWalletMemoryScope(accountId: string | null): void {
+  walletMemoryScope = accountId;
+}
+
+/** `null` when no account is known -- callers treat that as "nothing to remember/read". */
+function scopedKey(base: string): string | null {
+  return walletMemoryScope ? `${base}:${walletMemoryScope}` : null;
+}
+
+/**
  * The id `connectWallet`/`walletOptionFor` use for WalletConnect -- must match
  * `@wagmi/connectors`' own `walletConnect()` factory's `id: 'walletConnect'` exactly
  * (confirmed by reading its source), NOT an arbitrary string this app invents. `connect()`
@@ -168,6 +194,77 @@ function injectedConnectorFor(rdns: string) {
 }
 
 /**
+ * Ends any WalletConnect session `EthereumProvider.init()` restored on its own, from its
+ * own persisted storage -- entirely independent of anything in this file or this app's
+ * `localStorage`. Without this, picking "WalletConnect" fresh from the full list (as
+ * opposed to pressing "Last used") would silently resume whichever wallet was paired
+ * last instead of opening a new pairing: `@wagmi/connectors`' own `connect()` skips its
+ * pairing step -- the one that shows a QR code -- entirely whenever `provider.session` is
+ * already set (confirmed by reading its source, `walletConnect.js`).
+ *
+ * Best-effort: any failure here just means the real `connect()` call right after hits
+ * the same problem and surfaces it properly, rather than this pre-check blocking a
+ * Trader who had nothing stale to clear in the first place.
+ */
+async function endStaleWalletConnectSession(connector: { getProvider(): Promise<unknown> }): Promise<void> {
+  const provider = await connector.getProvider().catch(() => null);
+  const session = (provider as { session?: unknown } | null)?.session;
+  const disconnect = (provider as { disconnect?: unknown } | null)?.disconnect;
+  if (session && typeof disconnect === "function") {
+    await (disconnect as () => Promise<void>).call(provider).catch(() => {});
+  }
+}
+
+/**
+ * The one WalletConnect connector this page ever constructs -- built lazily on the first
+ * pick (never at module load; that's `wagmiConfig.ts`'s whole reason for never listing a
+ * `walletConnect()` connector of its own) and reused for every pick after, `fresh` or not.
+ *
+ * Reuse is what keeps `@walletconnect/ethereum-provider` from registering a brand-new
+ * internal Core every single pick. Verified directly, in a real browser, against repeated
+ * picks in one page load (a cancelled QR tried again; "Last used" then a fresh
+ * "WalletConnect" pick): each freshly-built connector constructs its own `EthereumProvider`,
+ * and `@walletconnect/core` keeps ONE shared, module-level Core underneath all of them --
+ * a second one logs "Core is already initialized... Init() was called N times" and every
+ * instance's listeners pile onto that same Core with nothing ever unregistering the
+ * previous instance's, surfacing as Node's own `MaxListenersExceededWarning` on
+ * `heartbeat_pulse` past ten. One connector, reused, means one registration.
+ *
+ * Registering it (rather than returning the bare factory `connect()` would otherwise
+ * register itself) uses `config._internal.connectors.setup` -- undocumented API ("Not
+ * part of the versioned API, proceed with caution" per its own types), but the exact
+ * mechanism `@wagmi/core`'s own `connect()` action already uses internally for a factory
+ * connector, so this relies on nothing `connect()` doesn't already rely on.
+ *
+ * Page-scoped only, deliberately: a plain module-level variable, not `localStorage` --
+ * cleared by a full reload the same way every other in-memory piece of wagmi's own state
+ * is, with no attempt to persist a live SDK connection across one.
+ */
+let walletConnectConnectorInstance: ReturnType<typeof config._internal.connectors.setup> | null = null;
+
+async function walletConnectConnector(fresh: boolean) {
+  if (!walletConnectConnectorInstance) {
+    const factory = (await import("@wagmi/connectors/walletConnect")).walletConnect({
+      projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "",
+    });
+    walletConnectConnectorInstance = config._internal.connectors.setup(factory);
+  }
+  if (fresh) await endStaleWalletConnectSession(walletConnectConnectorInstance);
+  return walletConnectConnectorInstance;
+}
+
+/**
+ * Exported so tests can start each case with a clean slate. A real Trader gets this for
+ * free on every page reload; a test file shares one process across many `it()` blocks,
+ * so without this, `walletConnectConnector`'s cache would leak from one test into the
+ * next and silently change later tests' assertions about whether `config._internal`
+ * gets touched.
+ */
+export function resetWalletConnectConnectorForTests(): void {
+  walletConnectConnectorInstance = null;
+}
+
+/**
  * Connects the wallet the Trader picked from `listAvailableWallets()` and returns its
  * address. Every id but `WALLETCONNECT_ID` names an `rdns` MIPD detected. WalletConnect
  * is built on-demand too, via a dynamic import -- `@wagmi/connectors/walletConnect` pulls
@@ -175,14 +272,17 @@ function injectedConnectorFor(rdns: string) {
  * connector, or even a top-level import here) was verified against a real browser to
  * fire a real network call to Reown's telemetry endpoint on every page load, whether or
  * not a Trader ever touches WalletConnect at all.
+ *
+ * `fresh` distinguishes picking "WalletConnect" from the full list (a Trader deliberately
+ * choosing to pair, expecting a QR code) from pressing "Last used" (expecting the wallet
+ * they connected last time back with one press) -- see `endStaleWalletConnectSession`
+ * for why that distinction has to be made here rather than left to the SDK's own default.
+ * Meaningless for an extension id; only WalletConnect's own session can be silently
+ * resumable in the first place.
  */
-export async function connectWallet(walletId: string): Promise<string> {
+export async function connectWallet(walletId: string, options: { fresh?: boolean } = {}): Promise<string> {
   const connector =
-    walletId === WALLETCONNECT_ID
-      ? (await import("@wagmi/connectors/walletConnect")).walletConnect({
-          projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "",
-        })
-      : injectedConnectorFor(walletId);
+    walletId === WALLETCONNECT_ID ? await walletConnectConnector(options.fresh ?? false) : injectedConnectorFor(walletId);
   const result = await connect(config, { connector }).catch((error) => {
     if (error instanceof UserRejectedRequestError) throw new WalletConnectionCancelled();
     throw error;
@@ -204,8 +304,10 @@ const DEFAULT_RECONNECT_TTL_MS = 3 * 60 * 60 * 1000;
 
 function rememberConnection(id: string): void {
   if (typeof window === "undefined") return;
+  const key = scopedKey(LAST_CONNECTION_KEY);
+  if (!key) return; // no account known -- nothing to remember this connection against
   try {
-    window.localStorage.setItem(LAST_CONNECTION_KEY, JSON.stringify({ id, connectedAt: Date.now() }));
+    window.localStorage.setItem(key, JSON.stringify({ id, connectedAt: Date.now() }));
   } catch {
     // A private window with site data blocked can throw here -- losing this is fine,
     // it only means the next page load won't auto-reconnect, not that anything breaks.
@@ -250,11 +352,13 @@ function readPeerMetadata(provider: unknown): { name: string; icon: string | nul
  */
 async function rememberWalletConnectPeer(): Promise<void> {
   if (typeof window === "undefined") return;
+  const key = scopedKey(WALLETCONNECT_PEER_KEY);
+  if (!key) return; // no account known -- nothing to remember this peer against
   try {
     const provider = await getConnection(config).connector?.getProvider();
     const peer = readPeerMetadata(provider);
     if (!peer) return;
-    window.localStorage.setItem(WALLETCONNECT_PEER_KEY, JSON.stringify(peer));
+    window.localStorage.setItem(key, JSON.stringify(peer));
   } catch {
     // Same reasoning as rememberConnection: worst case is the generic label sticks around.
   }
@@ -263,8 +367,10 @@ async function rememberWalletConnectPeer(): Promise<void> {
 /** Reads back what `rememberWalletConnectPeer` cached, or null if there's nothing usable. */
 function walletConnectPeerOption(): WalletOption | null {
   if (typeof window === "undefined") return null;
+  const key = scopedKey(WALLETCONNECT_PEER_KEY);
+  if (!key) return null;
   try {
-    const raw = window.localStorage.getItem(WALLETCONNECT_PEER_KEY);
+    const raw = window.localStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { name?: unknown; icon?: unknown };
     if (typeof parsed.name !== "string" || !parsed.name) return null;
@@ -289,21 +395,36 @@ export function isConnectionFresh(connectedAt: number, now: number, ttlMs: numbe
 }
 
 /**
+ * The raw `{id, connectedAt}} rememberConnection` last wrote for the current account, or
+ * null if there's nothing usable -- no account known, nothing ever connected under it,
+ * or a corrupted value. Shared by `recentConnectionWithinTtl` (which additionally checks
+ * the TTL) and `lastConnectedWalletId` (which deliberately does not -- see its own
+ * comment for why "Last used" in the picker outlives the silent-reconnect window).
+ */
+function readStoredConnection(): { id: string; connectedAt: number } | null {
+  if (typeof window === "undefined") return null;
+  const key = scopedKey(LAST_CONNECTION_KEY);
+  if (!key) return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { id?: unknown; connectedAt?: unknown };
+    if (typeof parsed.id !== "string" || typeof parsed.connectedAt !== "number") return null;
+    return { id: parsed.id, connectedAt: parsed.connectedAt };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The wallet id to silently reconnect on page load, or null if nothing recent enough
  * exists (nothing connected yet, the TTL lapsed, or storage is unavailable/corrupted).
  * Never itself prompts a wallet -- it only says which id, if any, is worth trying.
  */
 export function recentConnectionWithinTtl(ttlMs: number = DEFAULT_RECONNECT_TTL_MS): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(LAST_CONNECTION_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { id?: unknown; connectedAt?: unknown };
-    if (typeof parsed.id !== "string" || typeof parsed.connectedAt !== "number") return null;
-    return isConnectionFresh(parsed.connectedAt, Date.now(), ttlMs) ? parsed.id : null;
-  } catch {
-    return null;
-  }
+  const stored = readStoredConnection();
+  if (!stored) return null;
+  return isConnectionFresh(stored.connectedAt, Date.now(), ttlMs) ? stored.id : null;
 }
 
 /**
@@ -318,16 +439,25 @@ export async function disconnectWallet(): Promise<void> {
 }
 
 /**
- * The id of the wallet a Trader last successfully connected through this app, or null if
- * they never have (in this browser). `@wagmi/core`'s own `connect` action persists this
- * itself, under the key `"recentConnectorId"`, on every successful connect -- reading it
- * back is what lets `WalletPicker` offer "reconnect to X" as a one-press option instead
- * of silently reconnecting on page load (the previous, removed behaviour: a Trader had no
- * way to choose a *different* wallet without first disconnecting the old one by hand).
+ * The id of the wallet the CURRENT account last successfully connected through this app,
+ * or null if it never has. Reading it back is what lets `WalletPicker` offer "reconnect
+ * to X" as a one-press option instead of silently reconnecting on page load (the
+ * previous, removed behaviour: a Trader had no way to choose a *different* wallet
+ * without first disconnecting the old one by hand).
+ *
+ * Reads `rememberConnection`'s own account-scoped storage, not `@wagmi/core`'s own
+ * `recentConnectorId` (which `connect()` still writes on every successful connect, and
+ * this deliberately ignores) -- wagmi's copy is one shared value per BROWSER, with no
+ * concept of which account is currently signed in. Using it here would mean a second
+ * Trader on a shared device sees the FIRST Trader's "Last used" wallet the moment they
+ * sign in, which is exactly what `walletMemoryScope` exists to prevent.
+ *
+ * Deliberately does not check `isConnectionFresh` the way `recentConnectionWithinTtl`
+ * does: the picker's "Last used" quick-pick should keep offering a one-press reconnect
+ * long after the silent auto-reconnect window has lapsed, same as before this existed.
  */
 export async function lastConnectedWalletId(): Promise<string | null> {
-  const id = await config.storage?.getItem("recentConnectorId");
-  return typeof id === "string" ? id : null;
+  return readStoredConnection()?.id ?? null;
 }
 
 /**

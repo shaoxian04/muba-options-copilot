@@ -102,6 +102,25 @@ const BOOK_MOVE_DAYS = 7;
 const COST_ROUTE_LIMIT = { rateLimit: { max: COST_ROUTE_MAX_PER_MINUTE, timeWindow: "1 minute" } };
 
 /**
+ * How long a wallet already linked to this account (`accountStore.ts`'s `linked_wallets`,
+ * written by every successful `/auth/verify`) stays trusted without asking for a fresh
+ * signature again. `GET /session` seeds `verifiedWallet` from that durable record when
+ * the in-memory `Session` doesn't have one -- a backend restart, or simply a browser tab
+ * that never itself completed a challenge, no longer means re-signing a wallet this
+ * account has already proven.
+ *
+ * Deliberately NOT permanent: ADR-0012 chose session-scoped, re-verify-on-each-load trust
+ * on purpose, and trusting the linked record forever would quietly reverse that -- a
+ * leaked account token alone would then be enough to reach `/fill/prepare` for the linked
+ * wallet, with nothing left requiring a live signature. Bounding it, and rolling the
+ * window forward on every active use (see the `/session` handler) rather than fixing it
+ * at the original sign-in, keeps the exposure window short without asking a Trader who is
+ * actively using the app to keep re-signing. Matches `wallet.ts`'s `DEFAULT_RECONNECT_TTL_MS`
+ * on the frontend so "recently active" means the same span on both sides.
+ */
+const VERIFIED_WALLET_TRUST_TTL_MS = 3 * 60 * 60 * 1000;
+
+/**
  * A query string arrives as strings, so numbers are coerced.
  *
  * `asset` is REQUIRED and has no default. A default of ETH is how an ETH-only assumption
@@ -264,6 +283,22 @@ export async function buildApp(): Promise<FastifyInstance> {
           // already spent more than the account's current setting -- leave s.riskBudgetUsdc as is
         }
       }
+
+      // Seed a proven wallet the same way: an in-memory session with nothing yet doesn't
+      // necessarily mean this Trader has never proven one -- a backend restart, or simply
+      // a browser tab that's never itself completed a challenge, wiped only the copy in
+      // memory. `linked_wallets` still has it, from whichever tab or backend lifetime
+      // last did the real signature. Bounded by VERIFIED_WALLET_TRUST_TTL_MS (see its own
+      // comment for why this isn't permanent) and rolled forward on this same successful
+      // use, so continued activity keeps the window fresh without a new signature -- only
+      // real inactivity past the window asks for one again.
+      if (!s.verifiedWallet) {
+        const linked = await getLinkedWallet(userId);
+        if (linked && Date.now() - Date.parse(linked.verifiedAt) <= VERIFIED_WALLET_TRUST_TTL_MS) {
+          markWalletVerified(s, linked.address);
+          void upsertLinkedWallet(userId, linked.address);
+        }
+      }
     }
 
     const remaining = remainingBudget(s);
@@ -276,11 +311,13 @@ export async function buildApp(): Promise<FastifyInstance> {
         spentUsdc: usd(s.spentUsdc),
         remainingUsdc: usd(remaining),
       },
-      // Lets the browser skip re-verifying a wallet a refresh didn't actually forget --
-      // this session already proved it via a real signature (ADR-0012); reporting that
-      // back isn't a new trust decision, just not discarding one already made. Whatever
-      // casing the wallet originally signed with, unchanged -- callers compare
-      // case-insensitively, same as any other wallet address comparison in this file.
+      // Lets the browser skip re-verifying a wallet it didn't actually need to forget --
+      // either this exact session already proved it via a real signature (ADR-0012), or
+      // (see the seeding above) this account did, recently enough, in some other tab or
+      // backend lifetime. Either way, reporting it back isn't a new trust decision, just
+      // not discarding one already made. Whatever casing the wallet originally signed
+      // with, unchanged -- callers compare case-insensitively, same as any other wallet
+      // address comparison in this file.
       verifiedWallet: s.verifiedWallet,
     };
   });

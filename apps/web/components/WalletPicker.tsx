@@ -25,7 +25,7 @@ export function WalletPicker({
   open: boolean;
   wallets: Array<{ id: string; name: string; icon: string | null }>;
   recentWallet: { id: string; name: string; icon: string | null } | null;
-  onPick: (walletId: string) => void;
+  onPick: (walletId: string, options?: { fresh?: boolean }) => void;
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
@@ -86,6 +86,8 @@ export function WalletPicker({
         {recentWallet ? (
           <div className="wallet-recent">
             <p className="sub2">Last used</p>
+            {/* No `fresh` here, deliberately: pressing "Last used" means resume the
+                wallet that was connected last time, not start a new pairing. */}
             <button
               type="button"
               onClick={() => onPick(recentWallet.id)}
@@ -112,7 +114,11 @@ export function WalletPicker({
             <ul className="wallet-list" aria-label="Wallets">
               {wallets.map((w) => (
                 <li key={w.id}>
-                  <button type="button" onClick={() => onPick(w.id)} data-testid={`wallet-option-${w.id}`}>
+                  <button
+                    type="button"
+                    onClick={() => onPick(w.id, { fresh: true })}
+                    data-testid={`wallet-option-${w.id}`}
+                  >
                     {w.icon ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={w.icon} alt="" width={24} height={24} />
