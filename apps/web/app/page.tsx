@@ -296,10 +296,24 @@ export default function Page() {
           session={s.session}
           busy={s.rfqBusy}
           refusal={s.rfqRefusal}
+          status={s.rfqStatus}
+          settle={s.rfqSettle}
+          receipt={s.rfqReceipt}
+          wallet={{
+            address: s.walletAddress,
+            connecting: s.walletConnecting,
+            verified: s.walletVerified,
+            verifying: s.walletVerifying,
+            error: s.walletError,
+            onConnect: () => void s.connectWallet(),
+            onVerify: () => void s.verifyWallet(),
+          }}
           onOffsetCommit={s.setRfqOffset}
           onTenor={s.setRfqTenor}
           onResize={s.setRfqSize}
           onSubmit={() => void s.submitRfq()}
+          onAccept={() => void s.acceptRfq()}
+          onWithdraw={() => void s.withdrawRfq()}
           onClose={s.closeRfq}
         />
       </div>

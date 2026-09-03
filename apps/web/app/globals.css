@@ -2030,6 +2030,68 @@ button[disabled] {
 .cvr .ask .go:disabled { opacity: 0.45; cursor: progress; }
 .cvr .ask .go:focus-visible { outline: 2px solid var(--hue); outline-offset: 2px; }
 
+/* The wallet, under the address form.
+   Quieter than the form above it on purpose: reading a Loan is the main act on this page
+   and never needs a wallet, so connecting must read as preparation for later rather than
+   as a gate in front of the thing the Borrower came to do. */
+.cvr-wallet {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.cvr-wallet .wallet {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cvr-wallet button {
+  font-size: 12px;
+  padding: 7px 12px;
+  min-height: 34px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-weight: 500;
+}
+.cvr-wallet button:hover:not([disabled]) {
+  border-color: var(--ink-3);
+}
+.cvr-wallet button:disabled {
+  opacity: 0.45;
+  cursor: progress;
+}
+.cvr-wallet button:focus-visible {
+  outline: 2px solid var(--hue);
+  outline-offset: 2px;
+}
+/* A proven wallet is a fact, not a control -- so it stops looking pressable. */
+.cvr-wallet .addr {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  color: var(--ink-2);
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--line-2);
+  background: var(--surface-2);
+}
+.cvr-wallet .refusal {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
+  color: var(--crit);
+}
+/* "Read my own loan": a shortcut, never the default. The field stays authoritative, so a
+   Borrower checking somebody else's address is never quietly redirected to their own. */
+.cvr-wallet .cvr-usemine {
+  background: transparent;
+  border-style: dashed;
+  color: var(--ink-2);
+}
+
 /* Verdict card: health factor (big), cause-and-effect sentence (say), spot chip */
 .cvr .verdict {
   background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
