@@ -591,100 +591,68 @@ export const FORBIDDEN = [
 export const FAKE_WALLET_ADDRESS = "0x2222222222222222222222222222222222222222";
 
 /**
- * A fake EIP-1193 provider, injected before the page's own scripts run -- the same
- * seam a real extension wallet occupies. Just capable enough to drive the app's
- * `wallet.ts` through connect + two sequential `sendTransaction` calls (approve, then
- * fill), which is everything the real-fill journeys need.
+ * Simulates one or more wallet browser extensions via a real EIP-6963
+ * `eip6963:announceProvider` event -- the same seam `wallet.ts`'s `listAvailableWallets()`
+ * actually reads (`config.mipd`), so `WalletPicker` shows and can connect to these
+ * exactly as it would a real extension. Announces once immediately on page load
+ * (matching how a real extension behaves) AND answers a later `eip6963:requestProvider`
+ * request the same way, since MIPD sends one of those the moment `config.mipd` is
+ * created and a late-loading page must still see the fake.
+ *
+ * Each fake wallet answers just the RPC methods `@wagmi/core`'s actions actually call
+ * (verified directly against a real `viem` client): `eth_requestAccounts`/`eth_accounts`,
+ * `eth_chainId`, `personal_sign`, `eth_sendTransaction`, `eth_getTransactionReceipt`. No
+ * gas/fee/nonce machinery is needed -- unlike `ethers`' `BrowserProvider`, wagmi's
+ * `sendTransaction` sends a minimal `eth_sendTransaction` and trusts the wallet to fill
+ * in the rest, exactly like a real extension would.
  *
  * `page.addInitScript` runs in the page's own context, so the function body below is
  * serialised and cannot close over anything from this module -- everything the fake
  * needs is passed in as its single argument.
  */
-export async function installFakeWallet(
+export async function installFakeWallets(
   page: Page,
-  opts: { address?: string; fail?: boolean; preAuthorised?: boolean } = {}
+  extensions: Array<{ rdns?: string; name?: string; address?: string; fail?: boolean; preAuthorised?: boolean }>
 ): Promise<void> {
-  const address = opts.address ?? FAKE_WALLET_ADDRESS;
-  await page.addInitScript(
-    (config: { address: string; fail: boolean; preAuthorised: boolean }) => {
-      let authorised = config.preAuthorised;
-      let txCount = 0;
+  const configs = extensions.map((ext, i) => ({
+    rdns: ext.rdns ?? `test.fakewallet${i}`,
+    name: ext.name ?? `Fake Wallet ${i + 1}`,
+    address: ext.address ?? FAKE_WALLET_ADDRESS,
+    fail: ext.fail ?? false,
+    preAuthorised: ext.preAuthorised ?? false,
+  }));
+
+  await page.addInitScript((exts: typeof configs) => {
+    const BLOCK_HASH = "0x" + "11".repeat(32);
+    const TO_ADDRESS = "0x0000000000000000000000000000000000000b00";
+
+    const providers = exts.map((cfg) => {
+      let authorised = cfg.preAuthorised;
       let lastHash = "";
-      const BLOCK_HASH = "0x" + "11".repeat(32);
-      const TO_ADDRESS = "0x0000000000000000000000000000000000000b00";
-      (window as any).ethereum = {
-        isMetaMask: true,
+      const provider = {
+        isFake: true,
         request: async ({ method }: { method: string }) => {
           switch (method) {
             case "eth_accounts":
-              return authorised ? [config.address] : [];
+              return authorised ? [cfg.address] : [];
             case "eth_requestAccounts":
               authorised = true;
-              return [config.address];
+              return [cfg.address];
             case "eth_chainId":
               return "0x2105"; // 8453
-            case "net_version":
-              return "8453";
             case "personal_sign":
-              return `0xFAKESIG${config.address.slice(2, 10)}`;
-            // Everything below is machinery ethers' BrowserProvider calls while
-            // populating a transaction (gas, nonce, fee data) before ever asking the
-            // "wallet" to send it -- not behavior this suite is testing, so it gets
-            // plausible fixed answers rather than a real RPC backend.
-            case "eth_blockNumber":
-              return "0x1";
-            case "eth_gasPrice":
-              return "0x3b9aca00";
-            case "eth_estimateGas":
-              return "0x5208";
-            case "eth_getTransactionCount":
-              return "0x0";
-            case "eth_feeHistory":
-              return {
-                baseFeePerGas: ["0x3b9aca00", "0x3b9aca00"],
-                gasUsedRatio: [0.5],
-                oldestBlock: "0x1",
-                reward: [["0x3b9aca00"]],
-              };
-            case "eth_getBlockByNumber":
-              return { number: "0x1", hash: BLOCK_HASH, baseFeePerGas: "0x3b9aca00" };
+              return `0xFAKESIG${cfg.address.slice(2, 10)}`;
             case "eth_sendTransaction": {
-              txCount += 1;
-              lastHash = `0x${"f".repeat(63)}${txCount}`;
+              lastHash = `0x${"f".repeat(63)}1`;
               return lastHash;
             }
-            // ethers wraps the hash `eth_sendTransaction` returns into a full
-            // TransactionResponse by looking it up here -- a real node has it the
-            // instant it is submitted, so this always answers rather than 404ing, which
-            // is what a real node does for the first few hundred ms after broadcast and
-            // which sent ethers into a real (frozen-clock-proof, still endless) retry
-            // loop here with no answer at all.
-            case "eth_getTransactionByHash":
-              return {
-                hash: lastHash,
-                blockHash: BLOCK_HASH,
-                blockNumber: "0x1",
-                transactionIndex: "0x0",
-                from: config.address,
-                to: TO_ADDRESS,
-                gas: "0x5208",
-                gasPrice: "0x3b9aca00",
-                value: "0x0",
-                nonce: "0x0",
-                input: "0x12345678",
-                type: "0x0",
-                chainId: "0x2105",
-                v: "0x1b",
-                r: "0x" + "11".repeat(32),
-                s: "0x" + "22".repeat(32),
-              };
             case "eth_getTransactionReceipt":
               return {
                 transactionHash: lastHash,
                 transactionIndex: "0x0",
                 blockHash: BLOCK_HASH,
                 blockNumber: "0x1",
-                from: config.address,
+                from: cfg.address,
                 to: TO_ADDRESS,
                 contractAddress: null,
                 cumulativeGasUsed: "0x5208",
@@ -692,15 +660,37 @@ export async function installFakeWallet(
                 effectiveGasPrice: "0x3b9aca00",
                 logsBloom: "0x" + "00".repeat(256),
                 logs: [],
-                status: config.fail ? "0x0" : "0x1",
+                status: cfg.fail ? "0x0" : "0x1",
                 type: "0x0",
               };
             default:
               throw new Error(`fake wallet: unhandled method ${method}`);
           }
         },
+        on: () => {},
+        removeListener: () => {},
       };
-    },
-    { address, fail: opts.fail ?? false, preAuthorised: opts.preAuthorised ?? false }
-  );
+      return {
+        info: { uuid: cfg.rdns, name: cfg.name, icon: "data:image/svg+xml;base64,", rdns: cfg.rdns },
+        provider,
+      };
+    });
+
+    const announceAll = () => {
+      for (const detail of providers) {
+        window.dispatchEvent(new CustomEvent("eip6963:announceProvider", { detail }));
+      }
+    };
+
+    announceAll();
+    window.addEventListener("eip6963:requestProvider", announceAll);
+  }, configs);
+}
+
+/** One fake wallet extension, for journeys that only need a single one. */
+export async function installFakeWallet(
+  page: Page,
+  opts: { address?: string; fail?: boolean; preAuthorised?: boolean } = {}
+): Promise<void> {
+  await installFakeWallets(page, [opts]);
 }
