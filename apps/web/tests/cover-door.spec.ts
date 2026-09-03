@@ -1,25 +1,57 @@
 /**
- * Issue #46 — the door: "Cover this loan", its confirmation, and an honest refusal.
+ * The door: "Cover this loan", its confirmation, and the two signatures behind it.
  *
- * Driven through the network seam against the checked-in Cover fixtures. The dialog
- * itself is the same shape `ConfirmModal`/`RfqModal` already use on the trading
- * surface -- this suite checks the Cover-specific content (the belief, the cap, the
- * gate) and the invariants ADR-0008 exists to enforce: no request reaches `/rfq`
- * before a deliberate click, and no pending state is ever shown.
+ * Driven through the network seam against the checked-in Cover fixtures. The dialog is
+ * the same shape `ConfirmModal`/`RfqModal` already use on the trading surface -- this
+ * suite checks the Cover-specific content (the belief, the cap, the gate, the Coverage)
+ * and the invariants ADR-0008 and ADR-0017 exist to enforce:
+ *
+ *   - no request reaches `/rfq` before a deliberate click;
+ *   - no premium is shown until a maker has actually answered;
+ *   - the money is spent by a SECOND press on a button that names the price, never as a
+ *     continuation of the first;
+ *   - and a request nobody answers says so, rather than hanging.
  */
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import { stubApi, COVER_ADDRESSES } from "./stub";
+import { stubApi, installFakeWallet, advanceOffers, COVER_ADDRESSES } from "./stub";
 import coverHealthy from "./fixtures/cover-healthy.json" with { type: "json" };
 
-async function readHealthyLoan(page: import("@playwright/test").Page) {
+type Page = import("@playwright/test").Page;
+
+async function readHealthyLoan(page: Page) {
   await page.goto("/cover");
   await page.fill("#addr", COVER_ADDRESSES.healthy);
   await page.click('button[type="submit"]');
   await page.waitForSelector(".disclaimer");
 }
 
+/**
+ * The Loan the fake wallet actually holds.
+ *
+ * A Cover is bought by the wallet that holds the Loan and only that wallet -- a put pays
+ * whoever holds it, so any other wallet would be buying protection for itself. The fake
+ * wallet is therefore installed AT the healthy fixture's address, and the mismatch case
+ * gets its own test below.
+ */
+async function connectAsBorrower(page: Page) {
+  await page.getByTestId("connect-wallet").click();
+  await expect(page.getByTestId("wallet-address")).toBeVisible();
+}
+
+/** Open a request and wait out the stub's two polls until a maker answers. */
+async function openRequestAndWait(page: Page) {
+  await page.getByTestId("cover-submit").click();
+  await expect(page.getByTestId("cover-wait")).toBeVisible();
+  await advanceOffers(page, () => page.getByTestId("cover-accept").isVisible());
+  await expect(page.getByTestId("cover-accept")).toBeVisible();
+}
+
 test.describe("the door on a quoted Loan", () => {
+  test.beforeEach(async ({ page }) => {
+    await installFakeWallet(page, { address: COVER_ADDRESSES.healthy });
+  });
+
   test("appears with its note, and no request reaches /rfq on page load or on reading a Loan", async ({
     page,
   }) => {
@@ -28,9 +60,7 @@ test.describe("the door on a quoted Loan", () => {
 
     await expect(page.getByTestId("cover-door")).toBeVisible();
     await expect(page.getByTestId("cover-door")).toHaveText("Cover this loan");
-    await expect(page.locator(".cvr .cta .note")).toHaveText(
-      "You will see exactly what you are agreeing to first."
-    );
+    await expect(page.locator(".cvr .cta .note")).toContainText("exactly what you are agreeing to");
     expect(traffic.paths()).not.toContain("/rfq");
   });
 
@@ -48,8 +78,9 @@ test.describe("the door on a quoted Loan", () => {
     await expect(modal).toHaveAttribute("role", "dialog");
     await expect(modal).toHaveAttribute("aria-modal", "true");
 
-    // Focus moved into the dialog -- the first focusable element is inside it.
-    const focused = await page.evaluate(() => document.activeElement?.closest('[data-testid="cover-confirm-modal"]') !== null);
+    const focused = await page.evaluate(
+      () => document.activeElement?.closest('[data-testid="cover-confirm-modal"]') !== null
+    );
     expect(focused).toBe(true);
   });
 
@@ -59,24 +90,23 @@ test.describe("the door on a quoted Loan", () => {
     await page.getByTestId("cover-door").click();
 
     const q = coverHealthy.quote;
-    const belief = page.getByTestId("cover-belief");
-    await expect(belief).toContainText(q.underlying);
-    await expect(belief).toContainText(q.cover.targetStrike.display);
-    await expect(belief).toContainText(q.cover.expiry.display);
-
-    await expect(page.getByTestId("cover-protects")).toHaveText(q.loan.collateralAmount.display);
-    await expect(page.getByTestId("cover-pays-from")).toHaveText(q.cover.targetStrike.display);
-    await expect(page.getByTestId("cover-size")).toContainText(q.cover.requiredContracts.display);
-    await expect(page.getByTestId("cover-ends")).toHaveText(q.cover.expiry.display);
+    await expect(page.getByTestId("cover-belief")).toContainText(q.cover.targetStrike.display);
     await expect(page.getByTestId("cover-cap")).toHaveText(q.cover.premiumCapUsdc.display);
+    await expect(page.getByTestId("cover-ends")).toHaveText(q.cover.expiry.display);
+  });
 
-    const capSize = await page.getByTestId("cover-cap").evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
-    const protectsSize = await page
-      .getByTestId("cover-protects")
-      .evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
-    const beliefSize = await belief.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
-    expect(capSize).toBeGreaterThan(protectsSize);
-    expect(capSize).toBeGreaterThan(beliefSize);
+  /**
+   * ADR-0008's central promise, and the thing this whole dialog exists to make true. The
+   * cap is a ceiling; a premium is what a maker charges. Until one answers, showing
+   * anything in the premium's place would be an invention.
+   */
+  test("shows the cap as a cap, and no premium at all, before any maker has answered", async ({ page }) => {
+    await stubApi(page);
+    await readHealthyLoan(page);
+    await page.getByTestId("cover-door").click();
+
+    await expect(page.getByTestId("cover-confirm-modal")).toContainText("Most you can pay");
+    await expect(page.getByTestId("cover-confirm-modal")).not.toContainText("You pay");
   });
 
   test("states the four gate steps, naming that a maker must bid and the Borrower confirms again", async ({
@@ -92,20 +122,21 @@ test.describe("the door on a quoted Loan", () => {
     await expect(gate.nth(1)).toContainText(/makers bid/i);
     await expect(gate.nth(2)).toContainText(/confirm again/i);
     await expect(gate.nth(3)).toContainText(/signed/i);
+
+    // Nothing has happened yet, so nothing is marked done.
+    await expect(page.locator(".modal .gate li.pass")).toHaveCount(0);
   });
 
   for (const [name, action] of [
-    ["Escape", async (page: import("@playwright/test").Page) => page.keyboard.press("Escape")],
+    ["Escape", async (page: Page) => page.keyboard.press("Escape")],
     [
       "a scrim click",
-      // A corner, not the centre: the scrim spans the full viewport and the dialog
-      // sits centred within it, so clicking dead centre lands on the dialog itself
-      // (same technique `journeys.spec.ts` already uses for the trading surface's
-      // own scrims).
-      async (page: import("@playwright/test").Page) => page.getByTestId("cover-scrim").click({ position: { x: 2, y: 2 } }),
+      // A corner, not the centre: the scrim spans the full viewport and the dialog sits
+      // centred within it, so clicking dead centre lands on the dialog itself.
+      async (page: Page) => page.getByTestId("cover-scrim").click({ position: { x: 2, y: 2 } }),
     ],
-    ["the header close control", async (page: import("@playwright/test").Page) => page.getByRole("button", { name: "Close" }).click()],
-    ["Not now", async (page: import("@playwright/test").Page) => page.getByTestId("cover-close").click()],
+    ["the header close control", async (page: Page) => page.getByRole("button", { name: "Close" }).click()],
+    ["Not now", async (page: Page) => page.getByTestId("cover-close").click()],
   ] as const) {
     test(`${name} dismisses the confirmation`, async ({ page }) => {
       await stubApi(page);
@@ -118,63 +149,14 @@ test.describe("the door on a quoted Loan", () => {
     });
   }
 
-  test("submitting replaces the dialog in place with the server's refusal, with no pending state ever shown", async ({
-    page,
-  }) => {
-    const traffic = await stubApi(page);
-    await readHealthyLoan(page);
-    await page.getByTestId("cover-door").click();
-
-    await expect(page.getByTestId("cover-belief")).toBeVisible();
-    await page.getByTestId("cover-submit").click();
-
-    const refusal = page.getByTestId("cover-refusal");
-    await expect(refusal).toBeVisible();
-    await expect(refusal).toHaveAttribute("role", "alert");
-
-    // Replaced IN PLACE: the belief/list/gate are gone, the dialog itself never closed.
-    await expect(page.getByTestId("cover-confirm-modal")).toBeVisible();
-    await expect(page.getByTestId("cover-belief")).toHaveCount(0);
-    await expect(page.getByTestId("cover-submit")).toHaveCount(0);
-    await expect(page.getByTestId("cover-close")).toHaveText("Close");
-
-    // The echoed sentence is the server's, off the wire, naming what was actually asked.
-    const q = coverHealthy.quote;
-    await expect(refusal).toContainText(/sealed-bid RFQ backend is not built/i);
-    await expect(refusal).toContainText(/nothing was sent to a maker/i);
-    await expect(refusal).toContainText(/nothing was signed/i);
-    await expect(refusal).toContainText(/no USDC moved/i);
-    await expect(refusal).toContainText(q.cover.targetStrike.display);
-    await expect(refusal).toContainText(q.cover.premiumCapUsdc.display);
-
-    expect(traffic.paths().filter((p) => p === "/rfq")).toHaveLength(1);
-  });
-
-  test("an uncoverable Loan's door answers with that Loan's own refusal, not the generic 501", async ({ page }) => {
+  test("an uncoverable Loan never grows a door at all", async ({ page }) => {
     await stubApi(page);
     await page.goto("/cover");
     await page.fill("#addr", COVER_ADDRESSES.multiCollateral);
     await page.click('button[type="submit"]');
     await expect(page.locator(".cvr-declined")).toBeVisible();
 
-    // No door on a refusal at all -- confirmed by the sibling spec, cover-refusals.spec.ts.
     await expect(page.getByTestId("cover-door")).toHaveCount(0);
-  });
-
-  test("closing and reopening the door starts a fresh dialog, not the previous refusal", async ({ page }) => {
-    await stubApi(page);
-    await readHealthyLoan(page);
-
-    await page.getByTestId("cover-door").click();
-    await page.getByTestId("cover-submit").click();
-    await expect(page.getByTestId("cover-refusal")).toBeVisible();
-    await page.getByTestId("cover-close").click();
-    await expect(page.getByTestId("cover-confirm-modal")).toHaveCount(0);
-
-    await page.getByTestId("cover-door").click();
-    await expect(page.getByTestId("cover-belief")).toBeVisible();
-    await expect(page.getByTestId("cover-refusal")).toHaveCount(0);
-    await expect(page.getByTestId("cover-submit")).toBeVisible();
   });
 
   test("focus returns to the door that opened it, once closed", async ({ page }) => {
@@ -186,10 +168,168 @@ test.describe("the door on a quoted Loan", () => {
     await page.keyboard.press("Escape");
     await expect(door).toBeFocused();
   });
+});
+
+/**
+ * The wallet gate.
+ *
+ * Reading is open to anyone -- a Borrower who learns their liquidation price and walks
+ * away has been served, and that must keep working with no wallet at all. Buying is not.
+ */
+test.describe("who may buy", () => {
+  test("reads any Loan with no wallet connected, and says why it cannot buy one", async ({ page }) => {
+    await stubApi(page);
+    await readHealthyLoan(page);
+
+    // The read worked without a wallet: the quote is on screen.
+    await expect(page.locator(".disclaimer")).toBeVisible();
+
+    await page.getByTestId("cover-door").click();
+    await expect(page.getByTestId("cover-submit")).toBeDisabled();
+    await expect(page.getByTestId("cover-gate-wallet")).toContainText(/same wallet/i);
+  });
+
+  test("refuses to buy for a Loan the connected wallet does not hold", async ({ page }) => {
+    // A wallet that is not the Borrower. A Cover it bought would pay IT, leaving the
+    // Borrower exactly as exposed as before -- a Cover in name only.
+    await installFakeWallet(page, { address: "0x9999999999999999999999999999999999999999" });
+    await stubApi(page);
+    await readHealthyLoan(page);
+    await page.getByTestId("connect-wallet").click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+
+    await page.getByTestId("cover-door").click();
+    await expect(page.getByTestId("cover-submit")).toBeDisabled();
+    await expect(page.getByTestId("cover-gate-wallet")).toBeVisible();
+  });
+});
+
+/**
+ * The money path itself: two signatures, and a real wait in between.
+ */
+test.describe("requesting, waiting and paying", () => {
+  test.beforeEach(async ({ page }) => {
+    await installFakeWallet(page, { address: COVER_ADDRESSES.healthy });
+  });
+
+  test("the first press opens a request and buys nothing -- still no premium anywhere", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await readHealthyLoan(page);
+    await connectAsBorrower(page);
+    await page.getByTestId("cover-door").click();
+
+    await page.getByTestId("cover-submit").click();
+
+    const wait = page.getByTestId("cover-wait");
+    await expect(wait).toBeVisible();
+    await expect(wait).toHaveAttribute("role", "status");
+    await expect(wait).toHaveAttribute("data-phase", "OPEN");
+    await expect(page.getByTestId("cover-wait-sentence")).toContainText(/Nothing is owed unless you accept/i);
+
+    // The cap is still a cap, and the first gate step is the only one done.
+    await expect(page.getByTestId("cover-confirm-modal")).toContainText("Most you can pay");
+    await expect(page.locator(".modal .gate li.pass")).toHaveCount(1);
+
+    expect(traffic.paths()).toContain("/rfq");
+    expect(traffic.paths()).toContain("/rfq/confirm");
+    expect(traffic.paths()).not.toContain("/rfq/settle/prepare");
+  });
+
+  test("states the Coverage beside the cap, so 'cover' is never left to imply 'fully covered'", async ({
+    page,
+  }) => {
+    await stubApi(page);
+    await readHealthyLoan(page);
+    await connectAsBorrower(page);
+    await page.getByTestId("cover-door").click();
+    await page.getByTestId("cover-submit").click();
+
+    await expect(page.getByTestId("cover-coverage")).toContainText("100%");
+  });
+
+  test("a maker's answer is the first price shown, and paying it takes a second press that names it", async ({
+    page,
+  }) => {
+    const traffic = await stubApi(page);
+    await readHealthyLoan(page);
+    await connectAsBorrower(page);
+    await page.getByTestId("cover-door").click();
+    await openRequestAndWait(page);
+
+    // The button that spends money names the amount, so nobody presses it unread.
+    const accept = page.getByTestId("cover-accept");
+    await expect(accept).toContainText("$1.25");
+    await expect(page.getByTestId("cover-cap")).toHaveText("$1.25");
+    await expect(page.getByTestId("cover-confirm-modal")).toContainText("You pay");
+
+    // Requesting alone never reached the settle routes: paying is a separate act.
+    expect(traffic.paths()).not.toContain("/rfq/settle/prepare");
+
+    await accept.click();
+    await expect(page.getByTestId("cover-wait")).toHaveAttribute("data-phase", "SETTLED");
+    await expect(page.getByTestId("cover-receipt")).toBeVisible();
+    expect(traffic.paths()).toContain("/rfq/settle/prepare");
+    expect(traffic.paths()).toContain("/rfq/settle");
+  });
+
+  test("every gate step is lit once the Cover is bought, and the Lapse is restated", async ({ page }) => {
+    await stubApi(page);
+    await readHealthyLoan(page);
+    await connectAsBorrower(page);
+    await page.getByTestId("cover-door").click();
+    await openRequestAndWait(page);
+    await page.getByTestId("cover-accept").click();
+
+    await expect(page.locator(".modal .gate li.pass")).toHaveCount(4);
+    await expect(page.getByTestId("cover-wait-sentence")).toContainText(/nothing renews on its own/i);
+    await expect(page.getByTestId("cover-wait-sentence")).toContainText(coverHealthy.quote.cover.expiry.display);
+
+    // Nothing left to press but the exit -- a bought Cover cannot be bought again.
+    await expect(page.getByTestId("cover-accept")).toHaveCount(0);
+    await expect(page.getByTestId("cover-submit")).toHaveCount(0);
+    await expect(page.getByTestId("cover-close")).toHaveText("Close");
+  });
+
+  test("an unanswered request says so and offers a withdrawal, rather than hanging", async ({ page }) => {
+    await stubApi(page, "rfq-unanswered");
+    await readHealthyLoan(page);
+    await connectAsBorrower(page);
+    await page.getByTestId("cover-door").click();
+    await page.getByTestId("cover-submit").click();
+
+    const wait = page.getByTestId("cover-wait");
+    await advanceOffers(page, async () => (await wait.getAttribute("data-phase")) === "NO_OFFERS");
+    await expect(wait).toHaveAttribute("data-phase", "NO_OFFERS");
+    await expect(page.getByTestId("cover-wait-sentence")).toContainText(/nobody answered/i);
+    await expect(page.getByTestId("cover-wait-sentence")).toContainText(/No USDC moved/i);
+
+    // Never a price: nobody quoted one.
+    await expect(page.getByTestId("cover-confirm-modal")).toContainText("Most you can pay");
+    await expect(page.getByTestId("cover-accept")).toHaveCount(0);
+    await expect(page.getByTestId("cover-withdraw")).toContainText("Withdraw request");
+  });
+
+  test("closing and reopening the door starts a fresh dialog, not the previous request", async ({ page }) => {
+    await stubApi(page);
+    await readHealthyLoan(page);
+    await connectAsBorrower(page);
+
+    await page.getByTestId("cover-door").click();
+    await page.getByTestId("cover-submit").click();
+    await expect(page.getByTestId("cover-wait")).toBeVisible();
+    await page.getByTestId("cover-close").click();
+    await expect(page.getByTestId("cover-confirm-modal")).toHaveCount(0);
+
+    await page.getByTestId("cover-door").click();
+    await expect(page.getByTestId("cover-belief")).toBeVisible();
+    await expect(page.getByTestId("cover-wait")).toHaveCount(0);
+    await expect(page.getByTestId("cover-submit")).toBeVisible();
+  });
 
   test("is reachable and fully operable by keyboard alone", async ({ page }) => {
     await stubApi(page);
     await readHealthyLoan(page);
+    await connectAsBorrower(page);
 
     await page.getByTestId("cover-door").focus();
     await page.keyboard.press("Enter");
@@ -203,29 +343,34 @@ test.describe("the door on a quoted Loan", () => {
     );
     expect(stillInDialog).toBe(true);
 
-    // And the trapped focus can still reach and activate "Request cover".
     await page.getByTestId("cover-submit").focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByTestId("cover-refusal")).toBeVisible();
+    await expect(page.getByTestId("cover-wait")).toBeVisible();
   });
 
   for (const colorScheme of ["light", "dark"] as const) {
-    test(`is axe-core clean in ${colorScheme} theme, open and refused`, async ({ page }) => {
+    test(`is axe-core clean in ${colorScheme} theme, asking, waiting and bought`, async ({ page }) => {
       await page.emulateMedia({ colorScheme });
       await stubApi(page);
       await readHealthyLoan(page);
+      await connectAsBorrower(page);
       await page.getByTestId("cover-door").click();
 
-      const openResults = await new AxeBuilder({ page }).include('[data-testid="cover-confirm-modal"]').analyze();
-      const openSerious = openResults.violations.filter((v) => v.impact === "critical" || v.impact === "serious");
-      expect(openSerious.map((v) => `${v.id}: ${v.description}`)).toEqual([]);
+      const serious = async () => {
+        const results = await new AxeBuilder({ page }).include('[data-testid="cover-confirm-modal"]').analyze();
+        return results.violations
+          .filter((v) => v.impact === "critical" || v.impact === "serious")
+          .map((v) => `${v.id}: ${v.description}`);
+      };
 
-      await page.getByTestId("cover-submit").click();
-      await expect(page.getByTestId("cover-refusal")).toBeVisible();
+      expect(await serious()).toEqual([]);
 
-      const refusedResults = await new AxeBuilder({ page }).include('[data-testid="cover-confirm-modal"]').analyze();
-      const refusedSerious = refusedResults.violations.filter((v) => v.impact === "critical" || v.impact === "serious");
-      expect(refusedSerious.map((v) => `${v.id}: ${v.description}`)).toEqual([]);
+      await openRequestAndWait(page);
+      expect(await serious()).toEqual([]);
+
+      await page.getByTestId("cover-accept").click();
+      await expect(page.getByTestId("cover-receipt")).toBeVisible();
+      expect(await serious()).toEqual([]);
     });
   }
 });

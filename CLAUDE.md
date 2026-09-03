@@ -32,13 +32,20 @@ connected and verified wallet; accepting one deals a
 Deck, but the Trade tab's only way to ask for a proposal directly is still the seed prompts on
 the left.
 
-**Liquidation Cover reads but does not yet buy.** `apps/api/src/insurance/` holds `loan.ts`
-(Aave V3 on Base, single-collateral only), `liquidation.ts` (the arithmetic, pure and unit
-tested) and `http.ts` (`GET /cover/quote`), with the surface at `/cover`. It computes the
-Liquidation Price, the Target Strike and the full hedge for any address, and refuses in
-words otherwise. The RFQ money path -- request, wait out `offerEndTimestamp`, settle on a
-second human confirmation -- is NOT built, and `POST /rfq` is still the honest 501 of issue
-#31. See ADR-0015 and ADR-0016 for the decisions taken while building the read half.
+**Liquidation Cover reads and buys.** `apps/api/src/insurance/` holds `loan.ts` (Aave V3 on
+Base, single-collateral only), `liquidation.ts` (the arithmetic, pure and unit tested) and
+`http.ts` (`GET /cover/quote`), with the surface at `/cover`. It computes the Liquidation
+Price, the Target Strike and the full hedge for any address, and refuses in words otherwise.
+See ADR-0015 and ADR-0016 for the decisions taken while building the read half.
+
+**The RFQ money path is built** (ADR-0017), and both doors go through it: the trading
+surface's (`kind: "TRADER"`, a strike the book does not carry) and Cover's (`kind: "COVER"`,
+an address and nothing else). `apps/api/src/thetanuts/rfq/` holds `build.ts` (Ask to
+`RFQRequest`, where buy-only and USDC collateral are enforced), `offers.ts` (the chain and
+the indexer, and decrypting sealed bids), `settle.ts` (the second signature's calldata) and
+`verify.ts` (what the chain says happened); `apps/api/src/rfq.ts` is the seven routes. An
+RFQ is **not** a Fill: two signatures with a real wait between them, and no premium anywhere
+until a maker answers. Exercised end to end against stubs, not yet against a live maker.
 
 **The book is multi-asset** (issues #23-#27): six Underlyings — BTC, ETH, SOL, BNB, XRP,
 AVAX — keyed by Chainlink **price feed**, never by underlying token (four of them are
@@ -109,7 +116,17 @@ These are needed on every task. Violating one silently breaks the product's cent
 - **The Review Agent may only veto, never authorise.** A pass from it skips zero code checks.
   (ADR-0006)
 - **No signature without a human confirmation** — Cover included. No unattended renewal, ever.
-  (ADR-0008)
+  (ADR-0008) On the RFQ path that means TWO confirmations: one to open the request, and a
+  separate one on a button that names the maker's actual price. A confirmation of a blank is
+  not a confirmation. (ADR-0017)
+- **An RFQ has no price until a maker answers.** `premiumUsdc` is null and the surface reads
+  "not priced yet" right up until a sealed bid has been decrypted. The Reserve Price beside
+  it is a ceiling and is never shown in a premium's place. Nothing on this path may estimate,
+  interpolate or derive an option price — which is why the size asked for is the whole hedge
+  (Cover) or one contract (trading), rather than something a cap was divided into. (ADR-0017)
+- **A sealed bid stays sealed.** The offeror's address, its signature and its nonce build the
+  settlement calldata and never cross to a browser. A surface gets a count and a premium.
+  (ADR-0017)
 - **The chain owns money.** No `positions` table, no balance cache. Fix slowness with a loading
   state, not a cache. (ADR-0003)
 - **A Forecast never appears beside a Max Loss** or inside a confirmation. Implied Move and
@@ -161,6 +178,10 @@ These are needed on every task. Violating one silently breaks the product's cent
   ADR-0002 is enforced. Nothing else fetches orders directly.
 - **Cover only for single-collateral Loans.** Refuse anything else and say why — the liquidation
   price identity is silently wrong otherwise. (ADR-0008)
+- **A Cover is bought by the wallet that holds the Loan.** A put pays whoever holds it, so a
+  Cover opened by any other wallet protects the buyer and leaves the Borrower exactly as
+  exposed — while telling them they are covered. Reading a Loan needs no wallet, and must
+  keep not needing one. (ADR-0017)
 - **Never commit a key.** `.env` is gitignored, the wallet is disposable, and approvals are for
   the exact amount — never `MaxUint256`.
 
@@ -188,11 +209,15 @@ it here with a one-line lesson.
 - **`apps/api/src/insurance/CONTEXT.md`** — Borrower, Loan, Cover, Liquidation Price, Lapse.
   **Read before any Liquidation Cover work.**
 - **`docs/adr/`** — the decisions and why they went that way. 0001 and 0004 are superseded;
-  0006–0012 are current — 0009 is why the surface may look like a game but never celebrates a
-  Fill, 0010 is why an Underlying is keyed by price feed and not by token, 0011 is why a
-  Trader's own wallet signs a fill instead of the backend, 0012 is why a session must prove
-  wallet ownership and the chain alone decides whether a fill succeeded. **Read before
-  changing architecture, or when code looks deliberately odd and you're tempted to "fix" it.**
+  0006–0013 and 0015–0017 are current (0014 does not exist — a gap left by renumbering, not
+  a decision) — 0009 is why the surface may look like a game but never celebrates a Fill,
+  0010 is why an Underlying is keyed by price feed and not by token, 0011 is why a Trader's
+  own wallet signs a fill instead of the backend, 0012 is why a session must prove wallet
+  ownership and the chain alone decides whether a fill succeeded, 0013 is why a Risk Profile
+  and a Decision are keyed on the proven wallet, 0015 and 0016 are the two Cover decisions,
+  and 0017 is why an RFQ is two signatures with a wait between them and why no price appears
+  before a maker answers. **Read before changing architecture, or when code looks
+  deliberately odd and you're tempted to "fix" it.**
 - **`README.md`** — API route table, repo layout, setup, security posture of the API process.
   **Read before running or wiring anything.**
 - **`apps/web/prototype-copilot.html`** — the settled design for the single-asset ETH Deck as

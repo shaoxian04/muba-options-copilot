@@ -16,17 +16,41 @@
  *   3. A REFUSAL is an answer, not an error -- laid out as content, with the code as a
  *      label, never as a toast. A transport failure or a 4xx is a different, louder
  *      thing (`.cvr-alert`, `role="alert"`). (Issue #45)
- *   4. The door only ever opens on a click. Reading a Loan touches only
- *      `GET /cover/quote`; `POST /rfq` is reached exactly once, from the confirmation's
- *      own "Request cover" button, and nowhere else on this page. (Issue #46; ADR-0008)
+ *   4. The door only ever opens on a click, and NOTHING is signed without one. Reading a
+ *      Loan touches only `GET /cover/quote`. `POST /rfq` is reached from the
+ *      confirmation's own "Request cover" button and nowhere else, and the second
+ *      signature -- the one that actually pays -- needs its own separate press on a
+ *      button that names the price. No unattended renewal, ever. (ADR-0008, ADR-0017)
+ *   4b. A Cover is bought by the wallet that holds the Loan, and only that wallet. A put
+ *      pays whoever holds it, so a Cover bought for someone else's Loan protects the
+ *      buyer and leaves the Borrower exactly as exposed as before. The page can READ any
+ *      address; it can only BUY for the one this session has proven.
  *   5. Not one number was computed here. Every figure arrives as `{ value, display }`
  *      and the JSX renders `display` verbatim. `no-arithmetic.test.ts` fails the build
  *      over a `toFixed` or a literal dollar sign. (ADR-0006)
  */
-import { useRef, useState } from "react";
-import { ApiRefusal, getCoverQuote, requestCoverRfq, type CoverQuoteResult } from "../../lib/api";
+import { useEffect, useRef, useState } from "react";
+import type { PreparedRfqSettle, RfqStatus } from "@copilot/shared";
+import {
+  ApiRefusal,
+  cancelRfq,
+  confirmRfq,
+  getCoverQuote,
+  getRfqStatus,
+  isCoverRefusal,
+  prepareRfqCancel,
+  prepareRfqSettle,
+  requestCoverRfq,
+  settleRfq,
+  type CoverQuoteResult,
+  type FillReceipt,
+} from "../../lib/api";
+import { RFQ_POLL_MS } from "../../lib/surface";
+import { useWallet } from "../../lib/useWallet";
+import { sendTx } from "../../lib/wallet";
 import { CoverPriceLine } from "../../components/CoverPriceLine";
 import { CoverConfirmModal } from "../../components/CoverConfirmModal";
+import { WalletConnect } from "../../components/WalletConnect";
 
 /**
  * One row in a "sheet" dl: a labelled value with an optional qualifier underneath.
@@ -62,6 +86,18 @@ export default function CoverPage() {
   const [doorRefusal, setDoorRefusal] = useState<string | null>(null);
   const doorOpenerRef = useRef<HTMLElement | null>(null);
 
+  // The live Cover Request (ADR-0017). Null until the Borrower has actually opened one.
+  const [coverStatus, setCoverStatus] = useState<RfqStatus | null>(null);
+  const [coverSettle, setCoverSettle] = useState<PreparedRfqSettle | null>(null);
+  const [coverReceipt, setCoverReceipt] = useState<FillReceipt | null>(null);
+  /**
+   * The request id, in a ref rather than state: the polling effect reads it, and putting
+   * it in state would restart the poll on every tick that touched it. Nothing renders it.
+   */
+  const requestIdRef = useRef<string | null>(null);
+
+  const wallet = useWallet();
+
   async function read(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -91,28 +127,163 @@ export default function CoverPage() {
     setDoorOpen(true);
   }
 
+  /**
+   * Dismissing the dialog forgets the request on THIS screen; it does not withdraw it.
+   * A request stays live on-chain until it is settled, withdrawn or expires, and the Risk
+   * Budget goes on holding its Reserve Price -- which is the truth, and the opposite of
+   * what quietly clearing it here would imply.
+   */
   function closeDoor() {
     setDoorOpen(false);
+    setCoverStatus(null);
+    setCoverSettle(null);
+    setCoverReceipt(null);
+    requestIdRef.current = null;
     doorOpenerRef.current?.focus();
   }
 
   /**
-   * The one place this page ever reaches `/rfq`. Carries only the Borrower's address
-   * (`requestCoverRfq`) -- the server re-reads the Loan and re-derives strike, size
-   * and cap itself, so nothing typed or tampered with in the browser can change what
-   * is actually requested. Never a pending state: the answer is always immediate,
-   * either the honest 501 or that Loan's own refusal (see `requestCoverRfq`'s own
-   * doc comment in `lib/api.ts`).
+   * Whether this session may BUY for the address it is looking at.
+   *
+   * Reading is open to anyone -- a Borrower who learns their liquidation price and walks
+   * away has been served, and that has never needed a wallet. Buying is not: the put pays
+   * whoever holds it, so the wallet opening the request has to be the wallet that holds
+   * the Loan, or the Cover protects the wrong person. The backend refuses this too; the
+   * page checks so it can say why before a press rather than after one.
+   */
+  const walletOwnsLoan =
+    Boolean(wallet.address) &&
+    wallet.verified &&
+    Boolean(quote) &&
+    wallet.address!.toLowerCase() === quote!.address.toLowerCase();
+
+  /**
+   * Poll the open request while makers can still answer.
+   *
+   * Stops the moment there is nothing left to learn -- bought, withdrawn, or nobody
+   * answered -- rather than running forever behind a dialog nobody is watching.
+   */
+  useEffect(() => {
+    const requestId = requestIdRef.current;
+    if (!requestId || !coverStatus) return;
+    if (coverStatus.phase === "SETTLED" || coverStatus.phase === "CANCELLED" || coverStatus.phase === "NO_OFFERS")
+      return;
+
+    const controller = new AbortController();
+    const timer = setInterval(() => {
+      void getRfqStatus(requestId, controller.signal)
+        .then(setCoverStatus)
+        // A failed poll is just a poll: the next one tries again. Turning a blip into a
+        // refusal would tell a Borrower something is wrong while their request sits
+        // on-chain doing exactly what it should.
+        .catch(() => {});
+    }, RFQ_POLL_MS);
+
+    return () => {
+      controller.abort();
+      clearInterval(timer);
+    };
+  }, [coverStatus]);
+
+  /**
+   * The FIRST of two signatures: open the Cover Request on-chain.
+   *
+   * Carries only the Borrower's address -- the server re-reads the Loan and re-derives
+   * strike, size and cap itself, so nothing typed or tampered with in the browser can
+   * change what is actually requested. Nothing is bought here: an RFQ has no price until
+   * a maker answers, and what is committed to is the Reserve Price ceiling.
    */
   async function submitCover() {
     if (!quote) return;
     setDoorBusy(true);
+    setDoorRefusal(null);
+    let requestId: string | null = null;
     try {
       const res = await requestCoverRfq({ address: quote.address });
-      setDoorRefusal(res.refusal.message);
+      // An uncoverable Loan answers 200 with its own refusal rather than a prepared
+      // request. Being told "this Loan holds two assets" is an answer, not a failure.
+      if (isCoverRefusal(res)) {
+        setDoorRefusal(res.refusal.message);
+        return;
+      }
+
+      requestId = res.requestId;
+      const txHash = await sendTx(res.requestTx);
+      const confirmed = await confirmRfq(res.requestId, txHash);
+      if (!confirmed.opened || !confirmed.status) {
+        setDoorRefusal("The request did not open on-chain. No USDC moved. You can try again.");
+        return;
+      }
+      requestIdRef.current = res.requestId;
+      setCoverStatus(confirmed.status);
     } catch (err) {
+      // Only report a decline if a request was actually prepared -- `/rfq` holds the
+      // Reserve Price against the Risk Budget synchronously the moment it runs, so an
+      // abandoned request has to be released rather than left sitting on the ceiling.
+      if (requestId) await confirmRfq(requestId).catch(() => {});
       setDoorRefusal(
         err instanceof ApiRefusal ? err.message : "Could not reach the backend. Is it running on :3001?"
+      );
+    } finally {
+      setDoorBusy(false);
+    }
+  }
+
+  /**
+   * The SECOND signature: accept a maker's own price and pay it.
+   *
+   * The premium the dialog shows is the exact amount encoded into the transaction being
+   * signed, so what the Borrower confirms and what the chain charges cannot differ. This
+   * is the human confirmation ADR-0008 requires, and it is a separate press on a button
+   * that names the amount -- never a continuation of the first one.
+   */
+  async function acceptCover() {
+    const requestId = requestIdRef.current;
+    if (!requestId) return;
+    setDoorBusy(true);
+    setDoorRefusal(null);
+    let prepared: PreparedRfqSettle | null = null;
+    try {
+      prepared = await prepareRfqSettle(requestId);
+      setCoverSettle(prepared);
+      if (prepared.approveTx) await sendTx(prepared.approveTx);
+      const txHash = await sendTx(prepared.settleTx);
+
+      // The wallet has broadcast and mined this -- the money has moved. Everything from
+      // here is bookkeeping, so a failure to reach /rfq/settle must never be reported as
+      // a Cover that was not bought.
+      const done = await settleRfq(requestId, txHash).catch(() => null);
+      if (done) setCoverStatus(done.status);
+      setCoverReceipt({
+        txHash,
+        optionAddress: done?.status.optionAddress ?? "",
+        explorerUrl: `${prepared.explorerTxUrlBase}${txHash}`,
+      });
+    } catch (err) {
+      if (prepared) await settleRfq(requestId, undefined).catch(() => {});
+      setDoorRefusal(
+        err instanceof ApiRefusal ? err.message : "The wallet could not complete this purchase."
+      );
+    } finally {
+      setDoorBusy(false);
+    }
+  }
+
+  /** Withdraw a request nobody answered, taking the commitment to pay back off the chain. */
+  async function withdrawCover() {
+    const requestId = requestIdRef.current;
+    if (!requestId) return;
+    setDoorBusy(true);
+    setDoorRefusal(null);
+    try {
+      const prepared = await prepareRfqCancel(requestId);
+      const txHash = await sendTx(prepared.cancelTx);
+      await cancelRfq(requestId, txHash).catch(() => {});
+      const status = await getRfqStatus(requestId).catch(() => null);
+      if (status) setCoverStatus(status);
+    } catch (err) {
+      setDoorRefusal(
+        err instanceof ApiRefusal ? err.message : "The wallet could not withdraw this request."
       );
     } finally {
       setDoorBusy(false);
@@ -145,6 +316,37 @@ export default function CoverPage() {
             {busy ? "Reading…" : "Read loan"}
           </button>
         </form>
+
+        {/*
+         * The wallet, beside the form rather than inside the dialog.
+         *
+         * Reading a Loan never needs one -- any address can be typed and read, and that
+         * has to keep working, because a Borrower who learns their liquidation price and
+         * walks away has been served. Connecting is what makes BUYING possible later, so
+         * it sits here where there is time to do it, not as a surprise gate discovered
+         * halfway through a confirmation.
+         */}
+        <div className="cvr-wallet">
+          <WalletConnect
+            address={wallet.address}
+            connecting={wallet.connecting}
+            verified={wallet.verified}
+            verifying={wallet.verifying}
+            error={wallet.error}
+            onConnect={() => void wallet.connect()}
+            onVerify={() => void wallet.verify()}
+          />
+          {wallet.address && wallet.address.toLowerCase() !== address.trim().toLowerCase() ? (
+            <button
+              type="button"
+              className="cvr-usemine"
+              onClick={() => setAddress(wallet.address!)}
+              data-testid="cover-use-my-wallet"
+            >
+              Read my own loan
+            </button>
+          ) : null}
+        </div>
 
         {/*
          * A transport failure or a 4xx: something actually went wrong, and it is a
@@ -269,10 +471,16 @@ export default function CoverPage() {
                     value={quote.cover.targetStrike.display}
                     qualifier={`${quote.cover.strikeDistanceFromSpot.display} from today`}
                   />
+                  {/*
+                    * "covers the loan in full" describes the SIZE asked for, which is
+                    * always the whole hedge (ADR-0016). It is the price that is capped,
+                    * not the size -- so the sentence is true of what is requested, and
+                    * the request either gets answered at that size or not at all.
+                    */}
                   <SheetRow
                     term="Size"
                     value={quote.cover.requiredContracts.display}
-                    qualifier={`${quote.underlying} puts — covers the loan in full`}
+                    qualifier={`${quote.underlying} puts — the whole hedge this loan needs`}
                   />
                 </dl>
               </div>
@@ -287,7 +495,11 @@ export default function CoverPage() {
               <button type="button" className="go2" onClick={openDoor} data-testid="cover-door">
                 Cover this loan
               </button>
-              <span className="note">You will see exactly what you are agreeing to first.</span>
+              <span className="note">
+                {walletOwnsLoan
+                  ? "You will see exactly what you are agreeing to first, and again before you pay."
+                  : "You will see exactly what you are agreeing to first. Connect this wallet above to buy."}
+              </span>
             </div>
 
             {/* Disclosure: the raw Aave numbers, folded away by default */}
@@ -325,7 +537,13 @@ export default function CoverPage() {
         quote={quote}
         busy={doorBusy}
         refusal={doorRefusal}
+        status={coverStatus}
+        settle={coverSettle}
+        receipt={coverReceipt}
+        walletReady={walletOwnsLoan}
         onSubmit={submitCover}
+        onAccept={acceptCover}
+        onWithdraw={withdrawCover}
         onClose={closeDoor}
       />
     </>

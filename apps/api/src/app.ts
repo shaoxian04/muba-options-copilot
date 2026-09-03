@@ -13,7 +13,6 @@
  * seam 1). Process concerns -- binding, the port, the startup warnings -- live in
  * `server.ts`, so importing this module can never accidentally open a socket.
  */
-import { timingSafeEqual } from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
@@ -31,6 +30,7 @@ import { marketOverview } from "./thetanuts/markets.js";
 import { reviewIntent } from "./agents/review.js";
 import { practiceRoutes, practiceHoldings } from "./practice.js";
 import { rfqRoutes } from "./rfq.js";
+import { requireToken } from "./gate.js";
 import { coverRoutes } from "./insurance/http.js";
 import { safeErrorResponse } from "./errors.js";
 import { realHoldings } from "./thetanuts/holdings.js";
@@ -82,7 +82,6 @@ export const allowedOrigins = (): string[] =>
     .map((o) => o.trim())
     .filter(Boolean);
 
-const apiToken = (): string | undefined => process.env.COPILOT_API_TOKEN || undefined;
 
 /**
  * Applied to routes that cost real Thetanuts/AI API usage, whether or not a token is set.
@@ -124,25 +123,6 @@ const DepthQuery = z.object({
   asset: UnderlyingSymbol,
   horizonDays: z.coerce.number().int().min(1).max(MAX_HORIZON_DAYS).optional(),
 });
-
-/**
- * Guards the routes that move money or cost real API credits. No token configured means
- * loopback-only trust.
- *
- * Constant-time comparison, so response timing does not leak how much of the token was
- * right -- the same reasoning as `recallProposal`'s proposal-id lookup in sessions.ts.
- */
-function requireToken(req: any, reply: any): boolean {
-  const token = apiToken();
-  if (!token) return true;
-  const header = String(req.headers["authorization"] ?? "");
-  const expected = `Bearer ${token}`;
-  const a = Buffer.from(header);
-  const b = Buffer.from(expected);
-  if (a.length === b.length && timingSafeEqual(a, b)) return true;
-  reply.code(401).send({ error: "Unauthorized" });
-  return false;
-}
 
 /**
  * Who a row belongs to: the wallet this session proved it holds (ADR-0012), lowercased

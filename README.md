@@ -80,7 +80,12 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 | `POST /fill/prepare` | no | reserves Risk Budget against a proposalId from `/propose` and returns the unsigned transaction(s) the Trader's own **proven** wallet must send |
 | `POST /fill/settle` | no | looks up the transaction's real result on-chain and finalizes or releases the reservation accordingly (ADR-0012) |
 | `GET /positions` | no | the board: holdings for whichever wallet address the browser reports (falling back to the operator's configured wallet), plus this session's Practice Runs, each labelled |
-| `POST /rfq` | no | names a strike/tenor/size the book does not offer (`kind: "TRADER"`) or asks to cover a Loan (`kind: "COVER"`, an address and nothing else). Always the honest 501 -- the sealed-bid backend is not built -- except a `COVER` request for an uncoverable Loan, which answers with that Loan's own refusal instead |
+| `POST /rfq` | no | opens a sealed-bid request: a strike/tenor/size the book does not offer (`kind: "TRADER"`) or a Loan to cover (`kind: "COVER"`, an address and nothing else). Holds the Reserve Price against the Risk Budget and returns the one unsigned transaction the requester's own **proven** wallet must send. A `COVER` request for an uncoverable Loan answers with that Loan's own refusal instead |
+| `POST /rfq/confirm` | no | looks up the opening transaction's real receipt, reads the quotation id the chain assigned, and releases the reservation if it never opened (ADR-0012) |
+| `GET /rfq/:requestId` | no | the wait: which phase, how many makers have answered, and the premium once one has. Never a maker's identity, and never a premium before an Offer exists |
+| `POST /rfq/settle/prepare` | no | the second human confirmation: a maker's own decrypted price, and the unsigned approve + settle transactions that pay exactly it |
+| `POST /rfq/settle` | no | looks up the settlement on-chain, records the option it minted, and drops the Risk Budget hold from the Reserve Price to the premium actually charged |
+| `POST /rfq/cancel/prepare` / `POST /rfq/cancel` | no | withdraw a request nobody answered, taking the commitment to pay back off the chain |
 | `GET /cover/quote` | no | a Borrower's Aave V3 Loan on Base, and the put that would protect it: Liquidation Price, Target Strike, the full hedge. `?address=0x...`. Reads any address, requests nothing from a maker, signs nothing. Refuses -- with the reason in words -- for multi-collateral Loans, unsupported collateral, no debt, or a price its two sources disagree on |
 | `GET /forecast/news` | no | simulated-headline sentiment for `?symbol=&horizon=`. Opinion, quarantined from the trade flow (ADR-0005) |
 | `GET /forecast/price` | no | a price prediction grounded in real market data. Opinion, never a trade input |
@@ -100,6 +105,15 @@ owns — that proof comes from `/auth/challenge` and `/auth/verify`, a signed me
 than a transaction. And `/fill/settle` no longer trusts the browser's own report of whether
 a fill worked: given a `txHash`, it looks up that transaction's real receipt on-chain and
 decides success or failure from that alone (ADR-0012).
+
+The `/rfq` routes are the other money path, and they are a different shape (ADR-0017). A
+Fill is one act against a price that already exists; an RFQ opens a sealed-bid auction,
+waits out a window the protocol sets, and settles against a price discovered inside it —
+**two signatures with a real wait between them**. What the requester commits to before the
+first one is the Reserve Price: a ceiling, enforced on-chain by the OptionFactory, held
+against the Risk Budget from the moment the request is built. No premium exists, or is
+shown, until a maker answers. Both doors — the trading surface's and Cover's — go through
+the same seven routes; they differ only in how the Ask is derived.
 
 Every number a Trader reads crosses the wire as `{ value, display }` -- formatted once, on
 the server. The frontend renders `display` verbatim and never formats or recomputes; if it
@@ -203,6 +217,9 @@ The reasoning behind this project is written down, not assumed:
   - [0011](./docs/adr/0011-non-custodial-fill-for-multi-tenant-wallets.md) — each Trader signs their own fill; the backend prepares, never signs
   - [0012](./docs/adr/0012-wallet-proof-sessions-and-chain-verified-settle.md) — sessions prove wallet ownership before a fill; the chain decides whether a fill succeeded
   - [0013](./docs/adr/0013-a-risk-profile-belongs-to-a-wallet.md) — a Risk Profile is keyed on the proven wallet, not a browser-minted id
+  - [0015](./docs/adr/0015-the-liquidation-price-is-aaves-and-disagreeing-sources-refuse.md) — the Liquidation Price is Aave's, and two disagreeing price sources refuse rather than pick
+  - [0016](./docs/adr/0016-cover-is-partial-and-says-by-how-much.md) — a Cover says how much of the Loan it actually covers
+  - [0017](./docs/adr/0017-the-rfq-money-path-is-two-signatures-with-a-wait-between-them.md) — an RFQ is two signatures with a wait between them, and no price until a maker answers
 
 ## Layout
 
@@ -279,12 +296,16 @@ docs/superpowers/     the Forecast spec and its implementation plan
 - [ ] Trade Intent extraction — the surface asks through seed prompts, not free text
 - [ ] The three agents as their own Python service (ADR-0007). Only Review exists, stubbed
       as always-agreeing, and its silence has never been treated as consent
-- [ ] RFQ fallback when the book is empty. The halt state offers it without pretending it
-      is wired
-- [ ] Liquidation Cover — it has a glossary and ADR-0008, and no code
+- [x] RFQ for strikes the book does not carry — the full sealed-bid path, both doors:
+      request, wait, a maker's real price, and a second signature to pay it (ADR-0017)
+- [x] Liquidation Cover, end to end — reads an Aave Loan, derives the hedge, and buys it
+      through the same RFQ path
+- [ ] **First real mainnet Cover.** The path is built and exercised against live Base data;
+      this ticks when a maker has actually answered one
 
 ## Next steps
 
-Sign the first fill. RFQ for custom strikes and expiries. Trade Intent extraction, so the
-left column takes a sentence rather than a seed prompt. Auto-claim at expiry. A Python quant
-service for volatility modelling. Multi-asset beyond ETH.
+Sign the first fill, and get a maker to answer the first Cover Request. Trade Intent
+extraction, so the left column takes a sentence rather than a seed prompt. A renewal prompt
+before a Lapse — the first thing ADR-0008 asks for if there is time. Auto-claim at expiry. A
+Python quant service for volatility modelling.

@@ -17,7 +17,9 @@
  *     A Trader is told before they confirm, never after.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ExpiryOption, Figure, RfqTenorDays, UnderlyingSymbol } from "@copilot/shared";
+import type {
+  ExpiryOption, Figure, PreparedRfq, PreparedRfqSettle, RfqStatus, RfqTenorDays, UnderlyingSymbol,
+} from "@copilot/shared";
 import {
   ApiRefusal,
   getBoard,
@@ -30,6 +32,12 @@ import {
   propose,
   requestAuthChallenge,
   requestRfq,
+  confirmRfq,
+  getRfqStatus,
+  prepareRfqSettle,
+  settleRfq,
+  prepareRfqCancel,
+  cancelRfq,
   settleFill,
   verifyAuthChallenge,
   type Board,
@@ -42,7 +50,8 @@ import {
   type ProposeResult,
   type SessionState,
 } from "./api";
-import { connectWallet as connectInjectedWallet, connectedAddress, sendTx, signMessage } from "./wallet";
+import { sendTx } from "./wallet";
+import { useWallet } from "./useWallet";
 import { clampSizeUsdc, rfqSizeCapUsdc } from "./geometry";
 
 /** Trades of 1-2 USDC are normal and expected for this product. */
@@ -100,6 +109,16 @@ export const RFQ_STRIKE_STEP_PCT = 0.5;
  * the client bundle at all.
  */
 export const RFQ_TENOR_DAYS: readonly RfqTenorDays[] = [7, 14, 30, 60];
+
+/**
+ * How often an open request is re-read while makers can still answer.
+ *
+ * Slower than the Deck's own poll on purpose. A Deck poll re-prices a book that moves
+ * every block; an RFQ's offer window is measured in minutes and each tick costs an
+ * on-chain read plus an indexer call. Six seconds is fast enough that an answer appears
+ * while the Trader is still looking at the dialog, and slow enough not to hammer either.
+ */
+export const RFQ_POLL_MS = 6_000;
 
 /** The tape has to look alive without hammering a route that reads the chain. */
 const DECK_POLL_MS = 6000;
@@ -246,8 +265,27 @@ export interface Surface {
   /** The RFQ's own stake. Shares `SIZE_PRESETS_USDC`/`SIZE_MIN_USDC` with the Card confirmation, capped differently (`rfqSizeCapUsdc`) because there is no Maker Depth yet to bind against. */
   rfqSizeUsdc: number;
   rfqBusy: boolean;
-  /** The 501's own sentence, once asked for. Shown verbatim -- never composed here. */
+  /**
+   * A refusal the Trader is meant to read: the Risk Budget saying no, a wallet that has
+   * not been verified, or a market with no price. Shown verbatim -- never composed here.
+   */
   rfqRefusal: string | null;
+  /**
+   * The live request, once one has been opened on-chain (ADR-0017). Null before that and
+   * after the dialog is dismissed. Everything the dialog renders about the wait comes off
+   * this -- the phase, the offer count, the premium once a maker answers -- and every
+   * figure on it is a string the server already formatted.
+   */
+  rfqStatus: RfqStatus | null;
+  /**
+   * The premium a maker has actually offered, once the second confirmation has been
+   * prepared. Distinct from `rfqStatus.premiumUsdc` on purpose: this one is attached to
+   * the settle transaction sitting in `rfqSettle`, so what the Trader reads and what the
+   * chain will charge are the same number by construction.
+   */
+  rfqSettle: PreparedRfqSettle | null;
+  /** The Fill-shaped receipt for a settled request. Null until the option exists. */
+  rfqReceipt: FillReceipt | null;
 
   session: SessionState | null;
   board: Board | null;
@@ -295,8 +333,18 @@ export interface Surface {
   setRfqTenor: (days: RfqTenorDays) => void;
   /** A server round trip is neither possible nor needed here -- nothing is priced yet, so this only clamps and stores. */
   setRfqSize: (usdc: number) => void;
-  /** POST /rfq. Always ends in a 501; there is no success path to render. */
+  /**
+   * The FIRST signature: build the request and open it on-chain. Never the last -- an
+   * RFQ has no price yet, and `acceptRfq` is what pays one. (ADR-0017)
+   */
   submitRfq: () => Promise<void>;
+  /**
+   * The SECOND signature: pay a maker's own answer. Only reachable once `rfqStatus.phase`
+   * is `OFFERED`, which is the only state in which a real premium exists to confirm.
+   */
+  acceptRfq: () => Promise<void>;
+  /** Withdraw a request nobody answered, taking back the commitment to pay. */
+  withdrawRfq: () => Promise<void>;
   closeRfq: () => void;
 
   say: (text: string) => void;
@@ -463,6 +511,17 @@ export function useSurface(): Surface {
   const [rfqSizeUsdc, setRfqSizeUsdcState] = useState<number>(STAKE_USDC);
   const [rfqBusy, setRfqBusy] = useState(false);
   const [rfqRefusal, setRfqRefusal] = useState<string | null>(null);
+  const [rfqStatus, setRfqStatus] = useState<RfqStatus | null>(null);
+  const [rfqSettle, setRfqSettle] = useState<PreparedRfqSettle | null>(null);
+  const [rfqReceipt, setRfqReceipt] = useState<FillReceipt | null>(null);
+  /**
+   * The id of the live request, held in a ref rather than state.
+   *
+   * The polling effect below reads it, and putting it in state would restart the poll on
+   * every tick that touched it. It is never rendered -- `rfqStatus` is what the dialog
+   * reads -- so nothing needs a re-render when it changes.
+   */
+  const rfqRequestIdRef = useRef<string | null>(null);
 
   const [session, setSession] = useState<SessionState | null>(null);
   const [board, setBoard] = useState<Board | null>(null);
@@ -471,11 +530,13 @@ export function useSurface(): Surface {
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<ChatLine[]>([]);
 
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [walletConnecting, setWalletConnecting] = useState(false);
-  const [walletVerified, setWalletVerified] = useState(false);
-  const [walletVerifying, setWalletVerifying] = useState(false);
-  const [walletError, setWalletError] = useState<string | null>(null);
+  /**
+   * The connected, proven wallet -- shared with the Cover surface (`lib/useWallet.ts`).
+   * One implementation of the ADR-0012 handshake rather than two, because two versions of
+   * a security handshake is how one of them quietly stops matching the backend.
+   */
+  const wallet = useWallet();
+  const { address: walletAddress, verified: walletVerified } = wallet;
 
   const say = useCallback((text: string) => setLog((l) => [...l, { who: "copilot", text }]), []);
   const heard = useCallback((text: string) => setLog((l) => [...l, { who: "trader", text }]), []);
@@ -493,47 +554,6 @@ export function useSurface(): Surface {
     if (b) setBoard(b);
     setBoardLoading(false);
   }, [walletAddress]);
-
-  // First paint: pick up a wallet the browser already authorised, without prompting.
-  useEffect(() => {
-    void connectedAddress().then(setWalletAddress);
-  }, []);
-
-  /**
-   * Proves the connected wallet is who it says it is (ADR-0012) -- a text signature,
-   * never a transaction. Separate from `connectWallet` so a Trader whose wallet was
-   * already authorised before this page loaded (`connectedAddress()`, which never
-   * prompts) has a way to complete verification with one press, rather than a dead end.
-   */
-  const verifyWalletFor = useCallback(async (address: string) => {
-    setWalletVerifying(true);
-    setWalletError(null);
-    try {
-      const { message } = await requestAuthChallenge(address);
-      const signature = await signMessage(message);
-      await verifyAuthChallenge(signature);
-      setWalletVerified(true);
-    } catch (e) {
-      setWalletError(e instanceof Error ? e.message : "Could not verify this wallet.");
-    } finally {
-      setWalletVerifying(false);
-    }
-  }, []);
-
-  const connectWallet = useCallback(async () => {
-    setWalletConnecting(true);
-    setWalletError(null);
-    setWalletVerified(false);
-    try {
-      const address = await connectInjectedWallet();
-      setWalletAddress(address);
-      await verifyWalletFor(address);
-    } catch (e) {
-      setWalletError(e instanceof Error ? e.message : "Could not connect a wallet.");
-    } finally {
-      setWalletConnecting(false);
-    }
-  }, [verifyWalletFor]);
 
   /**
    * The current proposal, against the Deck as it stands now.
@@ -745,6 +765,10 @@ export function useSurface(): Surface {
     setRfqHorizonDaysState(14);
     setRfqSizeUsdcState(STAKE_USDC);
     setRfqRefusal(null);
+    setRfqStatus(null);
+    setRfqSettle(null);
+    setRfqReceipt(null);
+    rfqRequestIdRef.current = null;
     setRfqOpen(true);
   }, [direction]);
 
@@ -780,35 +804,175 @@ export function useSurface(): Surface {
   );
 
   /**
-   * POST /rfq. Always answers 501 -- the sealed-bid backend is out of scope (issue
-   * #31) -- so there is no success branch to render, only the refusal's own sentence,
-   * shown the way the Card confirmation shows a Risk Budget refusal: never a fake
-   * pending state.
+   * The FIRST of two signatures: open a sealed-bid request on-chain (ADR-0017).
+   *
+   * Nothing is bought here and no premium is known -- an RFQ has no price until a maker
+   * answers. What the Trader commits to is the Reserve Price, which the backend holds
+   * against the Risk Budget from the moment this returns and which the OptionFactory
+   * itself enforces once the transaction lands.
+   *
+   * Deliberately shaped like `confirm` rather than like a form submit: prepare, send,
+   * then report the outcome so the chain -- not this browser -- decides whether it
+   * worked. A prepared request whose transaction never went has to be reported too, or
+   * its reservation sits on the Risk Budget until it times out.
    */
   const submitRfq = useCallback(async () => {
+    if (!walletAddress || !walletVerified) {
+      setRfqRefusal(
+        "Connect and verify your wallet first \u2014 opening a request needs a signature from your own wallet."
+      );
+      return;
+    }
     setRfqBusy(true);
     setRfqRefusal(null);
+    let prepared: PreparedRfq | null = null;
     try {
-      await requestRfq({
+      prepared = await requestRfq({
         underlying: asset,
         direction,
         strikeOffsetPct: rfqOffsetPct,
         horizonDays: rfqHorizonDays,
         sizeUsdc: rfqSizeUsdc,
+        walletAddress,
       });
+      const txHash = await sendTx(prepared.requestTx);
+
+      const confirmed = await confirmRfq(prepared.requestId, txHash);
+      if (!confirmed.opened || !confirmed.status) {
+        setRfqRefusal("The request did not open on-chain. No USDC moved. You can try again.");
+        return;
+      }
+      rfqRequestIdRef.current = prepared.requestId;
+      setRfqStatus(confirmed.status);
+      say(`Requested: ${confirmed.status.ask.sentence}`);
+      await refreshMoney();
     } catch (e) {
+      // Only report a decline if the request was actually prepared -- there is nothing to
+      // release otherwise. `/rfq` reserves the Reserve Price synchronously the moment it
+      // runs, so the displayed budget has to catch up on this path too, not just on
+      // success, or the Trader reads a budget that looks untouched.
+      if (prepared) {
+        await confirmRfq(prepared.requestId).catch(() => {});
+        await refreshMoney();
+      }
       if (e instanceof ApiRefusal) setRfqRefusal(e.message);
-      else throw e;
+      else setRfqRefusal(e instanceof Error ? e.message : "The wallet could not open this request.");
     } finally {
       setRfqBusy(false);
     }
-  }, [asset, direction, rfqOffsetPct, rfqHorizonDays, rfqSizeUsdc]);
+  }, [asset, direction, rfqOffsetPct, rfqHorizonDays, rfqSizeUsdc, walletAddress, walletVerified, say, refreshMoney]);
+
+  /**
+   * Poll the open request while it is still waiting.
+   *
+   * Stops the moment there is nothing left to learn -- settled, withdrawn, or nobody
+   * answered -- rather than running forever behind a dialog nobody is watching. The
+   * interval is generous because the offer window is measured in minutes and every tick
+   * costs an on-chain read plus an indexer call.
+   */
+  useEffect(() => {
+    const requestId = rfqRequestIdRef.current;
+    if (!requestId || !rfqStatus) return;
+    if (rfqStatus.phase === "SETTLED" || rfqStatus.phase === "CANCELLED" || rfqStatus.phase === "NO_OFFERS") return;
+
+    const controller = new AbortController();
+    const timer = setInterval(() => {
+      void getRfqStatus(requestId, controller.signal)
+        .then(setRfqStatus)
+        // A poll that fails is just a poll: the next one tries again, and turning a blip
+        // into a refusal on screen would tell the Trader something is wrong while the
+        // request sits on-chain doing exactly what it should.
+        .catch(() => {});
+    }, RFQ_POLL_MS);
+
+    return () => {
+      controller.abort();
+      clearInterval(timer);
+    };
+  }, [rfqStatus]);
+
+  /**
+   * The SECOND signature: accept a maker's own price and pay it.
+   *
+   * The premium the dialog shows comes from `prepareRfqSettle` and is the exact amount
+   * encoded into the transaction being signed, so the number confirmed and the number
+   * charged cannot differ -- and if the chain disagrees, it reverts rather than
+   * overcharging. ADR-0008 says no signature without a human confirmation, and a
+   * confirmation of a blank is not a confirmation.
+   */
+  const acceptRfq = useCallback(async () => {
+    const requestId = rfqRequestIdRef.current;
+    if (!requestId) return;
+    setRfqBusy(true);
+    setRfqRefusal(null);
+    let prepared: PreparedRfqSettle | null = null;
+    try {
+      prepared = await prepareRfqSettle(requestId);
+      setRfqSettle(prepared);
+      if (prepared.approveTx) await sendTx(prepared.approveTx);
+      const txHash = await sendTx(prepared.settleTx);
+
+      // The wallet has broadcast and mined this -- the money has moved. Everything from
+      // here is bookkeeping, so a failure to reach /rfq/settle must never be caught below
+      // and reported as a failed purchase.
+      const done = await settleRfq(requestId, txHash).catch(() => null);
+      if (done) setRfqStatus(done.status);
+
+      setRfqReceipt({
+        txHash,
+        optionAddress: done?.status.optionAddress ?? "",
+        explorerUrl: `${prepared.explorerTxUrlBase}${txHash}`,
+      });
+      say(
+        `Bought. ${prepared.ask.contracts.display} ${asset} contracts at ${prepared.ask.strike.display}, paid ${prepared.premiumUsdc.display}.`
+      );
+      await refreshMoney();
+    } catch (e) {
+      if (prepared) {
+        await settleRfq(requestId, undefined).catch(() => {});
+        await refreshMoney();
+      }
+      if (e instanceof ApiRefusal) setRfqRefusal(e.message);
+      else setRfqRefusal(e instanceof Error ? e.message : "The wallet could not complete this purchase.");
+    } finally {
+      setRfqBusy(false);
+    }
+  }, [asset, say, refreshMoney]);
+
+  /** Withdraw a request nobody answered, taking the commitment to pay back off the chain. */
+  const withdrawRfq = useCallback(async () => {
+    const requestId = rfqRequestIdRef.current;
+    if (!requestId) return;
+    setRfqBusy(true);
+    setRfqRefusal(null);
+    try {
+      const prepared = await prepareRfqCancel(requestId);
+      const txHash = await sendTx(prepared.cancelTx);
+      await cancelRfq(requestId, txHash).catch(() => {});
+      const status = await getRfqStatus(requestId).catch(() => null);
+      if (status) setRfqStatus(status);
+      await refreshMoney();
+    } catch (e) {
+      if (e instanceof ApiRefusal) setRfqRefusal(e.message);
+      else setRfqRefusal(e instanceof Error ? e.message : "The wallet could not withdraw this request.");
+    } finally {
+      setRfqBusy(false);
+    }
+  }, [refreshMoney]);
 
   /** Escape, the backdrop, or the close button. Focus returns to whichever door opened it. */
   const closeRfq = useCallback(() => {
     const opener = rfqOpenerElRef.current;
     setRfqOpen(false);
     setRfqRefusal(null);
+    // Dismissing the dialog forgets the request on THIS screen; it does not withdraw it.
+    // The request stays live on-chain until it settles, is withdrawn, or expires, and the
+    // Risk Budget goes on holding its Reserve Price -- which is the truth, and the
+    // opposite of what quietly releasing it here would imply.
+    setRfqStatus(null);
+    setRfqSettle(null);
+    setRfqReceipt(null);
+    rfqRequestIdRef.current = null;
     opener?.focus?.();
   }, []);
 
@@ -1127,6 +1291,9 @@ export function useSurface(): Surface {
     rfqSizeUsdc,
     rfqBusy,
     rfqRefusal,
+    rfqStatus,
+    rfqSettle,
+    rfqReceipt,
     session,
     board,
     boardLoading,
@@ -1134,12 +1301,12 @@ export function useSurface(): Surface {
     busy,
     log,
     walletAddress,
-    walletConnecting,
+    walletConnecting: wallet.connecting,
     walletVerified,
-    walletVerifying,
-    walletError,
-    connectWallet,
-    verifyWallet: () => (walletAddress ? verifyWalletFor(walletAddress) : Promise.resolve()),
+    walletVerifying: wallet.verifying,
+    walletError: wallet.error,
+    connectWallet: wallet.connect,
+    verifyWallet: wallet.verify,
     setAsset,
     setDirection,
     setHorizon,
@@ -1154,6 +1321,8 @@ export function useSurface(): Surface {
     setRfqTenor,
     setRfqSize,
     submitRfq,
+    acceptRfq,
+    withdrawRfq,
     closeRfq,
     say,
     reset,

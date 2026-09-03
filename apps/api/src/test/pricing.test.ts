@@ -16,6 +16,7 @@ import { priceOrder, StakeTooSmall } from "../thetanuts/pricing.js";
 import { proposeTrade } from "../thetanuts/propose.js";
 import { resetStub, spies, state } from "./stub-client.js";
 import { NOW, makeOrder, DEFAULT_BOOK } from "./fixtures.js";
+import { DEFAULT_BUDGET } from "../sessions.js";
 
 /** Expiry bucketing is arithmetic on "now", so "now" has to hold still. */
 vi.useFakeTimers({ toFake: ["Date"] });
@@ -129,7 +130,7 @@ describe("POST /propose", () => {
     const body = res.json();
 
     expect(body.proposalId).toMatch(/^[0-9a-f-]{36}$/);
-    expect(body.remainingUsdc).toBe(5);
+    expect(body.remainingUsdc).toBe(DEFAULT_BUDGET);
     expect(body.proposal).toMatchObject({
       intent: { underlying: "ETH", direction: "DOWN", sizeUsdc: 2, horizonDays: 1 },
       instrument: "PUT",

@@ -899,7 +899,7 @@
       },
       "chosenBy": "TRADER"
     },
-    "remainingUsdc": 5
+    "remainingUsdc": 10
   },
   "card-1": {
     "kind": "PROPOSAL",
@@ -1801,7 +1801,7 @@
       },
       "chosenBy": "TRADER"
     },
-    "remainingUsdc": 5
+    "remainingUsdc": 10
   },
   "card-2": {
     "kind": "PROPOSAL",
@@ -2703,6 +2703,6 @@
       },
       "chosenBy": "TRADER"
     },
-    "remainingUsdc": 5
+    "remainingUsdc": 10
   }
 }

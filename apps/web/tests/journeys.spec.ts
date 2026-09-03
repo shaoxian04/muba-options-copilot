@@ -14,7 +14,7 @@
  */
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { cards, fixtures, FORBIDDEN, installFakeWallet, stubApi, TEST_API_TOKEN } from "./stub";
+import { advanceOffers, cards, fixtures, FORBIDDEN, installFakeWallet, stubApi, TEST_API_TOKEN } from "./stub";
 
 const agentCard = fixtures.proposeAgent.cardRef;
 const overrideCard = cards.find((c) => c.cardRef !== agentCard)!;
@@ -364,19 +364,23 @@ test.describe("size: presets, the stepper, and the cap", () => {
   });
 
   test("Max binds on the Risk Budget when it is the tighter of the two", async ({ page }) => {
-    // The default session carries a $5 Risk Budget against every fixture Card's $500
-    // Maker Depth -- the budget is always the smaller of the two here.
+    // The default session's Risk Budget against every fixture Card's $500 Maker Depth --
+    // the budget is always the smaller of the two here. Read off the fixture rather than
+    // written down, because the default moved once already (a Cover's $8 Reserve Price
+    // has to fit inside it) and a literal here would have to move with it every time.
+    const budget = fixtures.session.riskBudgetUsdc;
     const traffic = await stubApi(page, "normal");
     await page.goto("/");
     await openConfirm(page, agentCard);
 
-    // A preset past the $5 ceiling cannot be pressed at all.
-    await expect(page.getByTestId("size-preset-10")).toBeDisabled();
-
+    // No preset is disabled at the default any more: the budget rose to $10 to leave room
+    // for a Cover's $8 Reserve Price, and the largest preset is exactly $10. What this
+    // test is actually about survives that -- Max lands on the budget rather than on
+    // Maker Depth, which is the branch the "deep-budget" test below takes the other way.
     await page.getByTestId("size-max").click();
     const last = traffic.all.filter((r) => new URL(r.url()).pathname === "/propose").at(-1)!;
-    expect(last.postDataJSON()).toMatchObject({ sizeUsdc: 5 });
-    await expect(page.getByTestId("max-loss")).toHaveText("$5.00");
+    expect(last.postDataJSON()).toMatchObject({ sizeUsdc: budget });
+    await expect(page.getByTestId("max-loss")).toHaveText(fixtures.session.figures.riskBudgetUsdc.display);
   });
 
   test("Max binds on Maker Depth when it is the tighter of the two", async ({ page }) => {
@@ -884,20 +888,23 @@ test.describe("the halt states", () => {
     await expect(page.getByTestId("empty-deck")).not.toContainText("error");
   });
 
-  test("offers RFQ without pretending it is wired", async ({ page }) => {
+  test("offers RFQ, and the empty Deck is a way forward rather than a dead end", async ({ page }) => {
+    await installFakeWallet(page);
     await stubApi(page, "empty");
     await page.goto("/");
 
-    // Issue #31: the empty-Deck button is no longer a dead stub -- it opens the same
-    // RFQ dialog the chips-row door does, and that dialog leads to an honest 501, not
-    // a fake success. "Not pretending it is wired" now means the refusal is real.
+    // The empty-Deck button opens the same RFQ dialog the chips-row door does, and that
+    // dialog now goes somewhere: a real request, a real wait, and a real price if a maker
+    // answers. An empty book is exactly the situation the door exists for.
     await expect(page.getByTestId("empty-rfq")).toBeEnabled();
     await page.getByTestId("empty-rfq").click();
     await expect(page.getByTestId("rfq-modal")).toBeVisible();
 
+    await connectWallet(page);
     await page.getByTestId("rfq-submit").click();
-    await expect(page.getByTestId("rfq-refusal")).toBeVisible();
-    await expect(page.getByTestId("rfq-refusal")).toContainText("not built yet");
+    await expect(page.getByTestId("rfq-wait")).toHaveAttribute("data-phase", "OPEN");
+    // Still nothing priced -- an empty book does not become a price by being asked.
+    await expect(page.getByTestId("rfq-premium")).toHaveText("not priced yet");
   });
 
   test("both halt states are reachable without the agents service", async ({ page }) => {
@@ -988,16 +995,18 @@ test.describe("the golden path", () => {
 });
 
 /**
- * Issue #31 -- the RFQ door: naming a strike the book does not offer.
+ * The RFQ door: naming a strike the book does not offer, and buying it.
  *
- * Unlike the Card confirmation, this journey has no success path to walk: /rfq always
- * answers 501, on purpose. So what these tests hold is the honesty of the refusal --
- * that it reads as an answer to what was actually asked, states plainly that nothing
- * moved, and never dresses itself up as a pending trade -- alongside the same shape
- * and accessibility bar every other dialog on this surface is held to.
+ * Unlike the Card confirmation, this journey has a WAIT in the middle: an RFQ opens a
+ * sealed-bid auction, so there are two signatures with a real pause between them and no
+ * price at all until a maker answers (ADR-0017). What these tests hold is that the pause
+ * is told truthfully -- no invented premium, no fake pending trade, a clear answer when
+ * nobody bids -- alongside the same shape and accessibility bar every other dialog on
+ * this surface is held to.
  */
 test.describe("the RFQ door", () => {
   test.beforeEach(async ({ page }) => {
+    await installFakeWallet(page);
     await stubApi(page);
   });
 
@@ -1102,56 +1111,129 @@ test.describe("the RFQ door", () => {
     await expect(page.getByTestId("rfq-reserve-note")).toContainText("enforced on-chain");
   });
 
-  test("submitting surfaces the 501, stating nothing was sent, signed or spent -- never a pending state", async ({ page }) => {
+  test("cannot be opened without a verified wallet, and says so rather than failing on press", async ({ page }) => {
     const traffic = await stubApi(page);
     await page.goto("/");
     await page.getByTestId("rfq-door").click();
 
-    await expect(page.getByTestId("rfq-refusal")).toHaveCount(0);
+    await expect(page.getByTestId("rfq-submit")).toBeDisabled();
+    await expect(page.getByTestId("rfq-gate")).toContainText(/connect and verify/i);
+    expect(traffic.paths()).not.toContain("/rfq");
+  });
+
+  test("the first press opens a request and buys nothing -- still no premium anywhere", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+    await connectWallet(page);
     await page.getByTestId("rfq-submit").click();
 
-    const refusal = page.getByTestId("rfq-refusal");
-    await expect(refusal).toBeVisible();
-    await expect(refusal).toHaveAttribute("role", "alert");
-    await expect(refusal).toContainText("501");
-    await expect(refusal).toContainText("not built yet");
-    await expect(refusal).toContainText("Nothing was sent to a maker");
-    await expect(refusal).toContainText("nothing was signed");
-    await expect(refusal).toContainText("no USDC moved");
+    const wait = page.getByTestId("rfq-wait");
+    await expect(wait).toBeVisible();
+    await expect(wait).toHaveAttribute("role", "status");
+    await expect(wait).toHaveAttribute("data-phase", "OPEN");
+    await expect(page.getByTestId("rfq-wait-sentence")).toContainText(/Nothing is owed unless you accept/i);
 
-    // Never a fake pending state: no receipt, no holding, no request to either route
-    // that would move money or open even a practised Position.
-    await expect(page.getByTestId("receipt")).toHaveCount(0);
-    await expect(page.getByTestId("practice-receipt")).toHaveCount(0);
+    // Still unpriced: an RFQ nobody has answered has no premium, and the ceiling above it
+    // is not a substitute for one.
+    await expect(page.getByTestId("rfq-premium")).toHaveText("not priced yet");
+    await expect(page.getByTestId("rfq-chance")).toHaveText("not priced yet");
+
+    expect(traffic.paths()).toContain("/rfq");
+    expect(traffic.paths()).toContain("/rfq/confirm");
+    expect(traffic.paths()).not.toContain("/rfq/settle/prepare");
+    // The RFQ path never touches the routes that fill a resting Order or practise one.
     expect(traffic.paths()).not.toContain("/fill");
     expect(traffic.paths()).not.toContain("/practice");
   });
 
-  test("the refusal echoes back exactly what was asked for", async ({ page }) => {
+  test("the request restates the strike as the server's own dollar figure, off what was asked", async ({ page }) => {
+    await stubApi(page);
     await page.goto("/");
     await page.getByTestId("rfq-door").click();
+    await connectWallet(page);
 
     await page.getByTestId("rfq-tenor-14").click();
     await page.getByTestId("rfq-size-preset-2").click();
     await page.getByTestId("rfq-submit").click();
+    await expect(page.getByTestId("rfq-wait")).toBeVisible();
 
     // ETH falls by default (direction DOWN), so the door opens 10% below the fixture's
     // $2,445.49 spot -- $2,200.94, formatted the way `apps/api/src/format.ts` formats it.
-    await expect(page.getByTestId("rfq-refusal")).toContainText(
-      "You asked for: ETH below $2,200.94, 14 days, at most $2.00."
-    );
+    // The browser never computed it: it arrived as a string on the Ask.
+    await expect(page.getByTestId("rfq-belief")).toContainText("$2,200.94");
+    await expect(page.getByTestId("rfq-max-loss")).toHaveText("$2.00");
   });
 
-  test("issues no additional request after a refusal, however hard Request quotes is clicked", async ({ page }) => {
+  test("freezes the controls once a request is on-chain -- what was signed cannot be edited", async ({ page }) => {
+    await stubApi(page);
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+    await connectWallet(page);
+    await page.getByTestId("rfq-submit").click();
+    await expect(page.getByTestId("rfq-wait")).toBeVisible();
+
+    await expect(page.getByTestId("rfq-strike-slider")).toBeDisabled();
+    await expect(page.getByTestId("rfq-tenor-30")).toBeDisabled();
+    await expect(page.getByTestId("rfq-size-preset-2")).toBeDisabled();
+    await expect(page.getByTestId("rfq-submit")).toHaveCount(0);
+  });
+
+  test("a maker's answer is the first price shown, and paying takes a second press that names it", async ({ page }) => {
     const traffic = await stubApi(page);
     await page.goto("/");
     await page.getByTestId("rfq-door").click();
+    await connectWallet(page);
     await page.getByTestId("rfq-submit").click();
-    await expect(page.getByTestId("rfq-refusal")).toBeVisible();
+    await expect(page.getByTestId("rfq-wait")).toBeVisible();
 
-    const before = traffic.paths().filter((p) => p === "/rfq").length;
-    await page.getByTestId("rfq-submit").click({ force: true }).catch(() => {});
-    expect(traffic.paths().filter((p) => p === "/rfq").length).toBe(before);
+    await advanceOffers(page, async () => (await page.getByTestId("rfq-wait").getAttribute("data-phase")) === "OFFERED");
+    await expect(page.getByTestId("rfq-wait")).toHaveAttribute("data-phase", "OFFERED");
+    await expect(page.getByTestId("rfq-premium")).toHaveText("$1.25");
+
+    // The button that spends money names the amount, so nobody presses it unread -- and
+    // requesting alone never reached the settle routes.
+    const accept = page.getByTestId("rfq-accept");
+    await expect(accept).toContainText("$1.25");
+    expect(traffic.paths()).not.toContain("/rfq/settle/prepare");
+
+    await accept.click();
+    await expect(page.getByTestId("rfq-wait")).toHaveAttribute("data-phase", "SETTLED");
+    await expect(page.getByTestId("rfq-receipt")).toBeVisible();
+    expect(traffic.paths()).toContain("/rfq/settle");
+  });
+
+  test("an unanswered request says nobody bid and offers a withdrawal, rather than hanging", async ({ page }) => {
+    await stubApi(page, "rfq-unanswered");
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+    await connectWallet(page);
+    await page.getByTestId("rfq-submit").click();
+    await expect(page.getByTestId("rfq-wait")).toBeVisible();
+
+    await advanceOffers(page, async () => (await page.getByTestId("rfq-wait").getAttribute("data-phase")) === "NO_OFFERS");
+    await expect(page.getByTestId("rfq-wait")).toHaveAttribute("data-phase", "NO_OFFERS");
+    await expect(page.getByTestId("rfq-wait-sentence")).toContainText(/nobody answered/i);
+    await expect(page.getByTestId("rfq-wait-sentence")).toContainText(/No USDC moved/i);
+
+    // Never a price: nobody quoted one.
+    await expect(page.getByTestId("rfq-premium")).toHaveText("not priced yet");
+    await expect(page.getByTestId("rfq-accept")).toHaveCount(0);
+    await expect(page.getByTestId("rfq-withdraw")).toContainText("Withdraw request");
+  });
+
+  test("opens exactly one request, and there is no second Request quotes to press", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await page.getByTestId("rfq-door").click();
+    await connectWallet(page);
+    await page.getByTestId("rfq-submit").click();
+    await expect(page.getByTestId("rfq-wait")).toBeVisible();
+
+    // The button is GONE rather than merely inert -- a stronger guarantee than a disabled
+    // control, and the reason a double-press cannot open two requests against one budget.
+    await expect(page.getByTestId("rfq-submit")).toHaveCount(0);
+    expect(traffic.paths().filter((p) => p === "/rfq").length).toBe(1);
   });
 
   test("Escape dismisses, and returns focus to the door that opened it", async ({ page }) => {
@@ -1211,7 +1293,9 @@ test.describe("the RFQ door", () => {
 
     await expect(page.locator('[data-testid="quote-moved"]')).toHaveCount(0);
     await expect(page.getByTestId("rfq-modal")).not.toContainText("price moved");
-    await expect(page.getByTestId("rfq-submit")).toBeEnabled();
+    // Still the asking state -- a moved book has nothing to move here.
+    await expect(page.getByTestId("rfq-submit")).toHaveCount(1);
+    await expect(page.getByTestId("rfq-wait")).toHaveCount(0);
   });
 
   test("has no critical or serious accessibility violations, open or refused", async ({ page }) => {
@@ -1223,8 +1307,9 @@ test.describe("the RFQ door", () => {
       opened.violations.filter((v) => v.impact === "critical" || v.impact === "serious").map((v) => v.id)
     ).toEqual([]);
 
+    await connectWallet(page);
     await page.getByTestId("rfq-submit").click();
-    await expect(page.getByTestId("rfq-refusal")).toBeVisible();
+    await expect(page.getByTestId("rfq-wait")).toBeVisible();
 
     const refused = await new AxeBuilder({ page }).analyze();
     expect(
