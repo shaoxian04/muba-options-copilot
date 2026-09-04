@@ -74,6 +74,3 @@ export function anthropicApiKey(): string {
   return key;
 }
 
-export const cryptopanicApiKey = (): string | undefined => process.env.CRYPTOPANIC_API_KEY || undefined;
-export const gnewsApiKey = (): string | undefined => process.env.GNEWS_API_KEY || undefined;
-export const newsApiKey = (): string | undefined => process.env.NEWS_API_KEY || undefined;

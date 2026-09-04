@@ -68,8 +68,6 @@ import { answerQuestion } from "./forecast/ask.js";
 import { CryptoNewsQuery, MacroNewsQuery, AllNewsQuery } from "@copilot/shared";
 import { getCryptoNewsFeed, getMacroNewsFeed, getAllNewsFeed } from "./news/service.js";
 import { fetchIndicators, IndicatorsUnavailable } from "./forecast/indicators.js";
-import { CryptoNewsQuery, MacroNewsQuery, AllNewsQuery } from "@copilot/shared";
-import { getCryptoNewsFeed, getMacroNewsFeed, getAllNewsFeed } from "./news/service.js";
 import { fetchSuggestion, SuggestionUnavailable } from "./strategy/suggest.js";
 import { getRiskProfile, setRiskProfile } from "./supabase/riskProfiles.js";
 import { recordDecision, decisionStats } from "./supabase/decisions.js";

@@ -1573,15 +1573,15 @@ export function useSurface(): Surface {
         if (answer.kind === "PROPOSAL") {
           setSelectedRef(answer.cardRef);
           if (answer.proposal.chosenBy === "AGENT") setDealtRef(answer.cardRef);
-          shownQuote.current = { ref: answer.cardRef, premium: answer.proposal.figures.premiumUsdc.display };
+          shownQuote.current = { ref: answer.cardRef, perContract: answer.proposal.figures.perContractUsd.display };
           const expl = answer.explanation || `I found the ${answer.proposal.figures.strike.display} option for you.`;
           say(expl);
           setConfirmOpen(true);
         } else if (answer.kind === "NO_ORDER") {
-          shownQuote.current = { ref: null, premium: null };
+          shownQuote.current = { ref: null, perContract: null };
           say(answer.message || "No suitable order found for that horizon and direction.");
         } else if (answer.kind === "VETO") {
-          shownQuote.current = { ref: null, premium: null };
+          shownQuote.current = { ref: null, perContract: null };
           say(answer.explanation || "Review agent vetoed this trade intent.");
         }
         return answer;
@@ -1596,10 +1596,11 @@ export function useSurface(): Surface {
             : "Could not process that trade.";
         setRefusal(message);
         setResult(null);
-        shownQuote.current = { ref: null, premium: null };
+        shownQuote.current = { ref: null, perContract: null };
         say(message);
         return null;
       } finally {
+
         setBusy(false);
       }
     },
