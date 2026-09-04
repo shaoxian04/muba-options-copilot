@@ -712,3 +712,4 @@ export * from "./fill.js";
 export * from "./rfq.js";
 export * from "./auth.js";
 export * from "./account.js";
+export * from "./history.js";

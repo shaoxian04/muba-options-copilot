@@ -30,6 +30,8 @@ import { marketOverview } from "./thetanuts/markets.js";
 import { reviewIntent } from "./agents/review.js";
 import { practiceRoutes, practiceHoldings, type PracticePosition } from "./practice.js";
 import { rfqRoutes } from "./rfq.js";
+import { historyRoutes } from "./history.js";
+import { recordFill } from "./supabase/fills.js";
 import { requireToken, apiToken } from "./gate.js";
 import { coverRoutes } from "./insurance/http.js";
 import { safeErrorResponse } from "./errors.js";
@@ -47,7 +49,7 @@ import { usd } from "./format.js";
 import {
   sessionFor, remainingBudget, setRiskBudget,
   rememberProposal, recallProposal, rememberCard, recallCard,
-  reservePendingFill, confirmPendingFill, releasePendingFill,
+  reservePendingFill, peekPendingFill, confirmPendingFill, releasePendingFill,
   beginAuthChallenge, takeAuthChallenge, markWalletVerified,
   type Session,
 } from "./sessions.js";
@@ -535,7 +537,15 @@ export async function buildApp(): Promise<FastifyInstance> {
     // reasoning the old single-call /fill handler documented: nothing can interleave
     // between this check and this mutation, which is what makes it atomic.
     s.proposals.delete(proposalId);
-    reservePendingFill(s, proposalId, found.proposal.maxLossUsdc);
+    reservePendingFill(s, proposalId, found.proposal.maxLossUsdc, {
+      walletAddress: trader,
+      underlying: found.proposal.intent.underlying,
+      isCall: found.proposal.instrument !== "PUT",
+      strike: found.proposal.strike,
+      contracts: found.proposal.figures.contracts.value,
+      premiumUsdc: found.proposal.premiumUsdc,
+      expiryIso: found.proposal.expiry,
+    });
 
     try {
       const prepared = await prepareFillTx(found.proposal, found.order, trader);
@@ -584,6 +594,9 @@ export async function buildApp(): Promise<FastifyInstance> {
         reply.code(425).send({ error: "That transaction is not visible yet. Try settling again shortly." });
         return;
       }
+      // Peeked before confirmPendingFill deletes the reservation below -- the terms
+      // captured at /fill/prepare are otherwise lost the instant this call succeeds.
+      const pendingTerms = peekPendingFill(s, proposalId);
       const existed = verification.succeeded ? confirmPendingFill(s, proposalId) : releasePendingFill(s, proposalId);
       if (!existed) {
         reply.code(410).send({ error: "No prepared fill found for that proposal." });
@@ -591,6 +604,20 @@ export async function buildApp(): Promise<FastifyInstance> {
       }
       const userId = await optionalAccountId(req);
       if (userId) void logActivity(userId, "fill_settled", { proposalId, txHash, confirmed: verification.succeeded });
+      if (userId && verification.succeeded && pendingTerms) {
+        void recordFill(userId, {
+          walletAddress: pendingTerms.walletAddress,
+          kind: "DECK",
+          underlying: pendingTerms.underlying,
+          isCall: pendingTerms.isCall,
+          strike: pendingTerms.strike,
+          contracts: pendingTerms.contracts,
+          premiumUsdc: pendingTerms.premiumUsdc,
+          expiryIso: pendingTerms.expiryIso,
+          optionAddress: null,
+          txHash,
+        });
+      }
       return { remainingUsdc: remainingBudget(s), confirmed: verification.succeeded };
     } catch (e) {
       reply.code(502).send(safeErrorResponse(req.log, e, "Could not verify that transaction. Try again."));
@@ -841,6 +868,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
   await app.register(rfqRoutes);
   await app.register(coverRoutes);
+  await app.register(historyRoutes);
 
   /**
    * The signed-in account's saved settings and linked wallet, if any -- what

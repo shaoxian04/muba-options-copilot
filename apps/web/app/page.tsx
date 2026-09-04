@@ -27,6 +27,7 @@ import { Rail } from "../components/Rail";
 import { RfqModal } from "../components/RfqModal";
 import { Tape } from "../components/Tape";
 import { WalletPicker } from "../components/WalletPicker";
+import { YoursPanel } from "../components/YoursPanel";
 import { agentGate, useNow, useSurface } from "../lib/surface";
 
 export default function Page() {
@@ -224,7 +225,12 @@ export default function Page() {
               */}
               <section className="sect" aria-label="What you hold">
                 <span className="lbl">Yours</span>
-                <Board holdings={s.board?.holdings ?? []} now={now} loading={s.boardLoading} />
+                <YoursPanel
+                  holdings={s.board?.holdings ?? []}
+                  now={now}
+                  loading={s.boardLoading}
+                  signedIn={!!s.account}
+                />
               </section>
             </div>
 

@@ -1,0 +1,58 @@
+{
+  "items": [
+    {
+      "kind": "RFQ",
+      "underlying": "SOL",
+      "isCall": true,
+      "strike": {
+        "value": 105,
+        "display": "$105.00"
+      },
+      "contracts": {
+        "value": 1,
+        "display": "1.000000"
+      },
+      "premiumUsdc": {
+        "value": 1.25,
+        "display": "$1.25"
+      },
+      "expiry": {
+        "value": 1769673600000,
+        "display": "29 Jan, 08:00 UTC"
+      },
+      "filledAt": {
+        "value": 1768473000000,
+        "display": "15 Jan, 10:30 UTC"
+      },
+      "txHash": "0xfeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface",
+      "optionAddress": null
+    },
+    {
+      "kind": "DECK",
+      "underlying": "ETH",
+      "isCall": false,
+      "strike": {
+        "value": 2400,
+        "display": "$2,400.00"
+      },
+      "contracts": {
+        "value": 0.869434,
+        "display": "0.869434"
+      },
+      "premiumUsdc": {
+        "value": 2,
+        "display": "$2.00"
+      },
+      "expiry": {
+        "value": 1768550400000,
+        "display": "16 Jan, 08:00 UTC"
+      },
+      "filledAt": {
+        "value": 1768381200000,
+        "display": "14 Jan, 09:00 UTC"
+      },
+      "txHash": "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      "optionAddress": "0x0000000000000000000000000000000000000aa"
+    }
+  ]
+}

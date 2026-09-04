@@ -64,6 +64,22 @@ export interface RfqRecord {
   at: number;
 }
 
+/**
+ * The terms a Fill was prepared against, captured at `/fill/prepare` time so
+ * `/fill/settle` -- which no longer holds the proposal, deleted the moment it was spent
+ * -- can still record what was actually bought. Optional everywhere it appears: no
+ * existing caller of `reservePendingFill` supplies this, and none has to.
+ */
+export interface PendingFillTerms {
+  walletAddress: string;
+  underlying: string;
+  isCall: boolean;
+  strike: number;
+  contracts: number;
+  premiumUsdc: number;
+  expiryIso: string;
+}
+
 export interface Session {
   id: string;
   riskBudgetUsdc: number;
@@ -77,7 +93,7 @@ export interface Session {
    * gets its own, more generous TTL than a Deck quote's 60 seconds; if /fill/settle never
    * comes (the Trader closed the tab mid-signature), `sweepPendingFills` releases it.
    */
-  pendingFills: Map<string, { maxLossUsdc: number; at: number }>;
+  pendingFills: Map<string, { maxLossUsdc: number; at: number; terms?: PendingFillTerms }>;
   /**
    * Sealed-bid requests this session has opened, keyed by the opaque id the browser was
    * given. Held for the same reason a proposal is: the request, the key that reads its
@@ -244,14 +260,27 @@ const PENDING_FILL_TTL_MS = 5 * 60_000;
  * same reasoning the old single-call /fill handler documented: Node has no threads, so
  * nothing can interleave between the remainingBudget check and this mutation.
  */
-export function reservePendingFill(s: Session, proposalId: string, maxLossUsdc: number): void {
+export function reservePendingFill(
+  s: Session,
+  proposalId: string,
+  maxLossUsdc: number,
+  terms?: PendingFillTerms
+): void {
   s.spentUsdc += maxLossUsdc;
-  s.pendingFills.set(proposalId, { maxLossUsdc, at: Date.now() });
+  s.pendingFills.set(proposalId, { maxLossUsdc, at: Date.now(), terms });
 }
 
 /** The fill succeeded: keep the spend, stop tracking the reservation. */
 export function confirmPendingFill(s: Session, proposalId: string): boolean {
   return s.pendingFills.delete(proposalId);
+}
+
+/**
+ * Read a reservation's terms WITHOUT consuming it -- `confirmPendingFill` above deletes
+ * the entry, so `/fill/settle` must peek before it calls that, to know what to record.
+ */
+export function peekPendingFill(s: Session, proposalId: string): PendingFillTerms | undefined {
+  return s.pendingFills.get(proposalId)?.terms;
 }
 
 /** The fill did not happen -- rejected, failed on-chain, or abandoned -- give the budget back. */

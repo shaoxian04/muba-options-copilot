@@ -36,6 +36,10 @@ vi.mock("../supabase/decisions.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../supabase/decisions.js")>();
   return { ...actual, recordDecision: vi.fn() };
 });
+vi.mock("../supabase/fills.js", () => ({
+  recordFill: vi.fn(),
+  listFills: vi.fn(),
+}));
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -49,11 +53,13 @@ import { NOW, DEFAULT_BOOK, makeOrder, SPOT, PRICES } from "./fixtures.js";
 import { getRiskProfile, setRiskProfile } from "../supabase/riskProfiles.js";
 import { fetchSuggestion } from "../strategy/suggest.js";
 import { recordDecision } from "../supabase/decisions.js";
+import { listFills } from "../supabase/fills.js";
 
 const mockedGetProfile = vi.mocked(getRiskProfile);
 const mockedSetProfile = vi.mocked(setRiskProfile);
 const mockedFetchSuggestion = vi.mocked(fetchSuggestion);
 const mockedRecordDecision = vi.mocked(recordDecision);
+const mockedListFills = vi.mocked(listFills);
 
 vi.useFakeTimers({ toFake: ["Date"] });
 vi.setSystemTime(NOW);
@@ -118,6 +124,7 @@ const NAMES = [
   "suggestion-eth",
   "suggestion-no-signal",
   "decisions-accepted",
+  "history",
 ] as const;
 
 /**
@@ -577,6 +584,48 @@ beforeAll(async () => {
     intent,
     decision: "ACCEPTED",
   });
+
+  // --- History ---------------------------------------------------------------
+  //
+  // A mocked-passthrough capture, same reasoning as "decisions-accepted" above:
+  // `../supabase/fills.js` is mocked at its module boundary (same convention as
+  // `history.test.ts`), so what this captures is the ENVELOPE `/history` builds
+  // around a Fill -- the Figure formatting, the field names -- not something the
+  // route derived itself. Two rows: a Deck buy and an RFQ buy, so the browser
+  // suite has both `kind`s to render.
+  mockedListFills.mockResolvedValueOnce([
+    {
+      id: "fill-2",
+      ownerId: OWNER,
+      walletAddress: TRADER_ADDRESS,
+      kind: "RFQ",
+      underlying: "SOL",
+      isCall: true,
+      strike: 105,
+      contracts: 1,
+      premiumUsdc: 1.25,
+      expiryIso: "2026-01-29T08:00:00.000Z",
+      optionAddress: null,
+      txHash: "0xfeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface",
+      filledAt: "2026-01-15T10:30:00.000Z",
+    },
+    {
+      id: "fill-1",
+      ownerId: OWNER,
+      walletAddress: TRADER_ADDRESS,
+      kind: "DECK",
+      underlying: "ETH",
+      isCall: false,
+      strike: 2400,
+      contracts: 0.869434,
+      premiumUsdc: 2,
+      expiryIso: "2026-01-16T08:00:00.000Z",
+      optionAddress: "0x0000000000000000000000000000000000000aa",
+      txHash: "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      filledAt: "2026-01-14T09:00:00.000Z",
+    },
+  ]);
+  generated["history"] = await getAsOwner("/history");
 });
 
 /**
