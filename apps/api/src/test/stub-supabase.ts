@@ -42,6 +42,7 @@ export function resetSupabaseStub(): void {
   state.practicePositions = [];
   state.activity = [];
   state.rfqRequests.clear();
+  spies.getUser.mockClear();
   timestampCounter = 0;
 }
 
@@ -168,14 +169,23 @@ function tableFor(table: string) {
   };
 }
 
+/**
+ * Stable spies, hoisted out of `getSupabase`.
+ *
+ * `getUser` used to be a fresh `vi.fn()` per call, so nothing could count how many times
+ * a token was actually verified -- which is exactly what the account-token cache needs to
+ * assert (audit D6). Cleared by `resetSupabaseStub`.
+ */
+export const spies = {
+  getUser: vi.fn(async (token: string) => {
+    const user = state.users.get(token);
+    return user ? { data: { user }, error: null } : { data: { user: null }, error: { message: "invalid token" } };
+  }),
+};
+
 export function getSupabase(): any {
   return {
-    auth: {
-      getUser: vi.fn(async (token: string) => {
-        const user = state.users.get(token);
-        return user ? { data: { user }, error: null } : { data: { user: null }, error: { message: "invalid token" } };
-      }),
-    },
+    auth: { getUser: spies.getUser },
     from: (table: string) => tableFor(table),
   };
 }

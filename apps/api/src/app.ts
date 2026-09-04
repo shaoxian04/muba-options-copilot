@@ -14,6 +14,7 @@
  * `server.ts`, so importing this module can never accidentally open a socket.
  */
 import Fastify, { type FastifyInstance } from "fastify";
+import { createHash } from "node:crypto";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
@@ -236,6 +237,49 @@ export async function buildApp(): Promise<FastifyInstance> {
   // sniffing a JSON error body as something executable.
   app.addHook("onSend", async (_req, reply, payload) => {
     reply.header("X-Content-Type-Options", "nosniff");
+    return payload;
+  });
+
+  /**
+   * Conditional responses on the routes the surface polls (audit D9).
+   *
+   * The book rarely moves between two six-second polls, but every poll re-serialised and
+   * re-sent the whole Deck -- every Card, every figure, both the `value` and the `display`
+   * of each. An ETag turns an unchanged answer into a 304 with no body.
+   *
+   * Note what this does and does not save. The server still does the work and still builds
+   * the payload, so this is bandwidth and parse time, not upstream cost -- that is what
+   * `upstream.ts` is for. It matters most on a phone on a bad connection, which is a real
+   * way to use this app.
+   *
+   * Deliberately scoped to the polled READ routes. It is never applied to anything that
+   * reserves budget or preparescalldata: a 304 on a money route would be a cached answer
+   * to a question that must be asked fresh every time (ADR-0006).
+   */
+  const CONDITIONAL_ROUTES = new Set(["/deck", "/depth", "/markets", "/book"]);
+
+  app.addHook("onSend", async (req, reply, payload) => {
+    if (req.method !== "GET" || reply.statusCode !== 200) return payload;
+    if (!CONDITIONAL_ROUTES.has(req.routeOptions?.url ?? "")) return payload;
+    if (typeof payload !== "string") return payload;
+
+    // Weak validator: this is byte-equality of a JSON body we just built, not a claim
+    // about a resource's semantic version.
+    const etag = `W/"${createHash("sha1").update(payload).digest("base64url")}"`;
+    reply.header("ETag", etag);
+
+    // `no-cache` means "you may keep a copy, but REVALIDATE before every use" -- which is
+    // what makes the browser send If-None-Match on its own, so the surface gets the saving
+    // without any conditional-request code of its own. Emphatically not `no-store`, which
+    // would forbid the copy entirely, and not a max-age, which would let a Trader read a
+    // Deck the server never confirmed was current.
+    reply.header("Cache-Control", "no-cache");
+
+    if (req.headers["if-none-match"] === etag) {
+      reply.code(304);
+      // A 304 carries no body, and Fastify will not send one if the payload is empty.
+      return "";
+    }
     return payload;
   });
 
