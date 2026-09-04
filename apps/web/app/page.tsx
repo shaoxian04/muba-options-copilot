@@ -72,7 +72,14 @@ export default function Page() {
 
   return (
     <main className="app">
-      <Chat log={s.log} seeds={seeds} busy={s.busy} deal={s.deal} walletVerified={s.walletVerified} />
+      <Chat
+        log={s.log}
+        seeds={seeds}
+        busy={s.busy}
+        deal={s.deal}
+        dealPrompt={s.dealPrompt}
+        walletVerified={s.walletVerified}
+      />
 
       <div className="rig">
         <Rail markets={s.markets} asset={s.asset} loading={s.marketsLoading} onPick={s.setAsset} />

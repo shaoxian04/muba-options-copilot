@@ -72,6 +72,7 @@ export function Chat({
   seeds,
   busy,
   deal,
+  dealPrompt,
   walletVerified,
 }: {
   log: ChatLine[];
@@ -79,6 +80,7 @@ export function Chat({
   busy: boolean;
   /** Same signature as `Surface.deal` -- threaded down to Suggestion for Accept (task 5). */
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
+  dealPrompt?: (prompt: string) => Promise<ProposeResult | null>;
   /** Whether the session has proven wallet ownership (ADR-0012) -- gates the Risk Profile. */
   walletVerified: boolean;
 }) {
@@ -166,7 +168,7 @@ export function Chat({
       </div>
 
       {engine === "trade" ? (
-        <TradeEngine log={log} seeds={seeds} busy={busy} />
+        <TradeEngine log={log} seeds={seeds} busy={busy} dealPrompt={dealPrompt} />
       ) : (
         <InsightsEngine
           log={insightsLog}
@@ -182,7 +184,18 @@ export function Chat({
   );
 }
 
-function TradeEngine({ log, seeds, busy }: { log: ChatLine[]; seeds: Seed[]; busy: boolean }) {
+function TradeEngine({
+  log,
+  seeds,
+  busy,
+  dealPrompt,
+}: {
+  log: ChatLine[];
+  seeds: Seed[];
+  busy: boolean;
+  dealPrompt?: (prompt: string) => Promise<ProposeResult | null>;
+}) {
+  const [prompt, setPrompt] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -190,13 +203,23 @@ function TradeEngine({ log, seeds, busy }: { log: ChatLine[]; seeds: Seed[]; bus
     if (el) el.scrollTop = el.scrollHeight;
   }, [log]);
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const val = prompt.trim();
+    if (!val || busy) return;
+    setPrompt("");
+    if (dealPrompt) {
+      await dealPrompt(val);
+    }
+  };
+
   return (
     <>
       <div className="log" ref={logRef} role="log" aria-live="polite" aria-label="Conversation">
         {log.length === 0 ? (
           <p className="from-copilot">
             The Deck is on the right — every option you could buy right now, cheapest long shots first. Have a
-            poke. Nothing is bought until you press a button.
+            poke or type what you want to do. Nothing is bought until you press confirm.
           </p>
         ) : (
           log.map((line, i) => (
@@ -215,12 +238,19 @@ function TradeEngine({ log, seeds, busy }: { log: ChatLine[]; seeds: Seed[]; bus
         ))}
       </div>
 
-      {/*
-        A text box would imply the language layer exists for trading. It does not yet --
-        the Trade, Review and Strategy Agents are a separate Python service that has not
-        been started (ADR-0007) -- and a dead input is a worse lie than an honest note.
-      */}
-      <p className="box">Typing arrives with the agents service. Until then the prompts above stand in for it.</p>
+      <form className="ask-form" onSubmit={handleSubmit} aria-label="Trade natural language input">
+        <input
+          type="text"
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="Tell Copilot what you want to do..."
+          disabled={busy}
+          aria-label="Trade prompt"
+        />
+        <button type="submit" disabled={busy || !prompt.trim()}>
+          Ask
+        </button>
+      </form>
     </>
   );
 }

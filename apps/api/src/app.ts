@@ -29,6 +29,7 @@ import { buildDeck } from "./thetanuts/deck.js";
 import { buildDepth } from "./thetanuts/depth-view.js";
 import { marketOverview } from "./thetanuts/markets.js";
 import { reviewIntent } from "./agents/review.js";
+import { extractTradeIntent } from "./agents/trade.js";
 import { practiceRoutes, practiceHoldings } from "./practice.js";
 import { rfqRoutes } from "./rfq.js";
 import { coverRoutes } from "./insurance/http.js";
@@ -375,6 +376,60 @@ export async function buildApp(): Promise<FastifyInstance> {
       // Anything else may be a raw ethers/RPC error -- THETANUTS_RPC_URL carries the
       // provider API key as a URL path segment, and that key must never reach a
       // response body. See errors.ts.
+      reply.code(502).send(safeErrorResponse(req.log, e, "Could not price that trade. Try again."));
+      return;
+    }
+  });
+
+  /**
+   * Free-text conversational trading entry point.
+   * Takes a user prompt (e.g. "Protect my ETH against a drop for 2 days with $20"),
+   * uses the Trade Agent NLP extractor to derive a structured TradeIntent,
+   * checks Risk Budget and Review Agent veto, matches the best live option on Base,
+   * and returns the Proposal along with a natural-language explanation for the chat.
+   */
+  app.post("/propose/chat", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const body = (req.body ?? {}) as { prompt?: string; cardRef?: string };
+    const prompt = typeof body.prompt === "string" ? body.prompt : "";
+    if (!prompt.trim()) {
+      return reply.code(400).send({ error: "prompt is required" });
+    }
+
+    const { intent, explanation } = await extractTradeIntent(prompt);
+    const s = sessionFor(req.headers);
+    const remaining = remainingBudget(s);
+
+    if (intent.sizeUsdc > remaining) {
+      return reply.code(400).send({
+        error: `That would risk $${intent.sizeUsdc.toFixed(2)}, but only $${remaining.toFixed(2)} of your Risk Budget is left.`,
+        remainingUsdc: remaining,
+      });
+    }
+
+    const veto = await reviewIntent(intent);
+    if (veto) return { kind: "VETO", ...veto, explanation: "Review Agent vetoed this trade." };
+
+    try {
+      const result = body.cardRef
+        ? await proposeChosenOrder(intent, resolveCard(s, body.cardRef))
+        : await proposeTrade(intent);
+
+      return {
+        kind: "PROPOSAL",
+        proposalId: rememberProposal(s, result),
+        cardRef: rememberCard(s, result.order, orderIdentity(result.order)),
+        proposal: result.proposal,
+        intent,
+        explanation,
+        remainingUsdc: remaining,
+      };
+    } catch (e: any) {
+      if (e instanceof QuoteMoved) {
+        reply.code(410).send({ error: e.message });
+        return;
+      }
+      if (e instanceof NoSuitableOrder) return { kind: "NO_ORDER", message: e.message, explanation: e.message, intent };
       reply.code(502).send(safeErrorResponse(req.log, e, "Could not price that trade. Try again."));
       return;
     }
@@ -767,7 +822,6 @@ export async function buildApp(): Promise<FastifyInstance> {
     } catch (e) {
       return reply.code(502).send(safeErrorResponse(req.log, e, "Could not load decision stats."));
     }
->>>>>>> ca37e8723b291ecbfc2562e14ece610c151fbb5a
   });
 
   await app.register(practiceRoutes);

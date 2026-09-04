@@ -28,6 +28,7 @@ import {
   practice,
   prepareFill,
   propose,
+  proposeChat,
   requestAuthChallenge,
   requestRfq,
   settleFill,
@@ -274,6 +275,7 @@ export interface Surface {
   setDirection: (d: Direction) => void;
   setHorizon: (h: number) => void;
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
+  dealPrompt: (prompt: string) => Promise<ProposeResult | null>;
   /** Clicking a Card. Opens the confirmation (issue #30) as well as pricing the pick. */
   pick: (cardRef: string) => Promise<void>;
   /**
@@ -983,6 +985,71 @@ export function useSurface(): Surface {
   );
 
   /**
+   * Natural language trade entry point: sends user's free text to /propose/chat,
+   * updates active Deck/asset/direction/horizon/size, highlights the proposed Card,
+   * explains the trade in chat, and opens the confirmation modal for human review.
+   */
+  const dealPrompt = useCallback(
+    async (prompt: string) => {
+      heard(prompt);
+      setBusy(true);
+      setRefusal(null);
+      setReceipt(null);
+      setPracticeDone(false);
+      try {
+        const answer = await proposeChat({ prompt });
+        setResult(answer);
+        setQuoteMoved(false);
+
+        if (answer.intent) {
+          const askingAsset = answer.intent.underlying ?? asset;
+          const asking = answer.intent.direction ?? direction;
+          const askingHorizon = answer.intent.horizonDays ?? horizonDays;
+          const askingSize = answer.intent.sizeUsdc ?? STAKE_USDC;
+
+          if (askingAsset !== asset || asking !== direction || askingHorizon !== horizonDays) {
+            clearSelection();
+            expiryChosen.current = true;
+            setAssetState(askingAsset);
+            setDirectionState(asking);
+            setHorizonState(askingHorizon);
+            await loadDeck(askingAsset, asking, askingHorizon, { spinner: true });
+          }
+          setSizeUsdcState(askingSize);
+        }
+
+        if (answer.kind === "PROPOSAL") {
+          setSelectedRef(answer.cardRef);
+          if (answer.proposal.chosenBy === "AGENT") setDealtRef(answer.cardRef);
+          shownQuote.current = { ref: answer.cardRef, premium: answer.proposal.figures.premiumUsdc.display };
+          const expl = answer.explanation || `I found the ${answer.proposal.figures.strike.display} option for you.`;
+          say(expl);
+          setConfirmOpen(true);
+        } else if (answer.kind === "NO_ORDER") {
+          shownQuote.current = { ref: null, premium: null };
+          say(answer.message || "No suitable order found for that horizon and direction.");
+        } else if (answer.kind === "VETO") {
+          shownQuote.current = { ref: null, premium: null };
+          say(answer.explanation || "Review agent vetoed this trade intent.");
+        }
+        return answer;
+      } catch (e) {
+        if (e instanceof ApiRefusal) {
+          setRefusal(e.message);
+          setResult(null);
+          shownQuote.current = { ref: null, premium: null };
+          say(e.message);
+          return null;
+        }
+        throw e;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [asset, clearSelection, direction, heard, horizonDays, loadDeck, say]
+  );
+
+  /**
    * Clicking a Card (issue #30). Prices it at the default stake and opens the
    * confirmation -- the only Confirm in the product now lives there, so this is the
    * one deliberate act that puts a Trader in front of it.
@@ -1144,6 +1211,7 @@ export function useSurface(): Surface {
     setDirection,
     setHorizon,
     deal,
+    dealPrompt,
     pick,
     setSize,
     confirm,
