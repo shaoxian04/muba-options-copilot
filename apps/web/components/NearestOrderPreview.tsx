@@ -16,7 +16,8 @@
  */
 import { useEffect, useState } from "react";
 import { getDeck, type UnderlyingSymbol } from "../lib/api";
-import { STAKE_USDC, type Direction } from "../lib/surface";
+import { STAKE_USDC } from "../lib/constants";
+import { type Direction } from "../lib/surface";
 import { nearestOrder, type OrderCandidate } from "../lib/nearestOrder";
 
 type Status = "loading" | "no-direction" | "no-live-orders" | "error" | "ready";
@@ -27,29 +28,34 @@ export function NearestOrderPreview({
   predictedRange,
   probeHorizonDays,
   pick,
+  busy,
   onAccepted,
 }: {
   underlying: UnderlyingSymbol;
   predictedDirection: "up" | "down" | "flat";
-  predictedRange: { low: number; high: number } | undefined;
+  /** Always present when `predictedDirection` isn't "flat" -- `PricePrediction.predictedRange` is a required field, never optional, once a price forecast exists at all. */
+  predictedRange: { low: number; high: number };
   /** The dropped card's own expiry -- the search's starting point for discovering which other expiries are live for this direction. */
   probeHorizonDays: number;
   pick: (cardRef: string, on: { underlying: UnderlyingSymbol; direction: Direction; horizonDays: number }) => Promise<void>;
+  /** Surface's own busy flag -- disables "Place order" the same way DeckRow disables every Card while a request from elsewhere is already in flight, so a click never lands on `pick`'s own silent `if (busy) return`. */
+  busy: boolean;
   /**
-   * Switches Chat off Insights and onto the Trade tab. Called unconditionally once `pick`
-   * resolves -- unlike SuggestionCard's own conditional call, `pick` already opens
-   * ConfirmModal before it knows the outcome (a real proposal, a refusal, or a veto all
-   * render inside that modal), so the Trader must be off the forecast text regardless of
-   * which of those `pick` lands on (ADR-0018).
+   * Switches Chat off Insights and onto the Trade tab. Called once `pick` resolves
+   * without throwing -- unlike SuggestionCard's own conditional call, `pick` already
+   * opens ConfirmModal before it knows the outcome (a real proposal, a refusal, or a
+   * veto all render inside that modal), so the Trader must be off the forecast text
+   * regardless of which of those `pick` lands on (ADR-0019).
    */
   onAccepted: () => void;
 }) {
   const [status, setStatus] = useState<Status>("loading");
   const [match, setMatch] = useState<(OrderCandidate & { direction: Direction }) | null>(null);
   const [placing, setPlacing] = useState(false);
+  const [placeError, setPlaceError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (predictedDirection === "flat" || !predictedRange) {
+    if (predictedDirection === "flat") {
       setStatus("no-direction");
       setMatch(null);
       return;
@@ -98,22 +104,31 @@ export function NearestOrderPreview({
     return () => {
       cancelled = true;
     };
-  }, [underlying, predictedDirection, predictedRange?.low, predictedRange?.high, probeHorizonDays]);
+  }, [underlying, predictedDirection, predictedRange.low, predictedRange.high, probeHorizonDays]);
 
   async function handlePlace() {
-    if (!match || placing) return;
+    if (!match || placing || busy) return;
     setPlacing(true);
+    setPlaceError(null);
     try {
       await pick(match.cardRef, { underlying, direction: match.direction, horizonDays: match.horizonDays });
+    } catch (e) {
+      setPlaceError(e instanceof Error ? e.message : "Could not place that order right now.");
     } finally {
       setPlacing(false);
+      // Unconditional, success or throw: `pick` opens ConfirmModal before it can ever
+      // throw (it sets `confirmOpen` synchronously, ahead of the request that might
+      // fail), so by the time either branch above runs, the Trader is already looking
+      // at an open confirmation. Skipping this on the throw path would strand them on
+      // Insights with that confirmation now open behind the forecast text -- the exact
+      // thing this callback exists to prevent (ADR-0019).
       onAccepted();
     }
   }
 
   if (status === "loading") {
     return (
-      <div className="coin-detail" aria-live="polite">
+      <div className="coin-detail">
         <span className="lbl">Closest order</span>
         <span className="suggestion-card-note">Searching the live book…</span>
       </div>
@@ -122,20 +137,27 @@ export function NearestOrderPreview({
 
   if (status === "no-direction") {
     return (
-      <div className="coin-detail" aria-live="polite">
+      <div className="coin-detail">
         <span className="lbl">Closest order</span>
         <span className="suggestion-card-note">No clear predicted direction to match a strike against.</span>
       </div>
     );
   }
 
-  if (status === "no-live-orders" || status === "error") {
+  if (status === "no-live-orders") {
     return (
-      <div className="coin-detail" aria-live="polite">
+      <div className="coin-detail">
         <span className="lbl">Closest order</span>
-        <span className="suggestion-card-note">
-          {status === "error" ? "Could not search the live book right now." : "Nothing is live in that direction right now."}
-        </span>
+        <span className="suggestion-card-note">Nothing is live in that direction right now.</span>
+      </div>
+    );
+  }
+
+  if (status === "error") {
+    return (
+      <div className="coin-detail">
+        <span className="lbl">Closest order</span>
+        <span className="suggestion-card-note">Could not search the live book right now.</span>
       </div>
     );
   }
@@ -143,7 +165,7 @@ export function NearestOrderPreview({
   const payWord = match!.direction === "DOWN" ? "pays below" : "pays above";
 
   return (
-    <div className="coin-detail" data-testid="nearest-order-preview" aria-live="polite">
+    <div className="coin-detail" data-testid="nearest-order-preview">
       <span className="lbl">Closest order</span>
       <span className="suggestion-card-point">
         {match!.strike.display}, {payWord}
@@ -153,11 +175,12 @@ export function NearestOrderPreview({
         type="button"
         className="suggestion-card-primary"
         onClick={() => void handlePlace()}
-        disabled={placing}
+        disabled={placing || busy}
         data-testid="nearest-order-place"
       >
         {placing ? "Opening…" : "Place order"}
       </button>
+      {placeError ? <span className="suggestion-card-note err">{placeError}</span> : null}
     </div>
   );
 }

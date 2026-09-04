@@ -247,6 +247,7 @@ export default function Page() {
               sizeUsdc={s.sizeUsdc}
               busy={s.busy}
               quoteMoved={s.quoteMoved}
+              quoteRefreshed={s.quoteRefreshed}
               refusal={s.refusal}
               receipt={s.receipt}
               practiceDone={s.practiceDone}

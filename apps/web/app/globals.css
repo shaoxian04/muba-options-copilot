@@ -620,7 +620,11 @@ button[disabled] {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  z-index: 5;
+  /* Above `.rig > .rail-top`'s sticky z-index (6) -- the Rail now pins to the top of the
+     scrolling right column, and without this the menu it drops down from is exactly
+     where the Rail sits once scrolled, so the Rail wins hit-testing and swallows every
+     click meant for a menu item underneath it. */
+  z-index: 10;
   min-width: 200px;
   display: flex;
   flex-direction: column;
@@ -1571,6 +1575,17 @@ button[disabled] {
 .refusal {
   flex-basis: 100%;
   color: var(--crit);
+  font-size: 12.5px;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+/* The confirmation auto-refreshed to a fresh price for the same Order (surface.ts) --
+   same shape as .refusal but never --crit: this is information, not a blocker, and
+   clears on its own a few seconds after it appears. */
+.quote-refreshed {
+  flex-basis: 100%;
+  color: var(--ink-2);
   font-size: 12.5px;
   display: flex;
   align-items: flex-start;

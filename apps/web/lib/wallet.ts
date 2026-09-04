@@ -246,6 +246,22 @@ async function walletConnectConnector(fresh: boolean) {
   if (!walletConnectConnectorInstance) {
     const factory = (await import("@wagmi/connectors/walletConnect")).walletConnect({
       projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "",
+      /**
+       * `@wagmi/connectors`' own default (`true`) makes `connect()` force a brand new
+       * pairing -- the QR code -- whenever it thinks the set of chains this app requests
+       * has changed since the wallet last authorised them (`isChainsStale()`, checked
+       * against a SEPARATE piece of wagmi's own storage, independent of anything in this
+       * file). That forces a QR even for "Last used", regardless of the `fresh` option
+       * below, whenever that bookkeeping doesn't line up -- verified by reading
+       * `connect()`'s own source: `if (provider.session && isChainsStale) await
+       * provider.disconnect()`, unconditionally, before ever checking `fresh`.
+       *
+       * `wagmiConfig.ts` hardcodes exactly one chain (`base`) and always will -- there is
+       * no multi-chain future here for this check to ever meaningfully protect against.
+       * Disabling it is a correct simplification for a single-chain app, not a workaround:
+       * an existing, resumable session should always resume, full stop.
+       */
+      isNewChainsStale: false,
     });
     walletConnectConnectorInstance = config._internal.connectors.setup(factory);
   }
@@ -428,14 +444,44 @@ export function recentConnectionWithinTtl(ttlMs: number = DEFAULT_RECONNECT_TTL_
 }
 
 /**
+ * Clears whatever `rememberConnection`/`rememberWalletConnectPeer` left behind, so a
+ * disconnected wallet has nothing left for the silent on-load reconnect
+ * (`recentConnectionWithinTtl`, read by `surface.ts`) to retry.
+ *
+ * This is what `disconnectWallet` needs it for: without it, a Trader who explicitly
+ * disconnects would keep getting silently re-attempted on every tab switch or reload
+ * until the TTL happened to lapse on its own -- and for WalletConnect specifically, every
+ * one of those attempts re-prompts with a fresh pairing QR, since disconnecting genuinely
+ * ends the underlying session (there is nothing left to resume). Disconnecting is already
+ * a deliberate "stop assuming this wallet" signal; this just makes that stick.
+ */
+function forgetLastConnection(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const key = scopedKey(LAST_CONNECTION_KEY);
+    if (key) window.localStorage.removeItem(key);
+    const peerKey = scopedKey(WALLETCONNECT_PEER_KEY);
+    if (peerKey) window.localStorage.removeItem(peerKey);
+  } catch {
+    // Same reasoning as rememberConnection: losing this is fine, it only means a later
+    // load might still offer a stale "Last used" it otherwise wouldn't.
+  }
+}
+
+/**
  * Lets a Trader manually forget the connected wallet, e.g. after they've revoked the
  * dApp on the wallet's own side and want the surface to stop assuming it's still good.
- * Swallows any error -- there's nothing useful to show a Trader for "the wallet we were
- * about to disconnect from wasn't actually reachable," and the caller resets its own
- * address/verified state regardless of whether this resolves or rejects.
+ * Swallows any error from the SDK-level disconnect -- there's nothing useful to show a
+ * Trader for "the wallet we were about to disconnect from wasn't actually reachable,"
+ * and the caller resets its own address/verified state regardless of whether this
+ * resolves or rejects. `forgetLastConnection` runs unconditionally either way: the
+ * Trader's intent to disconnect is clear regardless of whether the SDK call itself
+ * succeeded, and there is nothing to gain from leaving a stale "last used" pointer
+ * behind because of a failure in an unrelated step.
  */
 export async function disconnectWallet(): Promise<void> {
   await disconnect(config).catch(() => {});
+  forgetLastConnection();
 }
 
 /**

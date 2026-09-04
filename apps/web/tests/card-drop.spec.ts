@@ -10,15 +10,15 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import { cards, fixtures, signIn, stubApi } from "./stub";
 
-test.beforeEach(async ({ page, isMobile }) => {
-  test.skip(isMobile, "drag-and-drop targets desktop pointer input only");
-  await stubApi(page);
-  // The whole Copilot chat panel -- drag-drop into it included -- is locked until
-  // signed in (ADR-0013/0014); every journey below exercises it, so all sign in.
-  await signIn(page);
-});
-
 test.describe("dragging a card into the chat panel", () => {
+  test.beforeEach(async ({ page, isMobile }) => {
+    test.skip(isMobile, "drag-and-drop targets desktop pointer input only");
+    await stubApi(page);
+    // The whole Copilot chat panel -- drag-drop into it included -- is locked until
+    // signed in (ADR-0013/0014); every journey below exercises it, so all sign in.
+    await signIn(page);
+  });
+
   test("switches to Insights and shows an answer naming that card's real strike", async ({ page }) => {
     await page.goto("/");
     const card = cards[0]!;
@@ -75,6 +75,7 @@ test.describe("dragging a card into the chat panel", () => {
     page,
   }) => {
     await page.goto("/");
+    await expect(page.getByTestId("card").first()).toBeVisible();
     const dataTransferKeys = await page.evaluate(async () => {
       const card = document.querySelector('[data-testid="card"]') as HTMLElement;
       const dt = new DataTransfer();
@@ -99,15 +100,6 @@ test.describe("dragging a card into the chat panel", () => {
 });
 
 test.describe("dragging a card whose AI forecast has a real predicted direction", () => {
-  // The file-level `beforeEach` above (line 13) still runs first for every test in this
-  // block too -- Playwright scopes a `beforeEach` to the whole file when it's declared
-  // outside any `describe`, not just to the sibling block it's written next to. So this
-  // hook doesn't replace that one; it runs after it and re-installs a different stub
-  // scenario (`"forecast-up"` instead of the file-level hook's default/flat one) and
-  // signs in a second time. The second `stubApi(page, ...)` call's `page.route()`
-  // registrations shadow the first's for the same paths -- Playwright resolves
-  // `page.route()` by last-registered-wins -- so this test still ends up answered by the
-  // "forecast-up" fixtures despite two stubs being active.
   test.beforeEach(async ({ page, isMobile }) => {
     test.skip(isMobile, "drag-and-drop targets desktop pointer input only");
     await stubApi(page, "forecast-up");
@@ -115,11 +107,12 @@ test.describe("dragging a card whose AI forecast has a real predicted direction"
   });
 
   test("shows the closest live order and opens the confirmation on Place order", async ({ page }) => {
-    // Re-installs the same "forecast-up" stub the describe-level beforeEach above
-    // already set up (shadowing it, per that hook's own comment) purely to get this
-    // test its own `Traffic` handle -- the beforeEach's own return value has nowhere
-    // to go, so every spec in this suite that needs `traffic` calls `stubApi` again
-    // locally instead (see journeys.spec.ts).
+    // Re-runs the same "forecast-up" stub the beforeEach above already installed,
+    // purely to get this test its own `Traffic` handle -- the beforeEach's own return
+    // value has nowhere to go, so every spec in this suite that needs `traffic` calls
+    // `stubApi` again locally instead (see journeys.spec.ts). One describe block, one
+    // `beforeEach`, no layering: card-drop.spec.ts used to have a file-level hook here
+    // too, which a second block's own hook could only ever shadow, never replace.
     const traffic = await stubApi(page, "forecast-up");
     await signIn(page);
     await page.goto("/");
@@ -130,6 +123,12 @@ test.describe("dragging a card whose AI forecast has a real predicted direction"
     await expect(preview).toContainText("$2,560.00");
     await expect(preview).toContainText("pays above");
 
+    const { violations } = await new AxeBuilder({ page }).include(".chat").analyze();
+    const bad = violations.filter((v) => v.impact === "critical" || v.impact === "serious");
+    expect(
+      bad.map((v) => `${v.impact}: ${v.id} -- ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`)
+    ).toEqual([]);
+
     await page.getByTestId("nearest-order-place").click();
     await expect(page.getByTestId("confirm-modal")).toBeVisible();
 
@@ -139,8 +138,60 @@ test.describe("dragging a card whose AI forecast has a real predicted direction"
     // 4's chip-switching logic ran is the /propose request itself: direction and
     // horizon must have followed the AI-matched order, not whatever the Trade tab's
     // chips defaulted to.
+    //
+    // Checking the LAST such request, not assuming there's exactly one: that same
+    // DOWN/UP cardRef collision means the picked order's per-contract price (echoed
+    // back from the DOWN fixture) genuinely disagrees with the real UP deck's own
+    // card the moment picking switches direction and re-fetches it -- surface.ts's
+    // quote-auto-refresh correctly (if here, spuriously) treats that as a moved quote
+    // and re-asks once more. A real order never has this problem (`/deck` and
+    // `/propose` price the same cardRef identically); this is a fixture artifact of
+    // reusing "card-0", not a product bug -- and either way, every /propose this test
+    // sees still has to carry the AI-matched order, never the Trade tab's stale default.
     const proposals = traffic.all.filter((r) => new URL(r.url()).pathname === "/propose");
-    expect(proposals).toHaveLength(1);
-    expect(proposals[0]!.postDataJSON()).toMatchObject({ direction: "UP", horizonDays: 1, cardRef: "card-0" });
+    expect(proposals.length).toBeGreaterThanOrEqual(1);
+    for (const p of proposals) {
+      expect(p.postDataJSON()).toMatchObject({ direction: "UP", horizonDays: 1, cardRef: "card-0" });
+    }
+  });
+
+  test("only the most recently dropped card gets a closest-order search", async ({ page }) => {
+    await page.goto("/");
+
+    const list = page.getByTestId("card");
+    await list.nth(0).dragTo(page.locator(".chat"));
+    await expect(page.getByTestId("nearest-order-preview")).toBeVisible();
+
+    await list.nth(1).dragTo(page.locator(".chat"));
+
+    // Two card-drop answers are now in the log, but only the newest one is still being
+    // searched -- an older drop's preview does not linger once a newer one exists.
+    await expect(page.getByTestId("nearest-order-preview")).toHaveCount(1);
+    await expect(page.locator(".coin-answer")).toHaveCount(2);
+  });
+});
+
+test.describe("dragging a card whose AI-matched strike sits on a different expiry", () => {
+  test.beforeEach(async ({ page, isMobile }) => {
+    test.skip(isMobile, "drag-and-drop targets desktop pointer input only");
+    await stubApi(page, "forecast-up-multi");
+    await signIn(page);
+  });
+
+  test("the search unions candidates across every live expiry, not just the dragged card's own", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    // The dragged card is a 1-day DOWN card; the AI's predicted range (2580-2620) is
+    // closest to deck-up-2's $2,600 card, a full 40 away from deck-up-1's best UP
+    // candidate ($2,560) -- so a preview naming $2,600 and the 2d expiry can only come
+    // from actually fetching and comparing against the second live expiry, not from
+    // the horizon the dropped card itself happened to be on.
+    await page.getByTestId("card").first().dragTo(page.locator(".chat"));
+
+    const preview = page.getByTestId("nearest-order-preview");
+    await expect(preview).toBeVisible();
+    await expect(preview).toContainText("$2,600.00");
+    await expect(preview).toContainText("17 Jan, 08:00 UTC");
   });
 });

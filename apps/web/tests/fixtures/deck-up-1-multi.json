@@ -1,0 +1,209 @@
+{
+  "asset": "ETH",
+  "assetName": "Ethereum",
+  "direction": "UP",
+  "horizonDays": 1,
+  "sizeUsdc": 2,
+  "spotUsd": {
+    "value": 2445.49,
+    "display": "$2,445.49"
+  },
+  "expiries": [
+    {
+      "horizonDays": 1,
+      "label": "1d",
+      "cards": 3,
+      "live": true
+    },
+    {
+      "horizonDays": 2,
+      "label": "2d",
+      "cards": 1,
+      "live": true
+    }
+  ],
+  "expiry": {
+    "value": 1768550400000,
+    "display": "16 Jan, 08:00 UTC"
+  },
+  "cards": [
+    {
+      "cardRef": "card-0",
+      "strike": {
+        "value": 2560,
+        "display": "$2,560.00"
+      },
+      "distance": {
+        "needed": {
+          "value": 0.04682497168256678,
+          "display": "4.7%"
+        },
+        "alreadyPast": false,
+        "sentence": "must rise 4.7%"
+      },
+      "perContractUsd": {
+        "value": 1.86,
+        "display": "$1.86"
+      },
+      "contracts": {
+        "value": 1.075268,
+        "display": "1.075268"
+      },
+      "premiumUsdc": {
+        "value": 1.999998,
+        "display": "$2.00"
+      },
+      "maxLossUsdc": {
+        "value": 1.999998,
+        "display": "$2.00"
+      },
+      "breakevenPrice": {
+        "value": 2561.86,
+        "display": "$2,561.86"
+      },
+      "impliedChance": {
+        "value": 0.022610135658975204,
+        "display": "2%"
+      },
+      "chanceLabel": "a long shot",
+      "chanceBand": 0,
+      "availableUsdc": {
+        "value": 500,
+        "display": "$500.00"
+      },
+      "depthUsdc": {
+        "value": 500,
+        "display": "$500"
+      },
+      "depthOrders": {
+        "value": 1,
+        "display": "1"
+      },
+      "heldCount": null,
+      "expiry": {
+        "value": 1768550400000,
+        "display": "16 Jan, 08:00 UTC"
+      },
+      "payoutAsset": "WETH"
+    },
+    {
+      "cardRef": "card-1",
+      "strike": {
+        "value": 2520,
+        "display": "$2,520.00"
+      },
+      "distance": {
+        "needed": {
+          "value": 0.03046833150002667,
+          "display": "3.0%"
+        },
+        "alreadyPast": false,
+        "sentence": "must rise 3.0%"
+      },
+      "perContractUsd": {
+        "value": 4.02,
+        "display": "$4.02"
+      },
+      "contracts": {
+        "value": 0.497512,
+        "display": "0.497512"
+      },
+      "premiumUsdc": {
+        "value": 1.999998,
+        "display": "$2.00"
+      },
+      "maxLossUsdc": {
+        "value": 1.999998,
+        "display": "$2.00"
+      },
+      "breakevenPrice": {
+        "value": 2524.02,
+        "display": "$2,524.02"
+      },
+      "impliedChance": {
+        "value": 0.08797245973888161,
+        "display": "9%"
+      },
+      "chanceLabel": "a long shot",
+      "chanceBand": 0,
+      "availableUsdc": {
+        "value": 500,
+        "display": "$500.00"
+      },
+      "depthUsdc": {
+        "value": 500,
+        "display": "$500"
+      },
+      "depthOrders": {
+        "value": 1,
+        "display": "1"
+      },
+      "heldCount": null,
+      "expiry": {
+        "value": 1768550400000,
+        "display": "16 Jan, 08:00 UTC"
+      },
+      "payoutAsset": "WETH"
+    },
+    {
+      "cardRef": "card-2",
+      "strike": {
+        "value": 2480,
+        "display": "$2,480.00"
+      },
+      "distance": {
+        "needed": {
+          "value": 0.014111691317486566,
+          "display": "1.4%"
+        },
+        "alreadyPast": false,
+        "sentence": "must rise 1.4%"
+      },
+      "perContractUsd": {
+        "value": 8.44,
+        "display": "$8.44"
+      },
+      "contracts": {
+        "value": 0.236966,
+        "display": "0.236966"
+      },
+      "premiumUsdc": {
+        "value": 1.999993,
+        "display": "$2.00"
+      },
+      "maxLossUsdc": {
+        "value": 1.999993,
+        "display": "$2.00"
+      },
+      "breakevenPrice": {
+        "value": 2488.44,
+        "display": "$2,488.44"
+      },
+      "impliedChance": {
+        "value": 0.256097705638261,
+        "display": "26%"
+      },
+      "chanceLabel": "unlikely",
+      "chanceBand": 1,
+      "availableUsdc": {
+        "value": 500,
+        "display": "$500.00"
+      },
+      "depthUsdc": {
+        "value": 500,
+        "display": "$500"
+      },
+      "depthOrders": {
+        "value": 1,
+        "display": "1"
+      },
+      "heldCount": null,
+      "expiry": {
+        "value": 1768550400000,
+        "display": "16 Jan, 08:00 UTC"
+      },
+      "payoutAsset": "WETH"
+    }
+  ],
+  "gradientLegible": true
+}

@@ -57,6 +57,7 @@ export function ConfirmModal({
   sizeUsdc,
   busy,
   quoteMoved,
+  quoteRefreshed,
   refusal,
   receipt,
   practiceDone,
@@ -82,6 +83,8 @@ export function ConfirmModal({
   sizeUsdc: number;
   busy: boolean;
   quoteMoved: boolean;
+  /** A refresh just replaced the numbers above with a fresh price for this same Order. */
+  quoteRefreshed: boolean;
   refusal: string | null;
   receipt: FillReceipt | null;
   practiceDone: boolean;
@@ -434,8 +437,15 @@ export function ConfirmModal({
         {quoteMoved ? (
           <p className="refusal" role="alert" data-testid="quote-moved">
             <span aria-hidden="true">⚠</span>
-            The price moved while you were looking. Close this and pick again — you will not be filled at a price
-            you have not seen.
+            The price just moved — refreshing to the current number. You will not be filled at a price you have not
+            seen.
+          </p>
+        ) : null}
+
+        {quoteRefreshed ? (
+          <p className="quote-refreshed" role="status" data-testid="quote-refreshed">
+            <span aria-hidden="true">↻</span>
+            Price just updated to the current number — check it before confirming.
           </p>
         ) : null}
 

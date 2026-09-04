@@ -5,12 +5,14 @@ import { z } from "zod";
  * `source` marking; none of them may ever be imported by propose.ts or execute.ts.
  */
 export const FORECAST_DISCLAIMER =
-  "Opinion generated from simulated news and, where noted, real market data -- not financial advice, never a guarantee, and never connected to any live position.";
+  "Opinion generated from real news headlines and, where noted, real market data -- not financial advice, never a guarantee, and never connected to any live position.";
 
 export const Headline = z.object({
   text: z.string(),
   sentiment: z.enum(["bullish", "bearish", "neutral"]),
-  source: z.literal("simulated"),
+  source: z.string(),
+  url: z.string().optional(),
+  publishedAt: z.string().optional(),
 });
 export type Headline = z.infer<typeof Headline>;
 
@@ -58,7 +60,7 @@ export const NewsAnalysis = z.object({
   overallSentiment: z.enum(["bullish", "bearish", "neutral"]),
   summary: z.string(),
   headlines: z.array(Headline),
-  source: z.literal("simulated"),
+  source: z.string(),
   disclaimer: z.string(),
   generatedAt: z.string(),
 });

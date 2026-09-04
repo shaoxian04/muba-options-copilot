@@ -18,6 +18,8 @@ import deckDown1 from "./fixtures/deck-down-1.json" with { type: "json" };
 import deckDown2 from "./fixtures/deck-down-2.json" with { type: "json" };
 import deckDown3 from "./fixtures/deck-down-3.json" with { type: "json" };
 import deckUp1 from "./fixtures/deck-up-1.json" with { type: "json" };
+import deckUp1Multi from "./fixtures/deck-up-1-multi.json" with { type: "json" };
+import deckUp2 from "./fixtures/deck-up-2.json" with { type: "json" };
 import deckEmpty from "./fixtures/deck-empty.json" with { type: "json" };
 import deckCompressed from "./fixtures/deck-compressed.json" with { type: "json" };
 import deckSolDown1 from "./fixtures/deck-sol-down-1.json" with { type: "json" };
@@ -180,6 +182,26 @@ const forecastAskEthUp = {
   },
 };
 
+/**
+ * Same shape again, but with a predicted range whose midpoint (2600) sits exactly on
+ * deck-up-2's $2,600 card and 40 away from deck-up-1's closest ($2,560) -- proving the
+ * search actually unions candidates across expiries rather than only ever looking at
+ * the dragged card's own one. `forecast-up-multi` is the only scenario that serves
+ * `deck-up-2` at all; every other scenario keeps `deck-up-1`'s 2d chip dead, which
+ * `chips.spec.ts` depends on.
+ */
+const forecastAskEthUpMulti = {
+  ETH: {
+    ...forecastAskEth.ETH,
+    price: {
+      ...forecastAskEth.ETH.price,
+      direction: "up" as const,
+      predictedRange: { low: 2580, high: 2620 },
+      rationale: "Momentum has turned clearly positive, so a range centred above the current price looks reasonable.",
+    },
+  },
+};
+
 export const fixtures = {
   deckDown1,
   deckSolDown1,
@@ -187,6 +209,8 @@ export const fixtures = {
   deckSolUp1,
   markets,
   deckUp1,
+  deckUp1Multi,
+  deckUp2,
   deckCompressed,
   session,
   proposeAgent,
@@ -200,6 +224,7 @@ export const fixtures = {
   depthEthMarked,
   forecastAskEth,
   forecastAskEthUp,
+  forecastAskEthUpMulti,
   riskProfileUnset,
   riskProfileBalanced,
   suggestionUnset,
@@ -281,7 +306,14 @@ export type Scenario =
    */
   | "no-signal"
   /** The card-drop forecast answers with a real "up" direction and range instead of "flat" -- see forecastAskEthUp. */
-  | "forecast-up";
+  | "forecast-up"
+  /**
+   * Same as `"forecast-up"`, but the predicted range's midpoint sits closest to a card
+   * on a SECOND live UP expiry (`deck-up-2`) rather than the dragged card's own -- the
+   * only scenario where `/deck` ever serves `deck-up-2`, proving the closest-order
+   * search actually unions candidates across expiries. See `forecastAskEthUpMulti`.
+   */
+  | "forecast-up-multi";
 
 export interface Traffic {
   /** Every request the page made to the API, in order. */
@@ -364,7 +396,7 @@ export async function signIn(page: Page): Promise<void> {
  * handed an ETH Deck anyway is precisely the failure the required parameter exists to
  * prevent -- a stub that ignored it would let that bug through.
  */
-const deckFor = (url: URL) => {
+const deckFor = (url: URL, scenario: Scenario) => {
   const asset = url.searchParams.get("asset");
   const direction = url.searchParams.get("direction");
   const days = url.searchParams.get("horizonDays");
@@ -372,7 +404,14 @@ const deckFor = (url: URL) => {
     if (direction === "UP") return deckSolUp1;
     return days === "2" ? deckSolDown2 : deckSolDown1;
   }
-  if (direction === "UP") return deckUp1;
+  if (direction === "UP") {
+    // Only this one scenario ever has a second live UP expiry -- every other scenario
+    // (including "forecast-up") keeps deck-up-1's 2d chip dead, which chips.spec.ts
+    // depends on. The 1-day response itself has to say 2d is live too (deck-up-1-multi,
+    // not the shared deck-up-1), or the search would never even ask for it.
+    if (scenario === "forecast-up-multi") return days === "2" ? deckUp2 : deckUp1Multi;
+    return deckUp1;
+  }
   if (days === "2") return deckDown2;
   if (days === "3") return deckDown3;
   return deckDown1;
@@ -577,6 +616,32 @@ function resizeProposal(answer: any, sizeUsdc: number): any {
 }
 
 /**
+ * The same reprice `reprice()` above applies to the Deck, applied to a `/propose`
+ * answer too -- the real `/propose` and `/deck` both derive from the one live
+ * `priceOrder`, so they can never actually disagree (issue #1's "one pricing path").
+ * This stub's `/propose` used to ignore `moveTheQuote()` entirely, which was fine while
+ * nothing ever re-priced after a move -- now that the surface auto-refreshes a moved
+ * quote by asking `/propose` again for the same `cardRef`, that route has to agree with
+ * what `/deck` already reprices to, or the surface would see its own refreshed number
+ * disagree with the very next Deck poll and never stop "moving". Mirrors `reprice()`'s
+ * own scope exactly: only the strings a Trader reads change, never a raw value.
+ */
+function repriceProposal(answer: any): any {
+  if (!answer || answer.kind !== "PROPOSAL") return answer;
+  return {
+    ...answer,
+    proposal: {
+      ...answer.proposal,
+      figures: {
+        ...answer.proposal.figures,
+        premiumUsdc: { ...answer.proposal.figures.premiumUsdc, display: "$2.15" },
+        maxLossUsdc: { ...answer.proposal.figures.maxLossUsdc, display: "$2.15" },
+      },
+    },
+  };
+}
+
+/**
  * Install the stub.
  *
  * Returns the traffic log. Nothing is faked beyond the six routes the surface uses --
@@ -701,7 +766,7 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
       case "/deck": {
         if (scenario === "empty") return json(route, deckEmpty, traffic);
         if (scenario === "compressed") return json(route, deckCompressed, traffic);
-        return json(route, moved ? reprice(deckFor(url)) : deckFor(url), traffic);
+        return json(route, moved ? reprice(deckFor(url, scenario)) : deckFor(url, scenario), traffic);
       }
 
       case "/markets":
@@ -741,8 +806,13 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
             : body.sizeUsdc ?? answer.proposal.intent.sizeUsdc;
 
         // Issue #30: a resize is a fresh round trip against the same `cardRef` at a
-        // different `sizeUsdc`. Standing in for what `priceOrder` would re-derive.
-        return json(route, resizeProposal(answer, size), traffic);
+        // different `sizeUsdc` (or, via `size` above, an equivalent contract count).
+        // Standing in for what `priceOrder` would re-derive.
+        const resized = resizeProposal(answer, size);
+        // Applied last, after any resize, so a moved quote's price always wins on
+        // display regardless of stake -- see repriceProposal's own comment for why
+        // this route has to agree with what /deck already reprices to.
+        return json(route, moved ? repriceProposal(resized) : resized, traffic);
       }
 
       case "/practice":
@@ -966,7 +1036,15 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
        */
       case "/forecast/ask": {
         if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
-        return json(route, scenario === "forecast-up" ? forecastAskEthUp : forecastAskEth, traffic);
+        return json(
+          route,
+          scenario === "forecast-up-multi"
+            ? forecastAskEthUpMulti
+            : scenario === "forecast-up"
+              ? forecastAskEthUp
+              : forecastAskEth,
+          traffic
+        );
       }
 
       /*

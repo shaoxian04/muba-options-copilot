@@ -66,9 +66,9 @@ import {
 } from "./wallet";
 import { clampSizeUsdc, rfqSizeCapUsdc } from "./geometry";
 import { supabase } from "./supabaseClient";
+import { STAKE_USDC } from "./constants";
 
-/** Trades of 1-2 USDC are normal and expected for this product. */
-export const STAKE_USDC = 2;
+export { STAKE_USDC };
 
 /**
  * The confirmation's size presets (issue #30) -- fixed USDC amounts a Trader reaches a
@@ -240,8 +240,20 @@ export interface Surface {
   dealtRef: string | null;
   selectedCard: Card | null;
   result: ProposeResult | null;
-  /** The Deck moved under a proposal the Trader has not confirmed yet. */
+  /**
+   * The Deck moved under a proposal the Trader has not confirmed yet. True only for the
+   * brief window before the auto-refresh below re-prices the same Order -- Confirm and
+   * Practice Run both still refuse to act while this is true, so a stale number is never
+   * reachable even mid-refresh.
+   */
   quoteMoved: boolean;
+  /**
+   * A refresh just replaced the numbers on screen with a fresh price for the same Order
+   * (still the Trader's own pick, never a different one) -- shown for a few seconds so a
+   * Trader who glanced away notices the number changed, then clears on its own. Never
+   * true at the same time as `quoteMoved`.
+   */
+  quoteRefreshed: boolean;
   /** A sentence the server wrote, shown verbatim. Never composed here. */
   refusal: string | null;
 
@@ -530,6 +542,9 @@ export function useSurface(): Surface {
   const [dealtRef, setDealtRef] = useState<string | null>(null);
   const [result, setResult] = useState<ProposeResult | null>(null);
   const [quoteMoved, setQuoteMoved] = useState(false);
+  const [quoteRefreshed, setQuoteRefreshed] = useState(false);
+  /** Clears `quoteRefreshed` a few seconds after it is set -- see the effect below. */
+  const quoteRefreshedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [refusal, setRefusal] = useState<string | null>(null);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -750,9 +765,28 @@ export function useSurface(): Surface {
    * Once an account is known: if a wallet was connected recently enough (a rolling
    * few-hour idle window -- `recentConnectionWithinTtl`), silently reconnect it: no
    * picker, no prompt, since the origin is already authorised and every real extension
-   * answers `eth_requestAccounts` instantly in that case. This includes WalletConnect --
-   * resuming its own session is the same local, cached-account check an extension's
-   * reconnect is; nothing about that step alone reaches a Trader's phone.
+   * answers `eth_requestAccounts` instantly in that case. This includes WalletConnect:
+   * resuming its own session is a local, cached-account check backed by its own SDK's
+   * persisted storage (independent of anything in this app, and it does survive a page
+   * reload), not something that alone reaches a Trader's phone.
+   *
+   * A previous version of this comment excluded WalletConnect entirely, reasoning that
+   * "resuming is only inert while a live provider instance is still in memory, and a
+   * reload always destroys it" -- that conflated this app's OWN module-level connector
+   * cache (`walletConnectConnectorInstance` in wallet.ts, which does reset on reload) with
+   * WalletConnect's own session persistence (which doesn't, and is what "Last used" has
+   * relied on this whole time). The QR that reasoning was actually chasing had a
+   * different, real cause: `@wagmi/connectors`' own `isNewChainsStale` staleness check
+   * forcing a fresh pairing regardless of whether a resumable session existed --
+   * `wallet.ts` now disables that check outright (this app is permanently single-chain).
+   * See that fix's own comment for the full story.
+   *
+   * The other real gap this closes: `disconnectWallet` (wallet.ts) now forgets the "last
+   * used" pointer entirely on disconnect, specifically so THIS effect has nothing left to
+   * retry afterward -- without that, a Trader who disconnected would otherwise keep
+   * getting silently re-attempted (and, for WalletConnect, re-prompted with a pairing QR
+   * every single time, since disconnecting genuinely ends the underlying session) on
+   * every tab switch or reload until the TTL happened to lapse on its own.
    *
    * Gated on `account` for two reasons: ADR-0014 requires signing in before wallet
    * actions at all, and `recentConnectionWithinTtl`/`lastConnectedWalletId` now read
@@ -1034,6 +1068,11 @@ export function useSurface(): Surface {
     setDealtRef(null);
     setResult(null);
     setQuoteMoved(false);
+    setQuoteRefreshed(false);
+    if (quoteRefreshedTimer.current) {
+      clearTimeout(quoteRefreshedTimer.current);
+      quoteRefreshedTimer.current = null;
+    }
     setRefusal(null);
     setReceipt(null);
     setConfirmOpen(false);
@@ -1489,6 +1528,12 @@ export function useSurface(): Surface {
         setAssetState(askingAsset);
         setDirectionState(askingDirection);
         setHorizonState(askingHorizon);
+        // A Card the agent dealt on the OLD selection is not the agent's pick on this
+        // new one -- `deal()` clears the same flag on a switch, for the same reason.
+        // Harmless either way (cardRefs are per-session HMACs, so a stale ref cannot
+        // collide with anything in the new Deck), but leaving it set would still be an
+        // unexplained divergence from that sibling path.
+        setDealtRef(null);
       }
 
       setSizeUsdcState(STAKE_USDC);
@@ -1538,6 +1583,54 @@ export function useSurface(): Surface {
     },
     [ask, selectedRef, direction, busy, sizeUsdc]
   );
+
+  /**
+   * `ask` sets `busy` true as the very first thing it does, synchronously, before its
+   * own first `await` -- so an effect that both reads `busy` as a dependency AND calls
+   * `ask` cancels itself the instant it starts: the `busy` flip reruns the effect,
+   * which runs the previous invocation's cleanup, which marks the very call it just
+   * made as stale before that call's own response ever arrives. This ref is how the
+   * refresh effect below reads the CURRENT `busy` value without depending on it.
+   */
+  const busyRef = useRef(busy);
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
+
+  /**
+   * The moment the background poll notices the confirmed Order's price moved
+   * (`quoteMoved`), re-price that SAME Order automatically -- the same round trip
+   * `setSize` above already makes for a different reason -- instead of leaving the
+   * Trader behind a dead end that says to close the confirmation and start over. `ask`
+   * itself clears `quoteMoved` the instant its answer lands (its normal behaviour, not
+   * anything special added here); this effect only exists to actually make that call
+   * and to say out loud that a refresh just happened, so glancing away for a moment
+   * never means confirming a number that was never actually shown.
+   *
+   * Safe to call unconditionally on any `quoteMoved`, including the rare case the
+   * Order vanished entirely rather than merely repriced: `ask` still resolves then,
+   * just to a non-PROPOSAL answer, and the confirmation's own existing "That Card
+   * could not be priced" branch already covers exactly that outcome -- nothing new to
+   * handle here for it.
+   *
+   * `busyRef`, not `busy`, per the comment above it: this only needs to check whether
+   * something else (a resize, a real Confirm/Practice Run) is already in flight at the
+   * moment the poll notices a move -- it must never treat its own resulting `ask` call
+   * as a reason to abandon that same call.
+   */
+  useEffect(() => {
+    if (!quoteMoved || !selectedRef || busyRef.current) return;
+    let cancelled = false;
+    void ask(selectedRef, direction, sizeUsdc).then((answer) => {
+      if (cancelled || answer?.kind !== "PROPOSAL") return;
+      setQuoteRefreshed(true);
+      if (quoteRefreshedTimer.current) clearTimeout(quoteRefreshedTimer.current);
+      quoteRefreshedTimer.current = setTimeout(() => setQuoteRefreshed(false), 4000);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [quoteMoved, selectedRef, direction, sizeUsdc, ask]);
 
   /**
    * Spends real USDC, signed by the Trader's own connected AND verified wallet
@@ -1636,6 +1729,7 @@ export function useSurface(): Surface {
     selectedCard,
     result,
     quoteMoved,
+    quoteRefreshed,
     refusal,
     confirmOpen,
     sizeUsdc,

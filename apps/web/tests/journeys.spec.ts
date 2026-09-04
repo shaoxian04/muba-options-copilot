@@ -804,7 +804,9 @@ test.describe("finishing, for real and for practice", () => {
     expect(await request.headerValue("authorization")).toBe(`Bearer ${TEST_API_TOKEN}`);
   });
 
-  test("surfaces a moved quote before the Trader confirms, not after", async ({ page }) => {
+  test("auto-refreshes a moved quote instead of a dead end, and is never fillable while it does", async ({
+    page,
+  }) => {
     const traffic = await stubApi(page);
     await installFakeWallet(page);
     await page.goto("/");
@@ -812,18 +814,29 @@ test.describe("finishing, for real and for practice", () => {
     await openConfirm(page, agentCard);
     await expect(page.getByTestId("confirm")).toBeEnabled();
 
-    // The book reprices under them while the proposal is on screen.
+    // The book reprices under them while the proposal is on screen. Held open so the
+    // refresh itself -- not just its before/after -- can be asserted on.
     traffic.moveTheQuote();
+    const release = traffic.hold("/propose");
     await page.clock.runFor(7000);
 
     await expect(page.getByTestId("quote-moved")).toBeVisible();
     await expect(page.getByTestId("confirm")).toBeDisabled();
     await expect(page.getByTestId("practice")).toBeDisabled();
-    // Story 30: never filled at a price they did not see.
+    // Story 30: never filled at a price they did not see -- true whether the price is
+    // moved or the refresh chasing it is still in flight.
+    expect(traffic.paths()).not.toContain("/fill/prepare");
+
+    release();
+    await expect(page.getByTestId("quote-refreshed")).toBeVisible();
+    await expect(page.getByTestId("quote-moved")).toHaveCount(0);
+    await expect(page.getByTestId("confirm")).toBeEnabled();
     expect(traffic.paths()).not.toContain("/fill/prepare");
   });
 
-  test("issue #32: a moved quote does not follow the Trader when they close and reopen for a different Card", async ({ page }) => {
+  test("issue #32: a moved quote (and its refresh) does not follow the Trader when they close and reopen for a different Card", async ({
+    page,
+  }) => {
     const traffic = await stubApi(page);
     await installFakeWallet(page);
     await page.goto("/");
@@ -831,16 +844,22 @@ test.describe("finishing, for real and for practice", () => {
     await openConfirm(page, agentCard);
 
     traffic.moveTheQuote();
+    const release = traffic.hold("/propose");
     await page.clock.runFor(7000);
     await expect(page.getByTestId("quote-moved")).toBeVisible();
 
+    // Closed mid-refresh -- the still-in-flight re-price must not leak its answer into
+    // whatever gets picked next.
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("confirm-modal")).toHaveCount(0);
+    release();
 
-    // A different Card, freshly priced -- `quoteMoved` is about the ONE proposal a
-    // Trader was shown going stale, not a flag that sticks to the confirmation itself.
+    // A different Card, freshly priced -- `quoteMoved` (and the refresh chasing it) is
+    // about the ONE proposal a Trader was shown going stale, not a flag that sticks to
+    // the confirmation itself.
     await openConfirm(page, overrideCard.cardRef);
     await expect(page.getByTestId("quote-moved")).toHaveCount(0);
+    await expect(page.getByTestId("quote-refreshed")).toHaveCount(0);
     await expect(page.getByTestId("confirm")).toBeEnabled();
   });
 
@@ -869,11 +888,23 @@ test.describe("finishing, for real and for practice", () => {
     await expect(page.getByTestId("quote-moved")).toHaveCount(0);
     await expect(page.getByTestId("confirm")).toBeEnabled();
 
-    // And the guard still bites when the book genuinely reprices under that same size.
+    // And the guard still bites when the book genuinely reprices under that same size --
+    // held open so the auto-refresh that follows can be observed mid-flight, the same
+    // reason the two tests above this one hold /propose too.
     traffic.moveTheQuote();
+    const release = traffic.hold("/propose");
     await page.clock.runFor(7000);
     await expect(page.getByTestId("quote-moved")).toBeVisible();
     await expect(page.getByTestId("confirm")).toBeDisabled();
+
+    // ...and still auto-refreshes at the size the Trader actually chose, not silently
+    // back to the default -- the same guard that used to compare the wrong total now
+    // has to survive a real re-price at $5 too.
+    release();
+    await expect(page.getByTestId("quote-refreshed")).toBeVisible();
+    await expect(page.getByTestId("quote-moved")).toHaveCount(0);
+    await expect(page.getByTestId("confirm")).toBeEnabled();
+    await expect(page.getByTestId("size-value")).toHaveValue("5");
   });
 });
 
@@ -1040,6 +1071,30 @@ test.describe("wallet connection survives a refresh, within a TTL", () => {
       // landed, only `${LAST_CONNECTION_KEY}:${accountId}`.
       { key: `${LAST_CONNECTION_KEY}:${FIXTURE_USER_ID}`, ageMs }
     );
+
+  test("disconnecting stops the silent reconnect from retrying, even well within the window", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallet(page);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await page.getByTestId("wallet-option-test.fakewallet0").click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+
+    await page.getByTestId("account-avatar").click();
+    await page.getByTestId("account-disconnect-wallet").click();
+    await expect(page.getByTestId("connect-wallet")).toBeVisible();
+
+    // No backdating here, deliberately: this is seconds-old, deep inside the TTL window
+    // -- if disconnecting hadn't cleared the "last used" pointer, the silent reconnect
+    // would fire right back on this very reload. It must not.
+    await page.reload();
+
+    await expect(page.getByTestId("connect-wallet")).toBeVisible();
+    await expect(page.getByTestId("connect-wallet")).toBeEnabled();
+    await expect(page.getByTestId("wallet-address")).toHaveCount(0);
+  });
 
   test("reconnects and re-verifies silently within the window -- no picker, no Verify click", async ({ page }) => {
     await stubApi(page);
