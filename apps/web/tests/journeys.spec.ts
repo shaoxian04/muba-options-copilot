@@ -14,22 +14,20 @@
  */
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { cards, fixtures, FORBIDDEN, installFakeWallet, stubApi, TEST_API_TOKEN } from "./stub";
+import {
+  advanceOffers, cards, fixtures, FIXTURE_USER_ID, FORBIDDEN, installFakeWallet, installFakeWallets,
+  signIn, stubApi, TEST_API_TOKEN,
+} from "./stub";
+import { LAST_CONNECTION_KEY } from "../lib/wallet";
 
 const agentCard = fixtures.proposeAgent.cardRef;
 const overrideCard = cards.find((c) => c.cardRef !== agentCard)!;
 const overrideProposal = fixtures.proposeByCard[overrideCard.cardRef];
 
-/** The Copilot deals. The seed on the left is the only way to ask it to. */
-const deal = async (page: Page) => {
-  await page.getByRole("button", { name: "I think ETH drops before Friday" }).click();
-  await expect(page.getByTestId("chosen-by")).toBeVisible();
-};
-
 /**
- * Click a Card and wait for the confirmation to open (issue #30). This is now the only
- * way to reach Max Loss, the size control, the agent gate, or Confirm and Practice Run
- * -- there is nowhere else on the surface any of them still render.
+ * Click a Card and wait for the confirmation to open (issue #30). This is the only way
+ * to reach Max Loss, the payoff curve, the size control, the agent gate, or Confirm and
+ * Practice Run -- there is nowhere else on the surface any of them render.
  */
 const openConfirm = async (page: Page, cardRef: string) => {
   await page.locator(`[data-card-ref="${cardRef}"]`).click();
@@ -37,11 +35,33 @@ const openConfirm = async (page: Page, cardRef: string) => {
 };
 
 /**
- * Connects the fake wallet -- WalletConnect now lives inside `ConfirmModal` (issue #30
- * moved Confirm there), so every journey that reaches it opens a confirmation first.
+ * A thin, longstanding alias for `openConfirm(page, agentCard)` -- kept under this name
+ * for continuity with the many existing callers below. `agentCard` names a fixed Card
+ * ref most tests below open, not evidence of an agent having chosen it: issue #30 means
+ * a proposal only ever exists once a Card is picked directly, which also opens the
+ * confirmation. Unrelated to `Surface.deal()` (the Trade tab's seed prompts, exercised in
+ * `insights.spec.ts`'s Suggestion-Accept test) -- an unfortunate name collision between
+ * two features built independently, not the same mechanism.
+ */
+const deal = async (page: Page) => {
+  await openConfirm(page, agentCard);
+};
+
+/**
+ * Signs in (ADR-0014) and connects the fake wallet through the picker (the multi-wallet
+ * connector). `AccountControl` is a persistent, always-visible control -- NOT inside
+ * `ConfirmModal` -- so this must run before any confirmation opens: the modal's
+ * `.scrim` covers the full viewport at a higher z-index, and would make the button
+ * underneath unclickable once one is open.
  */
 const connectWallet = async (page: Page) => {
+  await signIn(page);
+  await page.reload();
   await page.getByTestId("connect-wallet").click();
+  await expect(page.getByTestId("wallet-picker")).toBeVisible();
+  // installFakeWallet always registers rdns "test.fakewallet0" as its one extension --
+  // picking it is what every existing single-wallet journey means by "connect the wallet."
+  await page.getByTestId("wallet-option-test.fakewallet0").click();
   await expect(page.getByTestId("wallet-address")).toBeVisible();
 };
 
@@ -50,21 +70,9 @@ test.describe("selection, and who chose", () => {
     await stubApi(page);
   });
 
-  test("marks the dealt Card as the agent's, and lifts it", async ({ page }) => {
+  test("marks a picked Card as the Trader's, not the agent's", async ({ page }) => {
     await page.goto("/");
-    await deal(page);
-
-    await expect(page.getByTestId("chosen-by")).toContainText("the agent picked this");
-    const dealt = page.locator(`[data-card-ref="${agentCard}"]`);
-    await expect(dealt).toHaveClass(/dealt/);
-    await expect(dealt).toHaveAttribute("aria-pressed", "true");
-  });
-
-  test("marks an override as the Trader's, not the agent's", async ({ page }) => {
-    await page.goto("/");
-    await deal(page);
-
-    await page.locator(`[data-card-ref="${overrideCard.cardRef}"]`).click();
+    await openConfirm(page, overrideCard.cardRef);
 
     await expect(page.getByTestId("chosen-by")).toContainText("your pick, not the agent's");
     await expect(page.getByTestId("chosen-by")).not.toContainText("the agent picked this");
@@ -73,8 +81,13 @@ test.describe("selection, and who chose", () => {
   test("asks the server for the numbers rather than reading the Card in the browser", async ({ page }) => {
     const traffic = await stubApi(page);
     await page.goto("/");
-    await deal(page);
-    await page.locator(`[data-card-ref="${overrideCard.cardRef}"]`).click();
+    await openConfirm(page, agentCard);
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("confirm-modal")).toHaveCount(0);
+
+    // The Deck is covered while a confirmation is open (issue #30), so reaching a
+    // SECOND Card's own numbers means closing the first before opening the next.
+    await openConfirm(page, overrideCard.cardRef);
     await expect(page.getByTestId("premium")).toBeVisible();
 
     const proposals = traffic.all.filter((r) => new URL(r.url()).pathname === "/propose");
@@ -154,7 +167,6 @@ test.describe("selection, and who chose", () => {
 
   test("shows the agent gate as three states, with the human last", async ({ page }) => {
     await page.goto("/");
-    await deal(page);
     await openConfirm(page, agentCard);
 
     const gate = page.getByRole("list", { name: "Who has to agree before anything is signed" });
@@ -166,9 +178,8 @@ test.describe("selection, and who chose", () => {
     await expect(chips.nth(2)).toHaveClass(/wait/);
   });
 
-  test("says the Review Agent ran even when the Trader overrode it", async ({ page }) => {
+  test("says the Review Agent ran on a Trader's own pick", async ({ page }) => {
     await page.goto("/");
-    await deal(page);
     await openConfirm(page, overrideCard.cardRef);
 
     await expect(page.getByRole("listitem").filter({ hasText: "Review" })).toContainText("your override");
@@ -176,7 +187,6 @@ test.describe("selection, and who chose", () => {
 
   test("draws the pending Fill on the Risk Budget as a ghost segment", async ({ page }) => {
     await page.goto("/");
-    await deal(page);
     await openConfirm(page, agentCard);
 
     const width = await page.getByTestId("risk-pending").evaluate((el) => el.getBoundingClientRect().width);
@@ -364,19 +374,23 @@ test.describe("size: presets, the stepper, and the cap", () => {
   });
 
   test("Max binds on the Risk Budget when it is the tighter of the two", async ({ page }) => {
-    // The default session carries a $5 Risk Budget against every fixture Card's $500
-    // Maker Depth -- the budget is always the smaller of the two here.
+    // The default session's Risk Budget against every fixture Card's $500 Maker Depth --
+    // the budget is always the smaller of the two here. Read off the fixture rather than
+    // written down, because the default moved once already (a Cover's $8 Reserve Price
+    // has to fit inside it) and a literal here would have to move with it every time.
+    const budget = fixtures.session.riskBudgetUsdc;
     const traffic = await stubApi(page, "normal");
     await page.goto("/");
     await openConfirm(page, agentCard);
 
-    // A preset past the $5 ceiling cannot be pressed at all.
-    await expect(page.getByTestId("size-preset-10")).toBeDisabled();
-
+    // No preset is disabled at the default any more: the budget rose to $10 to leave room
+    // for a Cover's $8 Reserve Price, and the largest preset is exactly $10. What this
+    // test is actually about survives that -- Max lands on the budget rather than on
+    // Maker Depth, which is the branch the "deep-budget" test below takes the other way.
     await page.getByTestId("size-max").click();
     const last = traffic.all.filter((r) => new URL(r.url()).pathname === "/propose").at(-1)!;
-    expect(last.postDataJSON()).toMatchObject({ sizeUsdc: 5 });
-    await expect(page.getByTestId("max-loss")).toHaveText("$5.00");
+    expect(last.postDataJSON()).toMatchObject({ sizeUsdc: budget });
+    await expect(page.getByTestId("max-loss")).toHaveText(fixtures.session.figures.riskBudgetUsdc.display);
   });
 
   test("Max binds on Maker Depth when it is the tighter of the two", async ({ page }) => {
@@ -433,7 +447,6 @@ test.describe("Max Loss holds still", () => {
   test("stays visible when the page behind it is scrolled", async ({ page }) => {
     await stubApi(page);
     await page.goto("/");
-    await deal(page);
     await openConfirm(page, agentCard);
 
     await page.mouse.wheel(0, 3000);
@@ -477,7 +490,6 @@ test.describe("finishing, for real and for practice", () => {
   test("makes Confirm and Practice Run unmistakable from each other, Practice Run the prominent one", async ({ page }) => {
     await stubApi(page);
     await page.goto("/");
-    await deal(page);
     await openConfirm(page, agentCard);
 
     const confirm = page.getByTestId("confirm");
@@ -505,7 +517,6 @@ test.describe("finishing, for real and for practice", () => {
   test("a Practice Run issues no request to /fill/prepare", async ({ page }) => {
     const traffic = await stubApi(page);
     await page.goto("/");
-    await deal(page);
     await openConfirm(page, agentCard);
 
     await page.getByTestId("practice").click();
@@ -519,7 +530,6 @@ test.describe("finishing, for real and for practice", () => {
   test("labels a practice holding as practice, three ways", async ({ page }) => {
     await stubApi(page);
     await page.goto("/");
-    await deal(page);
     await openConfirm(page, agentCard);
     await page.getByTestId("practice").click();
 
@@ -536,7 +546,6 @@ test.describe("finishing, for real and for practice", () => {
     await page.goto("/");
     await expect(page.getByTestId("board-empty")).toBeVisible();
 
-    await deal(page);
     await openConfirm(page, agentCard);
     await page.getByTestId("practice").click();
 
@@ -547,7 +556,6 @@ test.describe("finishing, for real and for practice", () => {
   test("shows a draining bar, a running countdown and a current value on each holding", async ({ page }) => {
     await stubApi(page);
     await page.goto("/");
-    await deal(page);
     await openConfirm(page, agentCard);
     await page.getByTestId("practice").click();
 
@@ -565,7 +573,6 @@ test.describe("finishing, for real and for practice", () => {
   test("a Practice Run shows no celebration -- no confetti, streak, leaderboard or animation", async ({ page }) => {
     await stubApi(page);
     await page.goto("/");
-    await deal(page);
     await openConfirm(page, agentCard);
     await page.getByTestId("practice").click();
 
@@ -580,9 +587,8 @@ test.describe("finishing, for real and for practice", () => {
     const traffic = await stubApi(page);
     await installFakeWallet(page);
     await page.goto("/");
-    await deal(page);
-    await openConfirm(page, agentCard);
     await connectWallet(page);
+    await openConfirm(page, agentCard);
 
     // Everything up to this point priced a real Order. Nothing has been signed.
     expect(traffic.paths()).not.toContain("/fill/prepare");
@@ -592,55 +598,36 @@ test.describe("finishing, for real and for practice", () => {
     await expect.poll(() => traffic.paths().filter((p) => p === "/fill/settle").length).toBe(1);
   });
 
-  test("Confirm stays disabled until a wallet is connected", async ({ page }) => {
+  test("Confirm refuses without a connected wallet, and sends nothing", async ({ page }) => {
     const traffic = await stubApi(page);
     await installFakeWallet(page);
     await page.goto("/");
-    await deal(page);
     await openConfirm(page, agentCard);
 
-    await expect(page.getByTestId("confirm")).toBeDisabled();
-    await expect(page.getByTestId("wallet-gate")).toBeVisible();
+    // Confirm's enabled state depends only on the proposal, not the wallet -- pressing
+    // it without one is a real, deliberate click that must be refused, not a button
+    // that was never reachable.
+    await expect(page.getByTestId("confirm")).toBeEnabled();
     // Practice Run never needs a wallet, and stays pressable throughout.
     await expect(page.getByTestId("practice")).toBeEnabled();
 
-    await page.getByTestId("confirm").click({ force: true }).catch(() => {});
+    await page.getByTestId("confirm").click();
+    await expect(page.getByTestId("refusal")).toBeVisible();
     expect(traffic.paths()).not.toContain("/fill/prepare");
-
-    await connectWallet(page);
-    await expect(page.getByTestId("confirm")).toBeEnabled();
-    await expect(page.getByTestId("wallet-gate")).toHaveCount(0);
   });
 
   test("shows a connecting state, then the connected address", async ({ page }) => {
     await stubApi(page);
     await installFakeWallet(page);
+    await signIn(page);
     await page.goto("/");
-    await deal(page);
-    await openConfirm(page, agentCard);
 
     const connect = page.getByTestId("connect-wallet");
     await expect(connect).toHaveText("Connect wallet");
     await connect.click();
+    await page.getByTestId("wallet-option-test.fakewallet0").click();
     await expect(page.getByTestId("wallet-address")).toBeVisible();
     await expect(page.getByTestId("connect-wallet")).toHaveCount(0);
-  });
-
-  test("offers a Verify button when a wallet was already authorised before this page loaded", async ({ page }) => {
-    // installFakeWallet pre-authorises eth_accounts, simulating a wallet the browser
-    // already trusted from a previous visit -- connectedAddress() picks this up on
-    // mount without prompting, but verification is a fresh signature every page load.
-    await stubApi(page);
-    await installFakeWallet(page, { preAuthorised: true });
-    await page.goto("/");
-    await deal(page);
-    await openConfirm(page, agentCard);
-
-    await expect(page.getByTestId("wallet-address")).toHaveCount(0);
-    const verify = page.getByTestId("verify-wallet");
-    await expect(verify).toBeVisible();
-    await verify.click();
-    await expect(page.getByTestId("wallet-address")).toBeVisible();
   });
 
   test("recovers from a transaction the chain hasn't shown it yet", async ({ page }) => {
@@ -651,9 +638,8 @@ test.describe("finishing, for real and for practice", () => {
     // instead of the frozen one stubApi installs for the countdown timers, the same
     // fix needed for the wallet-signing flow itself.
     await page.clock.resume();
-    await deal(page);
-    await openConfirm(page, agentCard);
     await connectWallet(page);
+    await openConfirm(page, agentCard);
 
     await page.getByTestId("confirm").click();
 
@@ -665,9 +651,8 @@ test.describe("finishing, for real and for practice", () => {
     await stubApi(page);
     await installFakeWallet(page);
     await page.goto("/");
-    await deal(page);
-    await openConfirm(page, agentCard);
     await connectWallet(page);
+    await openConfirm(page, agentCard);
     await expect(page.getByTestId("receipt")).toHaveCount(0);
 
     await page.getByTestId("confirm").click();
@@ -691,9 +676,8 @@ test.describe("finishing, for real and for practice", () => {
     await stubApi(page, "settle-fails");
     await installFakeWallet(page);
     await page.goto("/");
-    await deal(page);
-    await openConfirm(page, agentCard);
     await connectWallet(page);
+    await openConfirm(page, agentCard);
 
     await page.getByTestId("confirm").click();
 
@@ -707,9 +691,8 @@ test.describe("finishing, for real and for practice", () => {
     const traffic = await stubApi(page);
     await installFakeWallet(page, { fail: true });
     await page.goto("/");
-    await deal(page);
-    await openConfirm(page, agentCard);
     await connectWallet(page);
+    await openConfirm(page, agentCard);
 
     const before = await page.getByTestId("risk-remaining").textContent();
 
@@ -733,9 +716,8 @@ test.describe("finishing, for real and for practice", () => {
     const traffic = await stubApi(page);
     await installFakeWallet(page);
     await page.goto("/");
-    await deal(page);
-    await openConfirm(page, agentCard);
     await connectWallet(page);
+    await openConfirm(page, agentCard);
     await page.getByTestId("confirm").click();
     await expect.poll(() => traffic.paths().includes("/fill/prepare")).toBe(true);
 
@@ -747,9 +729,8 @@ test.describe("finishing, for real and for practice", () => {
     const traffic = await stubApi(page);
     await installFakeWallet(page);
     await page.goto("/");
-    await deal(page);
-    await openConfirm(page, agentCard);
     await connectWallet(page);
+    await openConfirm(page, agentCard);
     await expect(page.getByTestId("confirm")).toBeEnabled();
 
     // The book reprices under them while the proposal is on screen.
@@ -767,7 +748,7 @@ test.describe("finishing, for real and for practice", () => {
     const traffic = await stubApi(page);
     await installFakeWallet(page);
     await page.goto("/");
-    await deal(page);
+    await connectWallet(page);
     await openConfirm(page, agentCard);
 
     traffic.moveTheQuote();
@@ -781,8 +762,238 @@ test.describe("finishing, for real and for practice", () => {
     // Trader was shown going stale, not a flag that sticks to the confirmation itself.
     await openConfirm(page, overrideCard.cardRef);
     await expect(page.getByTestId("quote-moved")).toHaveCount(0);
-    await connectWallet(page);
     await expect(page.getByTestId("confirm")).toBeEnabled();
+  });
+});
+
+test.describe("sign-in gates the wallet, not the Deck (ADR-0014)", () => {
+  test("Deck browsing and Practice Run work with no account at all", async ({ page }) => {
+    await stubApi(page);
+    await page.goto("/");
+
+    await openConfirm(page, agentCard);
+    await page.getByTestId("practice").click();
+
+    await expect(page.getByTestId("practice-receipt")).toBeVisible();
+  });
+
+  test("Connect wallet is unreachable until signed in", async ({ page }) => {
+    await stubApi(page);
+    await page.goto("/");
+
+    await expect(page.getByTestId("signin-link")).toBeVisible();
+    await expect(page.getByTestId("connect-wallet")).toHaveCount(0);
+  });
+
+  test("signing in reveals Connect wallet in the same persistent spot", async ({ page }) => {
+    await stubApi(page);
+    await signIn(page);
+    await page.goto("/");
+
+    await expect(page.getByTestId("signin-link")).toHaveCount(0);
+    await expect(page.getByTestId("connect-wallet")).toBeVisible();
+  });
+
+  test("the Copilot chat is locked with a sign-in prompt until signed in, on both tabs", async ({ page }) => {
+    await stubApi(page);
+    await page.goto("/");
+
+    await expect(page.getByTestId("chat-signin-gate")).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Say something to the Copilot" })).toBeDisabled();
+
+    await page.getByRole("tab", { name: "Insights" }).click();
+    await expect(page.getByTestId("chat-signin-gate")).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Ask a question" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Ask" })).toBeDisabled();
+
+    await signIn(page);
+    await page.reload();
+
+    await expect(page.getByTestId("chat-signin-gate")).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "Ask a question" })).toBeEnabled();
+    await page.getByRole("tab", { name: "Trade" }).click();
+    await expect(page.getByRole("textbox", { name: "Say something to the Copilot" })).toBeEnabled();
+  });
+});
+
+test.describe("the wallet picker (multi-wallet connector)", () => {
+  test("lists every detected extension by its own name, and connects to the one clicked", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallets(page, [
+      { rdns: "io.metamask", name: "MetaMask" },
+      { rdns: "com.coinbase.wallet", name: "Coinbase Wallet" },
+    ]);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await expect(page.getByTestId("wallet-option-io.metamask")).toContainText("MetaMask");
+    await expect(page.getByTestId("wallet-option-com.coinbase.wallet")).toContainText("Coinbase Wallet");
+
+    await page.getByTestId("wallet-option-io.metamask").click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+    await expect(page.getByTestId("wallet-picker")).toHaveCount(0);
+  });
+
+  test("shows WalletConnect even with no extension installed at all", async ({ page }) => {
+    await stubApi(page);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await expect(page.getByTestId("wallet-option-walletConnect")).toContainText("WalletConnect");
+    await expect(page.getByTestId("wallet-picker-empty")).toHaveCount(0); // WalletConnect alone still means "something to pick"
+  });
+
+  test("closing the picker without choosing connects nothing", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await installFakeWallets(page, [{ rdns: "io.metamask", name: "MetaMask" }]);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await expect(page.getByTestId("wallet-picker")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("wallet-picker")).toHaveCount(0);
+    await expect(page.getByTestId("wallet-address")).toHaveCount(0);
+    expect(traffic.paths()).not.toContain("/auth/challenge");
+  });
+
+  test("a backdrop click also dismisses the picker", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallets(page, [{ rdns: "io.metamask", name: "MetaMask" }]);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await page.getByTestId("wallet-picker-scrim").click({ position: { x: 2, y: 2 } });
+    await expect(page.getByTestId("wallet-picker")).toHaveCount(0);
+  });
+
+  test("has no critical or serious accessibility violations", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallets(page, [{ rdns: "io.metamask", name: "MetaMask" }]);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await expect(page.getByTestId("wallet-picker")).toBeVisible();
+
+    const { violations } = await new AxeBuilder({ page }).analyze();
+    expect(violations.filter((v) => v.impact === "critical" || v.impact === "serious").map((v) => v.id)).toEqual([]);
+  });
+
+  test("traps focus inside the dialog", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallets(page, [
+      { rdns: "io.metamask", name: "MetaMask" },
+      { rdns: "com.coinbase.wallet", name: "Coinbase Wallet" },
+    ]);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    const dialog = page.getByTestId("wallet-picker");
+    const focusable = dialog.locator('button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])');
+    const count = await focusable.count();
+    expect(count).toBeGreaterThan(1);
+
+    await focusable.first().focus();
+    await page.keyboard.press("Shift+Tab");
+    await expect(focusable.last()).toBeFocused();
+
+    await page.keyboard.press("Tab");
+    await expect(focusable.first()).toBeFocused();
+  });
+});
+
+test.describe("wallet connection survives a refresh, within a TTL", () => {
+  /**
+   * Backdates the stored connection's timestamp directly, rather than advancing the
+   * page's clock -- advancing the clock also ages the fake Supabase session token
+   * (whose `expires_at` was computed off the same clock) and every other timer on the
+   * page, none of which this feature is about. This isolates exactly the one piece of
+   * state `recentConnectionWithinTtl` reads.
+   */
+  const backdateStoredConnection = (page: Page, ageMs: number) =>
+    page.evaluate(
+      ({ key, ageMs }) => {
+        const raw = window.localStorage.getItem(key);
+        if (!raw) throw new Error("no stored connection to backdate");
+        const parsed = JSON.parse(raw) as { id: string; connectedAt: number };
+        parsed.connectedAt = Date.now() - ageMs;
+        window.localStorage.setItem(key, JSON.stringify(parsed));
+      },
+      // `wallet.ts` scopes this key by the signed-in account id (`setWalletMemoryScope`) --
+      // the bare LAST_CONNECTION_KEY was never written to directly since that scoping
+      // landed, only `${LAST_CONNECTION_KEY}:${accountId}`.
+      { key: `${LAST_CONNECTION_KEY}:${FIXTURE_USER_ID}`, ageMs }
+    );
+
+  test("reconnects and re-verifies silently within the window -- no picker, no Verify click", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallet(page);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await page.getByTestId("wallet-option-test.fakewallet0").click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+    const address = await page.getByTestId("wallet-address").innerText();
+
+    // Just under the 3-hour TTL.
+    await backdateStoredConnection(page, 2 * 60 * 60 * 1000 + 59 * 60 * 1000 + 59 * 1000);
+    await page.reload();
+
+    // Straight to the verified address -- no Connect wallet, no picker, no Verify
+    // button, and no extra signature: the session already proved this exact address.
+    await expect(page.getByTestId("wallet-address")).toHaveText(address);
+    await expect(page.getByTestId("connect-wallet")).toHaveCount(0);
+    await expect(page.getByTestId("wallet-picker")).toHaveCount(0);
+    await expect(page.getByTestId("verify-wallet")).toHaveCount(0);
+  });
+
+  test("falls back to the normal Connect wallet once the TTL has lapsed", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallet(page);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await page.getByTestId("wallet-option-test.fakewallet0").click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+
+    // One second past the 3-hour TTL.
+    await backdateStoredConnection(page, 3 * 60 * 60 * 1000 + 1000);
+    await page.reload();
+
+    await expect(page.getByTestId("connect-wallet")).toBeVisible();
+    await expect(page.getByTestId("wallet-address")).toHaveCount(0);
+  });
+
+  test("offers the lapsed wallet as the picker's one-press 'last used' option", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallet(page);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await page.getByTestId("wallet-option-test.fakewallet0").click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+
+    await backdateStoredConnection(page, 3 * 60 * 60 * 1000 + 1000);
+    await page.reload();
+
+    await page.getByTestId("connect-wallet").click();
+    await expect(page.getByTestId("wallet-picker")).toBeVisible();
+    const recent = page.getByTestId("wallet-option-recent");
+    await expect(recent).toBeVisible();
+    await expect(recent).toContainText("Fake Wallet 1");
+    // The full picker is still there too, for choosing a different wallet.
+    await expect(page.getByTestId("wallet-option-test.fakewallet0")).toBeVisible();
+
+    await recent.click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
   });
 });
 
@@ -884,20 +1095,23 @@ test.describe("the halt states", () => {
     await expect(page.getByTestId("empty-deck")).not.toContainText("error");
   });
 
-  test("offers RFQ without pretending it is wired", async ({ page }) => {
+  test("offers RFQ, and the empty Deck is a way forward rather than a dead end", async ({ page }) => {
+    await installFakeWallet(page);
     await stubApi(page, "empty");
     await page.goto("/");
+    await connectWallet(page);
 
-    // Issue #31: the empty-Deck button is no longer a dead stub -- it opens the same
-    // RFQ dialog the chips-row door does, and that dialog leads to an honest 501, not
-    // a fake success. "Not pretending it is wired" now means the refusal is real.
+    // The empty-Deck button opens the same RFQ dialog the chips-row door does, and that
+    // dialog now goes somewhere: a real request, a real wait, and a real price if a maker
+    // answers. An empty book is exactly the situation the door exists for.
     await expect(page.getByTestId("empty-rfq")).toBeEnabled();
     await page.getByTestId("empty-rfq").click();
     await expect(page.getByTestId("rfq-modal")).toBeVisible();
 
     await page.getByTestId("rfq-submit").click();
-    await expect(page.getByTestId("rfq-refusal")).toBeVisible();
-    await expect(page.getByTestId("rfq-refusal")).toContainText("not built yet");
+    await expect(page.getByTestId("rfq-wait")).toHaveAttribute("data-phase", "OPEN");
+    // Still nothing priced -- an empty book does not become a price by being asked.
+    await expect(page.getByTestId("rfq-premium")).toHaveText("not priced yet");
   });
 
   test("both halt states are reachable without the agents service", async ({ page }) => {
@@ -928,19 +1142,15 @@ test.describe("the halt states", () => {
 });
 
 test.describe("the golden path", () => {
-  test("deal, override, confirm -- and nothing leaks on the way", async ({ page }) => {
+  test("pick, confirm -- and nothing leaks on the way", async ({ page }) => {
     const traffic = await stubApi(page);
     await installFakeWallet(page);
     await page.goto("/");
+    await connectWallet(page);
 
-    // Dealt.
-    await deal(page);
-    await expect(page.getByTestId("chosen-by")).toContainText("the agent picked this");
-
-    // Overruled, and the confirmation opens for it.
+    // Picked, and the confirmation opens for it.
     await openConfirm(page, overrideCard.cardRef);
     await expect(page.getByTestId("chosen-by")).toContainText("your pick, not the agent's");
-    await connectWallet(page);
 
     // The numbers came from the server, and they are the Card's.
     await expect(page.getByTestId("premium")).toHaveText(overrideCard.premiumUsdc.display);
@@ -953,16 +1163,17 @@ test.describe("the golden path", () => {
 
     // Every response EXCEPT /fill/prepare's own -- which legitimately carries the real
     // transaction calldata the Trader's own wallet has to see to sign it (ADR-0011) --
-    // still carries none of this. /auth/challenge and /auth/verify are exempted too,
-    // for a different, narrower reason: they legitimately echo the TRADER'S OWN wallet
-    // address back (proving sign-in, not naming an Order), which happens to be the same
+    // still carries none of this. /auth/challenge, /auth/verify and /session are
+    // exempted too, for a different, narrower reason: they legitimately echo the
+    // TRADER'S OWN wallet address back (proving sign-in, or reporting the session's own
+    // proof of it -- ADR-0012 -- not naming an Order), which happens to be the same
     // 40-hex-character shape FORBIDDEN's generic address pattern watches for. None of
-    // these three are exempted from having been fetched -- only from the scan itself.
-    const exemptPaths = new Set(["/fill/prepare", "/auth/challenge", "/auth/verify"]);
+    // these four are exempted from having been fetched -- only from the scan itself.
+    const exemptPaths = new Set(["/fill/prepare", "/auth/challenge", "/auth/verify", "/session"]);
     const exemptIndexes = new Set(
       traffic.all.flatMap((r, i) => (exemptPaths.has(new URL(r.url()).pathname) ? [i] : []))
     );
-    expect(exemptIndexes.size).toBeGreaterThanOrEqual(3);
+    expect(exemptIndexes.size).toBeGreaterThanOrEqual(4);
     for (const [i, body] of traffic.bodies.entries()) {
       if (exemptIndexes.has(i)) continue;
       for (const forbidden of FORBIDDEN) expect(body).not.toMatch(forbidden);
@@ -977,7 +1188,6 @@ test.describe("the golden path", () => {
     const traffic = await stubApi(page);
     await page.goto("/");
 
-    await deal(page);
     await openConfirm(page, overrideCard.cardRef);
     await expect(page.getByTestId("chosen-by")).toContainText("your pick");
     await page.getByTestId("practice").click();
@@ -988,16 +1198,18 @@ test.describe("the golden path", () => {
 });
 
 /**
- * Issue #31 -- the RFQ door: naming a strike the book does not offer.
+ * The RFQ door: naming a strike the book does not offer, and buying it.
  *
- * Unlike the Card confirmation, this journey has no success path to walk: /rfq always
- * answers 501, on purpose. So what these tests hold is the honesty of the refusal --
- * that it reads as an answer to what was actually asked, states plainly that nothing
- * moved, and never dresses itself up as a pending trade -- alongside the same shape
- * and accessibility bar every other dialog on this surface is held to.
+ * Unlike the Card confirmation, this journey has a WAIT in the middle: an RFQ opens a
+ * sealed-bid auction, so there are two signatures with a real pause between them and no
+ * price at all until a maker answers (ADR-0017). What these tests hold is that the pause
+ * is told truthfully -- no invented premium, no fake pending trade, a clear answer when
+ * nobody bids -- alongside the same shape and accessibility bar every other dialog on
+ * this surface is held to.
  */
 test.describe("the RFQ door", () => {
   test.beforeEach(async ({ page }) => {
+    await installFakeWallet(page);
     await stubApi(page);
   });
 
@@ -1102,56 +1314,129 @@ test.describe("the RFQ door", () => {
     await expect(page.getByTestId("rfq-reserve-note")).toContainText("enforced on-chain");
   });
 
-  test("submitting surfaces the 501, stating nothing was sent, signed or spent -- never a pending state", async ({ page }) => {
+  test("cannot be opened without a verified wallet, and says so rather than failing on press", async ({ page }) => {
     const traffic = await stubApi(page);
     await page.goto("/");
     await page.getByTestId("rfq-door").click();
 
-    await expect(page.getByTestId("rfq-refusal")).toHaveCount(0);
+    await expect(page.getByTestId("rfq-submit")).toBeDisabled();
+    await expect(page.getByTestId("rfq-gate")).toContainText(/connect and verify/i);
+    expect(traffic.paths()).not.toContain("/rfq");
+  });
+
+  test("the first press opens a request and buys nothing -- still no premium anywhere", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await connectWallet(page);
+    await page.getByTestId("rfq-door").click();
     await page.getByTestId("rfq-submit").click();
 
-    const refusal = page.getByTestId("rfq-refusal");
-    await expect(refusal).toBeVisible();
-    await expect(refusal).toHaveAttribute("role", "alert");
-    await expect(refusal).toContainText("501");
-    await expect(refusal).toContainText("not built yet");
-    await expect(refusal).toContainText("Nothing was sent to a maker");
-    await expect(refusal).toContainText("nothing was signed");
-    await expect(refusal).toContainText("no USDC moved");
+    const wait = page.getByTestId("rfq-wait");
+    await expect(wait).toBeVisible();
+    await expect(wait).toHaveAttribute("role", "status");
+    await expect(wait).toHaveAttribute("data-phase", "OPEN");
+    await expect(page.getByTestId("rfq-wait-sentence")).toContainText(/Nothing is owed unless you accept/i);
 
-    // Never a fake pending state: no receipt, no holding, no request to either route
-    // that would move money or open even a practised Position.
-    await expect(page.getByTestId("receipt")).toHaveCount(0);
-    await expect(page.getByTestId("practice-receipt")).toHaveCount(0);
+    // Still unpriced: an RFQ nobody has answered has no premium, and the ceiling above it
+    // is not a substitute for one.
+    await expect(page.getByTestId("rfq-premium")).toHaveText("not priced yet");
+    await expect(page.getByTestId("rfq-chance")).toHaveText("not priced yet");
+
+    expect(traffic.paths()).toContain("/rfq");
+    expect(traffic.paths()).toContain("/rfq/confirm");
+    expect(traffic.paths()).not.toContain("/rfq/settle/prepare");
+    // The RFQ path never touches the routes that fill a resting Order or practise one.
     expect(traffic.paths()).not.toContain("/fill");
     expect(traffic.paths()).not.toContain("/practice");
   });
 
-  test("the refusal echoes back exactly what was asked for", async ({ page }) => {
+  test("the request restates the strike as the server's own dollar figure, off what was asked", async ({ page }) => {
+    await stubApi(page);
     await page.goto("/");
+    await connectWallet(page);
     await page.getByTestId("rfq-door").click();
 
     await page.getByTestId("rfq-tenor-14").click();
     await page.getByTestId("rfq-size-preset-2").click();
     await page.getByTestId("rfq-submit").click();
+    await expect(page.getByTestId("rfq-wait")).toBeVisible();
 
     // ETH falls by default (direction DOWN), so the door opens 10% below the fixture's
     // $2,445.49 spot -- $2,200.94, formatted the way `apps/api/src/format.ts` formats it.
-    await expect(page.getByTestId("rfq-refusal")).toContainText(
-      "You asked for: ETH below $2,200.94, 14 days, at most $2.00."
-    );
+    // The browser never computed it: it arrived as a string on the Ask.
+    await expect(page.getByTestId("rfq-belief")).toContainText("$2,200.94");
+    await expect(page.getByTestId("rfq-max-loss")).toHaveText("$2.00");
   });
 
-  test("issues no additional request after a refusal, however hard Request quotes is clicked", async ({ page }) => {
-    const traffic = await stubApi(page);
+  test("freezes the controls once a request is on-chain -- what was signed cannot be edited", async ({ page }) => {
+    await stubApi(page);
     await page.goto("/");
+    await connectWallet(page);
     await page.getByTestId("rfq-door").click();
     await page.getByTestId("rfq-submit").click();
-    await expect(page.getByTestId("rfq-refusal")).toBeVisible();
+    await expect(page.getByTestId("rfq-wait")).toBeVisible();
 
-    const before = traffic.paths().filter((p) => p === "/rfq").length;
-    await page.getByTestId("rfq-submit").click({ force: true }).catch(() => {});
-    expect(traffic.paths().filter((p) => p === "/rfq").length).toBe(before);
+    await expect(page.getByTestId("rfq-strike-slider")).toBeDisabled();
+    await expect(page.getByTestId("rfq-tenor-30")).toBeDisabled();
+    await expect(page.getByTestId("rfq-size-preset-2")).toBeDisabled();
+    await expect(page.getByTestId("rfq-submit")).toHaveCount(0);
+  });
+
+  test("a maker's answer is the first price shown, and paying takes a second press that names it", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await connectWallet(page);
+    await page.getByTestId("rfq-door").click();
+    await page.getByTestId("rfq-submit").click();
+    await expect(page.getByTestId("rfq-wait")).toBeVisible();
+
+    await advanceOffers(page, async () => (await page.getByTestId("rfq-wait").getAttribute("data-phase")) === "OFFERED");
+    await expect(page.getByTestId("rfq-wait")).toHaveAttribute("data-phase", "OFFERED");
+    await expect(page.getByTestId("rfq-premium")).toHaveText("$1.25");
+
+    // The button that spends money names the amount, so nobody presses it unread -- and
+    // requesting alone never reached the settle routes.
+    const accept = page.getByTestId("rfq-accept");
+    await expect(accept).toContainText("$1.25");
+    expect(traffic.paths()).not.toContain("/rfq/settle/prepare");
+
+    await accept.click();
+    await expect(page.getByTestId("rfq-wait")).toHaveAttribute("data-phase", "SETTLED");
+    await expect(page.getByTestId("rfq-receipt")).toBeVisible();
+    expect(traffic.paths()).toContain("/rfq/settle");
+  });
+
+  test("an unanswered request says nobody bid and offers a withdrawal, rather than hanging", async ({ page }) => {
+    await stubApi(page, "rfq-unanswered");
+    await page.goto("/");
+    await connectWallet(page);
+    await page.getByTestId("rfq-door").click();
+    await page.getByTestId("rfq-submit").click();
+    await expect(page.getByTestId("rfq-wait")).toBeVisible();
+
+    await advanceOffers(page, async () => (await page.getByTestId("rfq-wait").getAttribute("data-phase")) === "NO_OFFERS");
+    await expect(page.getByTestId("rfq-wait")).toHaveAttribute("data-phase", "NO_OFFERS");
+    await expect(page.getByTestId("rfq-wait-sentence")).toContainText(/nobody answered/i);
+    await expect(page.getByTestId("rfq-wait-sentence")).toContainText(/No USDC moved/i);
+
+    // Never a price: nobody quoted one.
+    await expect(page.getByTestId("rfq-premium")).toHaveText("not priced yet");
+    await expect(page.getByTestId("rfq-accept")).toHaveCount(0);
+    await expect(page.getByTestId("rfq-withdraw")).toContainText("Withdraw request");
+  });
+
+  test("opens exactly one request, and there is no second Request quotes to press", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await connectWallet(page);
+    await page.getByTestId("rfq-door").click();
+    await page.getByTestId("rfq-submit").click();
+    await expect(page.getByTestId("rfq-wait")).toBeVisible();
+
+    // The button is GONE rather than merely inert -- a stronger guarantee than a disabled
+    // control, and the reason a double-press cannot open two requests against one budget.
+    await expect(page.getByTestId("rfq-submit")).toHaveCount(0);
+    expect(traffic.paths().filter((p) => p === "/rfq").length).toBe(1);
   });
 
   test("Escape dismisses, and returns focus to the door that opened it", async ({ page }) => {
@@ -1211,11 +1496,17 @@ test.describe("the RFQ door", () => {
 
     await expect(page.locator('[data-testid="quote-moved"]')).toHaveCount(0);
     await expect(page.getByTestId("rfq-modal")).not.toContainText("price moved");
-    await expect(page.getByTestId("rfq-submit")).toBeEnabled();
+    // Still the asking state -- a moved book has nothing to move here.
+    await expect(page.getByTestId("rfq-submit")).toHaveCount(1);
+    await expect(page.getByTestId("rfq-wait")).toHaveCount(0);
   });
 
   test("has no critical or serious accessibility violations, open or refused", async ({ page }) => {
+    // connectWallet() reloads the page, so the first real navigation has to happen
+    // before it runs -- and it has to run before the door is opened, since the modal
+    // itself is not what's under test here, just its two states once reachable.
     await page.goto("/");
+    await connectWallet(page);
     await page.getByTestId("rfq-door").click();
 
     const opened = await new AxeBuilder({ page }).analyze();
@@ -1224,7 +1515,7 @@ test.describe("the RFQ door", () => {
     ).toEqual([]);
 
     await page.getByTestId("rfq-submit").click();
-    await expect(page.getByTestId("rfq-refusal")).toBeVisible();
+    await expect(page.getByTestId("rfq-wait")).toBeVisible();
 
     const refused = await new AxeBuilder({ page }).analyze();
     expect(

@@ -32,7 +32,7 @@ import { clampSizeUsdc, expectedMoveIndex, riskBudgetBar, sizeCapUsdc } from "..
 import { SIZE_MIN_USDC, SIZE_PRESETS_USDC, SIZE_STEP_USDC, type Direction, type GateState } from "../lib/surface";
 import type { FillReceipt, SessionState } from "../lib/api";
 import { Mark } from "./Rail";
-import { WalletConnect } from "./WalletConnect";
+import { PayoffStrip } from "./PayoffStrip";
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -53,17 +53,10 @@ export function ConfirmModal({
   receipt,
   practiceDone,
   gates,
-  walletAddress,
-  walletConnecting,
-  walletVerified,
-  walletVerifying,
-  walletError,
   onResize,
   onConfirm,
   onPractice,
   onClose,
-  onConnectWallet,
-  onVerifyWallet,
 }: {
   open: boolean;
   asset: UnderlyingSymbol;
@@ -84,18 +77,10 @@ export function ConfirmModal({
   receipt: FillReceipt | null;
   practiceDone: boolean;
   gates: Array<{ label: string; state: GateState }>;
-  walletAddress: string | null;
-  walletConnecting: boolean;
-  /** Confirm needs a signature from the Trader's own wallet; Practice Run never does. */
-  walletVerified: boolean;
-  walletVerifying: boolean;
-  walletError: string | null;
   onResize: (usdc: number) => void;
   onConfirm: () => void;
   onPractice: () => void;
   onClose: () => void;
-  onConnectWallet: () => void;
-  onVerifyWallet: () => void;
 }) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
 
@@ -147,10 +132,6 @@ export function ConfirmModal({
   // proposal the server has already consumed.
   const done = Boolean(receipt) || practiceDone;
   const canAct = Boolean(proposal) && !quoteMoved && !busy && !done;
-  // Practice Run reaches no signer at all (`apps/api/src/practice.ts`) and never needs
-  // a wallet; Confirm spends real USDC through the Trader's own connected AND verified
-  // wallet (ADR-0011, ADR-0012), so it alone gates on `walletVerified`.
-  const canConfirm = canAct && walletVerified;
 
   const cap = sizeCapUsdc(session?.remainingUsdc ?? 0, card?.depthUsdc.value ?? 0);
   const resize = (v: number) => onResize(clampSizeUsdc(v, SIZE_MIN_USDC, cap));
@@ -207,6 +188,8 @@ export function ConfirmModal({
                 {countdown(proposal.figures.expiry.value, now)}
               </em>
             </p>
+
+            <PayoffStrip proposal={proposal} spot={spot} />
 
             <div className="ctl">
               <div className="ctlhead">
@@ -338,18 +321,6 @@ export function ConfirmModal({
           </p>
         ) : null}
 
-        {canAct ? (
-          <WalletConnect
-            address={walletAddress}
-            connecting={walletConnecting}
-            verified={walletVerified}
-            verifying={walletVerifying}
-            error={walletError}
-            onConnect={onConnectWallet}
-            onVerify={onVerifyWallet}
-          />
-        ) : null}
-
         <footer>
           <button
             type="button"
@@ -360,16 +331,10 @@ export function ConfirmModal({
           >
             Practice Run · spends nothing
           </button>
-          <button type="button" className="btn ghost" data-testid="confirm" disabled={!canConfirm} onClick={onConfirm}>
+          <button type="button" className="btn ghost" data-testid="confirm" disabled={!canAct} onClick={onConfirm}>
             Confirm{proposal ? ` · ${proposal.figures.maxLossUsdc.display}` : ""}
           </button>
         </footer>
-
-        {canAct && !walletVerified ? (
-          <p className="refusal" role="status" data-testid="wallet-gate">
-            Connect and verify your wallet above to Confirm — Practice Run needs neither.
-          </p>
-        ) : null}
       </div>
     </>
   );

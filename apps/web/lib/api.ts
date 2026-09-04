@@ -11,18 +11,35 @@
  * same id.
  */
 import type {
+  AccountActivityResponse, AccountResponse, AccountSettingsRequest,
   Card, ConversationTurn, CoinAskResult, CoverQuote, CoverQuoteResult, CoverRefusal,
   DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding,
   MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, RiskProfileName,
-  RiskProfileResponse, SuggestionResponse, TradeIntent, UnderlyingSymbol,
+  RiskProfileResponse, SuggestionResponse, UnderlyingSymbol, TradeIntent,
+  PreparedRfq, PreparedRfqCancel, PreparedRfqSettle, RfqAsk, RfqPhase, RfqStatus,
 } from "@copilot/shared";
+import { supabase } from "./supabaseClient";
 
 export type {
+  AccountActivityResponse, AccountResponse, AccountSettingsRequest,
   Card, ConversationTurn, CoinAskResult, CoverQuote, CoverQuoteResult, CoverRefusal,
   DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding,
   MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, RiskProfileName,
-  RiskProfileResponse, SuggestionResponse, TradeIntent, UnderlyingSymbol,
+  RiskProfileResponse, SuggestionResponse, UnderlyingSymbol,
+  PreparedRfq, PreparedRfqCancel, PreparedRfqSettle, RfqAsk, RfqPhase, RfqStatus,
 };
+
+export function getApiBase(): string {
+  const configured = process.env.NEXT_PUBLIC_API_BASE;
+  if (configured && !configured.includes("127.0.0.1") && !configured.includes("localhost")) {
+    return configured;
+  }
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname || "localhost";
+    return `${window.location.protocol}//${host}:3001`;
+  }
+  return configured ?? "http://127.0.0.1:3001";
+}
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:3001";
 
@@ -36,11 +53,17 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:30
  * `Authorization: Bearer ...`" -- and without this Confirm answers 401 for anyone who
  * followed the documented security posture.
  *
- * It is inlined into the bundle, which is the honest cost of a browser holding it. That
- * is acceptable for what the token actually defends against: a page on another origin
- * POSTing to loopback. Such a page cannot read this bundle (the CORS allowlist in
- * `app.ts` sees to that), so it cannot learn the token. It is NOT a secret from the
- * person sitting at the browser, and it was never meant to be -- the wallet is theirs.
+ * It is inlined into the bundle, which is the honest cost of a browser holding it. It IS
+ * a real defense against CSRF -- a page on another origin cannot read this bundle (the
+ * CORS allowlist in `app.ts` sees to that), so it cannot learn the token to attach to a
+ * forged cross-origin request. It is NOT a secret from the person sitting at the browser
+ * (the wallet is theirs), and CORS does nothing at all for a non-browser client: anyone
+ * who loads this bundle once can read the literal token out of it and replay it directly
+ * against the backend from curl/Postman, outside any browser and outside CORS entirely.
+ * That is not this token's job to prevent -- `apps/api/src/server.ts` refuses to bind
+ * beyond loopback in the first place unless a real, non-client-embedded authentication
+ * mechanism is confirmed in front of it (`EXTERNAL_AUTH_IN_FRONT`), which is what actually
+ * stands between this token and being replayed by anyone who ever loaded the page.
  */
 const API_TOKEN = process.env.NEXT_PUBLIC_COPILOT_API_TOKEN ?? "";
 
@@ -54,6 +77,9 @@ export interface SessionState {
   spentUsdc: number;
   remainingUsdc: number;
   figures: { riskBudgetUsdc: Figure; spentUsdc: Figure; remainingUsdc: Figure };
+  /** The wallet this session already proved (ADR-0012), or null. Whatever casing it was
+   * signed with -- compare case-insensitively against a connected address. */
+  verifiedWallet: string | null;
 }
 
 export interface Board {
@@ -83,7 +109,8 @@ export class ApiRefusal extends Error {
   }
 }
 
-const SESSION_KEY = "copilot-session-id";
+/** Exported so tests can simulate a new tab -- a fresh backend session -- by clearing it. */
+export const SESSION_KEY = "copilot-session-id";
 
 /**
  * A stable id for this tab.
@@ -102,12 +129,27 @@ export function sessionId(): string {
   return id;
 }
 
+/**
+ * Sent on every call, when a signed-in session exists (ADR-0014). Read fresh each
+ * time rather than cached: `supabase.auth.getSession()` auto-refreshes an expiring
+ * access token internally, so asking right before use -- never holding a stale copy
+ * in React state -- is what keeps a long-lived tab from silently sending an expired
+ * token.
+ */
+async function accountHeaders(): Promise<Record<string, string>> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  return token ? { "x-account-token": token } : {};
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const base = getApiBase();
+  const res = await fetch(`${base}${path}`, {
     ...init,
     headers: {
       "content-type": "application/json",
       "x-session-id": sessionId(),
+      ...(await accountHeaders()),
       ...(init?.headers ?? {}),
     },
   });
@@ -264,18 +306,20 @@ export const practice = (proposalId: string): Promise<{ holding: Holding }> =>
   call<{ holding: Holding }>("/practice", { method: "POST", body: JSON.stringify({ proposalId }) });
 
 /**
- * Name a strike the book does not offer (issue #31).
+ * Open a sealed-bid request for a strike the book does not carry (issue #31, ADR-0017).
  *
- * This always throws `ApiRefusal(501, ...)` -- the sealed-bid RFQ backend is out of
- * scope, and this route exists to refuse honestly rather than pretend a maker is
- * pricing anything. `strikeOffsetPct` is the slider's own raw number, never resolved
- * to a dollar strike in this file or anywhere else in the browser: only the server,
- * which alone holds live spot, may turn it into one, and it does that only inside the
- * refusal's own echoed sentence.
+ * Returns the request already built and the ONE transaction the Trader's own wallet must
+ * send to open it. Nothing has been signed at this point and no USDC has moved -- but the
+ * Reserve Price is already held against the Risk Budget, because it becomes a real
+ * commitment the instant that transaction lands.
+ *
+ * `strikeOffsetPct` is the slider's own raw number and is never resolved to a dollar
+ * strike in this file or anywhere else in the browser: only the server, which alone holds
+ * live spot, may turn it into one. The strike comes back inside `ask` already formatted.
  *
  * `kind: "TRADER"` is injected here so the call site in `surface.ts` needs no change --
- * the union discriminant is an implementation detail of the wire shape, not something
- * a caller thinking about a trade needs to name.
+ * the union discriminant is an implementation detail of the wire shape, not something a
+ * caller thinking about a trade needs to name.
  */
 export const requestRfq = (body: {
   underlying: UnderlyingSymbol;
@@ -283,28 +327,91 @@ export const requestRfq = (body: {
   strikeOffsetPct: number;
   horizonDays: RfqTenorDays;
   sizeUsdc: number;
-}): Promise<never> =>
-  call<never>("/rfq", { method: "POST", body: JSON.stringify({ kind: "TRADER", ...body }), headers: authHeaders() });
+  walletAddress: string;
+}): Promise<PreparedRfq> =>
+  call<PreparedRfq>("/rfq", {
+    method: "POST",
+    body: JSON.stringify({ kind: "TRADER", ...body }),
+    headers: authHeaders(),
+  });
 
 /**
- * The Cover door's RFQ request (issue #43): a selector, not figures. The server
- * re-reads the Loan off Aave and re-derives strike, size and cap itself -- a stale
- * or tampered browser cannot change what is actually requested.
+ * The Cover door's request: a selector, not figures.
  *
- * A coverable Loan throws `ApiRefusal(501, ...)` (the sealed-bid backend is not built).
- * An uncoverable Loan returns `{ status: "REFUSED", refusal }` as a normal 200 -- the
- * same shape `getCoverQuote` uses, so a later surface can treat both identically.
- * (The return type below says so -- `Promise<never>` would claim this call can only
- * ever throw, which is exactly the half of the contract the REFUSED path is for.)
+ * The body carries an address and nothing else. The server re-reads the Loan off Aave and
+ * re-derives the strike, the size and the cap itself, so a stale or tampered browser
+ * cannot change what is actually requested (ADR-0006, issue #43).
+ *
+ * Two shapes come back, and the caller has to look at `status` to tell them apart. A Loan
+ * that cannot be covered answers a normal 200 carrying its own refusal -- the same shape
+ * `getCoverQuote` uses -- because "this Loan holds two assets" is an answer and not a
+ * failure. A coverable Loan answers with the prepared request.
  */
 export const requestCoverRfq = (body: {
   address: string;
-}): Promise<{ status: "REFUSED"; refusal: CoverRefusal }> =>
-  call<{ status: "REFUSED"; refusal: CoverRefusal }>("/rfq", {
+}): Promise<PreparedRfq | { status: "REFUSED"; refusal: CoverRefusal }> =>
+  call<PreparedRfq | { status: "REFUSED"; refusal: CoverRefusal }>("/rfq", {
     method: "POST",
     body: JSON.stringify({ kind: "COVER", ...body }),
     headers: authHeaders(),
   });
+
+/** True when the Cover door answered with a refusal rather than a prepared request. */
+export const isCoverRefusal = (
+  r: PreparedRfq | { status: "REFUSED"; refusal: CoverRefusal }
+): r is { status: "REFUSED"; refusal: CoverRefusal } => "status" in r && r.status === "REFUSED";
+
+/**
+ * Report what the wallet did with the opening transaction.
+ *
+ * A hash means the backend goes and reads the real receipt, and the chain decides whether
+ * a request was opened and what id it was given (ADR-0012). No hash means the wallet
+ * declined, and the Risk Budget reservation is released.
+ */
+export const confirmRfq = (
+  requestId: string,
+  txHash?: string
+): Promise<{ opened: boolean; remainingUsdc: number; status?: RfqStatus }> =>
+  call("/rfq/confirm", { method: "POST", body: JSON.stringify({ requestId, txHash }), headers: authHeaders() });
+
+/** Where the wait has got to. Polled while the offer window runs. Signs and spends nothing. */
+export const getRfqStatus = (requestId: string, signal?: AbortSignal): Promise<RfqStatus> =>
+  call<RfqStatus>(`/rfq/${encodeURIComponent(requestId)}`, { headers: authHeaders(), signal });
+
+/**
+ * The second human confirmation, prepared.
+ *
+ * The premium that comes back is a maker's own answer, not an estimate and not the
+ * Reserve Price -- which is the whole reason there are two signatures rather than one.
+ */
+export const prepareRfqSettle = (requestId: string): Promise<PreparedRfqSettle> =>
+  call<PreparedRfqSettle>("/rfq/settle/prepare", {
+    method: "POST",
+    body: JSON.stringify({ requestId }),
+    headers: authHeaders(),
+  });
+
+/** Report what the wallet did with the settlement. The chain decides again. */
+export const settleRfq = (
+  requestId: string,
+  txHash?: string
+): Promise<{ settled: boolean; remainingUsdc: number; status: RfqStatus }> =>
+  call("/rfq/settle", { method: "POST", body: JSON.stringify({ requestId, txHash }), headers: authHeaders() });
+
+/** The transaction that withdraws a request nobody answered. */
+export const prepareRfqCancel = (requestId: string): Promise<PreparedRfqCancel> =>
+  call<PreparedRfqCancel>("/rfq/cancel/prepare", {
+    method: "POST",
+    body: JSON.stringify({ requestId }),
+    headers: authHeaders(),
+  });
+
+/** Report the withdrawal. Only a request the chain agrees is closed frees its reservation. */
+export const cancelRfq = (
+  requestId: string,
+  txHash?: string
+): Promise<{ cancelled: boolean; remainingUsdc: number }> =>
+  call("/rfq/cancel", { method: "POST", body: JSON.stringify({ requestId, txHash }), headers: authHeaders() });
 
 /**
  * A Borrower's Loan, and the Cover it would need. Read-only: it requests nothing from a
@@ -355,3 +462,15 @@ export const recordDecision = (body: DecisionRequest): Promise<unknown> =>
     body: JSON.stringify(body),
     headers: authHeaders(),
   });
+
+/** The signed-in account's saved settings and linked wallet, if any (ADR-0014). */
+export const getAccount = (): Promise<AccountResponse> => call<AccountResponse>("/account");
+
+/** Saves a partial settings update -- only the given fields change. */
+export const saveAccountSettings = (
+  patch: AccountSettingsRequest
+): Promise<{ settings: AccountResponse["settings"] }> =>
+  call("/account/settings", { method: "POST", body: JSON.stringify(patch) });
+
+export const getAccountActivity = (): Promise<AccountActivityResponse> =>
+  call<AccountActivityResponse>("/account/activity");

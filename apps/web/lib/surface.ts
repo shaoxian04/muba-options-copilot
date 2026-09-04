@@ -17,7 +17,9 @@
  *     A Trader is told before they confirm, never after.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ExpiryOption, Figure, RfqTenorDays, UnderlyingSymbol } from "@copilot/shared";
+import type {
+  ExpiryOption, Figure, PreparedRfq, PreparedRfqSettle, RfqStatus, RfqTenorDays, UnderlyingSymbol,
+} from "@copilot/shared";
 import {
   ApiRefusal,
   getBoard,
@@ -31,6 +33,12 @@ import {
   proposeChat,
   requestAuthChallenge,
   requestRfq,
+  confirmRfq,
+  getRfqStatus,
+  prepareRfqSettle,
+  settleRfq,
+  prepareRfqCancel,
+  cancelRfq,
   settleFill,
   verifyAuthChallenge,
   type Board,
@@ -43,8 +51,22 @@ import {
   type ProposeResult,
   type SessionState,
 } from "./api";
-import { connectWallet as connectInjectedWallet, connectedAddress, sendTx, signMessage } from "./wallet";
+import {
+  connectWallet as connectWalletById,
+  disconnectWallet as disconnectWalletById,
+  lastConnectedWalletId,
+  listAvailableWallets,
+  recentConnectionWithinTtl,
+  sendTx,
+  setWalletMemoryScope,
+  WalletConnectionCancelled,
+  signMessage,
+  walletOptionFor,
+  watchAvailableWallets,
+  type WalletOption,
+} from "./wallet";
 import { clampSizeUsdc, rfqSizeCapUsdc } from "./geometry";
+import { supabase } from "./supabaseClient";
 
 /** Trades of 1-2 USDC are normal and expected for this product. */
 export const STAKE_USDC = 2;
@@ -101,6 +123,16 @@ export const RFQ_STRIKE_STEP_PCT = 0.5;
  * the client bundle at all.
  */
 export const RFQ_TENOR_DAYS: readonly RfqTenorDays[] = [7, 14, 30, 60];
+
+/**
+ * How often an open request is re-read while makers can still answer.
+ *
+ * Slower than the Deck's own poll on purpose. A Deck poll re-prices a book that moves
+ * every block; an RFQ's offer window is measured in minutes and each tick costs an
+ * on-chain read plus an indexer call. Six seconds is fast enough that an answer appears
+ * while the Trader is still looking at the dialog, and slow enough not to hammer either.
+ */
+export const RFQ_POLL_MS = 6_000;
 
 /** The tape has to look alive without hammering a route that reads the chain. */
 const DECK_POLL_MS = 6000;
@@ -247,8 +279,27 @@ export interface Surface {
   /** The RFQ's own stake. Shares `SIZE_PRESETS_USDC`/`SIZE_MIN_USDC` with the Card confirmation, capped differently (`rfqSizeCapUsdc`) because there is no Maker Depth yet to bind against. */
   rfqSizeUsdc: number;
   rfqBusy: boolean;
-  /** The 501's own sentence, once asked for. Shown verbatim -- never composed here. */
+  /**
+   * A refusal the Trader is meant to read: the Risk Budget saying no, a wallet that has
+   * not been verified, or a market with no price. Shown verbatim -- never composed here.
+   */
   rfqRefusal: string | null;
+  /**
+   * The live request, once one has been opened on-chain (ADR-0017). Null before that and
+   * after the dialog is dismissed. Everything the dialog renders about the wait comes off
+   * this -- the phase, the offer count, the premium once a maker answers -- and every
+   * figure on it is a string the server already formatted.
+   */
+  rfqStatus: RfqStatus | null;
+  /**
+   * The premium a maker has actually offered, once the second confirmation has been
+   * prepared. Distinct from `rfqStatus.premiumUsdc` on purpose: this one is attached to
+   * the settle transaction sitting in `rfqSettle`, so what the Trader reads and what the
+   * chain will charge are the same number by construction.
+   */
+  rfqSettle: PreparedRfqSettle | null;
+  /** The Fill-shaped receipt for a settled request. Null until the option exists. */
+  rfqReceipt: FillReceipt | null;
 
   session: SessionState | null;
   board: Board | null;
@@ -263,21 +314,37 @@ export interface Surface {
   busy: boolean;
   log: ChatLine[];
 
+  /** The signed-in account, if any (ADR-0014). Null means: browsing anonymously. */
+  account: { userId: string; email: string; avatarUrl: string | null } | null;
+  signOut: () => void;
   walletAddress: string | null;
   walletConnecting: boolean;
   walletVerified: boolean;
   walletVerifying: boolean;
   walletError: string | null;
-  connectWallet: () => Promise<void>;
+  walletPickerOpen: boolean;
+  availableWallets: WalletOption[];
+  recentWallet: WalletOption | null;
+  onOpenWalletPicker: () => void;
+  onCloseWalletPicker: () => void;
+  /** `fresh`: force a new WalletConnect pairing rather than resuming a stale session -- see `wallet.ts`'s `connectWallet`. */
+  onPickWallet: (walletId: string, options?: { fresh?: boolean }) => void;
   verifyWallet: () => Promise<void>;
+  onDisconnectWallet: () => void;
 
   setAsset: (a: UnderlyingSymbol) => void;
   setDirection: (d: Direction) => void;
   setHorizon: (h: number) => void;
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
-  dealPrompt: (prompt: string) => Promise<ProposeResult | null>;
-  /** Clicking a Card. Opens the confirmation (issue #30) as well as pricing the pick. */
-  pick: (cardRef: string) => Promise<void>;
+  submitTradeMessage: (text: string) => void;
+  /**
+   * Clicking a Card (issue #30), or accepting an AI-matched order from
+   * `NearestOrderPreview`. Opens the confirmation as well as pricing the pick. `on`
+   * switches which coin/direction/expiry is selected first when given and different
+   * from what's currently showing -- needed because a matched order can belong to a
+   * different one than whatever the Trader currently has selected.
+   */
+  pick: (cardRef: string, on?: { underlying: UnderlyingSymbol; direction: Direction; horizonDays: number }) => Promise<void>;
   /**
    * Re-price the SAME Order at a different stake -- what the confirmation's stepper
    * and presets call. A server round trip against the unchanged `cardRef`, exactly
@@ -297,11 +364,20 @@ export interface Surface {
   setRfqTenor: (days: RfqTenorDays) => void;
   /** A server round trip is neither possible nor needed here -- nothing is priced yet, so this only clamps and stores. */
   setRfqSize: (usdc: number) => void;
-  /** POST /rfq. Always ends in a 501; there is no success path to render. */
+  /**
+   * The FIRST signature: build the request and open it on-chain. Never the last -- an
+   * RFQ has no price yet, and `acceptRfq` is what pays one. (ADR-0017)
+   */
   submitRfq: () => Promise<void>;
+  /**
+   * The SECOND signature: pay a maker's own answer. Only reachable once `rfqStatus.phase`
+   * is `OFFERED`, which is the only state in which a real premium exists to confirm.
+   */
+  acceptRfq: () => Promise<void>;
+  /** Withdraw a request nobody answered, taking back the commitment to pay. */
+  withdrawRfq: () => Promise<void>;
   closeRfq: () => void;
 
-  say: (text: string) => void;
   reset: () => void;
 }
 
@@ -465,6 +541,17 @@ export function useSurface(): Surface {
   const [rfqSizeUsdc, setRfqSizeUsdcState] = useState<number>(STAKE_USDC);
   const [rfqBusy, setRfqBusy] = useState(false);
   const [rfqRefusal, setRfqRefusal] = useState<string | null>(null);
+  const [rfqStatus, setRfqStatus] = useState<RfqStatus | null>(null);
+  const [rfqSettle, setRfqSettle] = useState<PreparedRfqSettle | null>(null);
+  const [rfqReceipt, setRfqReceipt] = useState<FillReceipt | null>(null);
+  /**
+   * The id of the live request, held in a ref rather than state.
+   *
+   * The polling effect below reads it, and putting it in state would restart the poll on
+   * every tick that touched it. It is never rendered -- `rfqStatus` is what the dialog
+   * reads -- so nothing needs a re-render when it changes.
+   */
+  const rfqRequestIdRef = useRef<string | null>(null);
 
   const [session, setSession] = useState<SessionState | null>(null);
   const [board, setBoard] = useState<Board | null>(null);
@@ -473,14 +560,90 @@ export function useSurface(): Surface {
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<ChatLine[]>([]);
 
+  const [account, setAccount] = useState<{ userId: string; email: string; avatarUrl: string | null } | null>(
+    null
+  );
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [walletConnecting, setWalletConnecting] = useState(false);
   const [walletVerified, setWalletVerified] = useState(false);
   const [walletVerifying, setWalletVerifying] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
+  const [walletPickerOpen, setWalletPickerOpen] = useState(false);
+  const [availableWallets, setAvailableWallets] = useState<WalletOption[]>([]);
+  const [recentWallet, setRecentWallet] = useState<WalletOption | null>(null);
+
+  /**
+   * The same "latest wins" reasoning as `beginLatestOnly`/`isLatest` below, applied to
+   * wallet connects rather than Deck polls: two different things can now try to connect
+   * a wallet -- the silent on-load reconnect (below) and an explicit `pickWallet` click
+   * -- where before only the latter ever existed. Without this, a Trader who clicks
+   * "WalletConnect" to switch wallets while the page's own silent "Last used" reconnect
+   * is still resolving could see that stale attempt land afterward and overwrite their
+   * deliberate choice -- exactly the bug this pattern already exists to close for /deck
+   * and /depth. Every attempt claims the next number before doing anything async, and
+   * only applies its result if it's still the most recent one claimed by the time it
+   * resolves.
+   */
+  const walletConnectSeqRef = useRef(0);
+
+  /**
+   * Google puts the profile photo under `avatar_url` in Supabase's normalized
+   * `user_metadata` -- `picture` is the raw OAuth claim some providers use instead,
+   * kept as a fallback rather than assumed absent. Email/password sign-in has neither,
+   * which is exactly when `AccountControl` falls back to an initial.
+   */
+  const accountFrom = (session: { user: { id: string; email?: string; user_metadata?: Record<string, unknown> } }) => ({
+    userId: session.user.id,
+    email: session.user.email ?? "",
+    avatarUrl: (session.user.user_metadata?.avatar_url as string) ?? (session.user.user_metadata?.picture as string) ?? null,
+  });
+
+  /*
+   * A Google/magic-link/email-confirmation redirect lands back here with the raw
+   * session in the URL's hash fragment (`#access_token=...`) -- Supabase's client
+   * reads it into `getSession()`/`onAuthStateChange` and is supposed to strip it
+   * itself, but that cleanup can lag a paint behind. Stripping it explicitly, the
+   * moment a session is confirmed, means it never lingers in the address bar, browser
+   * history, or a screen share -- the fragment is never sent to any server either
+   * way, but "never visible longer than necessary" is the safer bar to hold.
+   */
+  const scrubTokenFromUrl = () => {
+    if (window.location.hash.includes("access_token")) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+  };
+
+  // Picks up an existing sign-in on first paint, then reacts to every sign-in/sign-out
+  // from then on -- including the redirect back from /login (ADR-0014).
+  //
+  // `setWalletMemoryScope` runs synchronously in the SAME callback as `setAccount`,
+  // never in a separate effect reacting to `account` state -- that ordering is what
+  // guarantees `wallet.ts`'s account-scoped storage is already pointed at the right
+  // account by the time the render this triggers commits and the wallet-reconnect
+  // effect below (which depends on `account`) runs. See `setWalletMemoryScope`'s own
+  // comment in `wallet.ts` for why this exists: a shared device must never let a newly
+  // signed-in Trader see, or silently reconnect to, the previous Trader's wallet.
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setWalletMemoryScope(data.session?.user.id ?? null);
+      if (data.session) setAccount(accountFrom(data.session));
+      scrubTokenFromUrl();
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setWalletMemoryScope(session?.user.id ?? null);
+      setAccount(session ? accountFrom(session) : null);
+      scrubTokenFromUrl();
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  const signOut = useCallback(() => {
+    void supabase.auth.signOut();
+  }, []);
 
   const say = useCallback((text: string) => setLog((l) => [...l, { who: "copilot", text }]), []);
   const heard = useCallback((text: string) => setLog((l) => [...l, { who: "trader", text }]), []);
+
 
   /**
    * The board, and the Risk Budget it sits beside, together -- but only the board has
@@ -496,46 +659,188 @@ export function useSurface(): Surface {
     setBoardLoading(false);
   }, [walletAddress]);
 
-  // First paint: pick up a wallet the browser already authorised, without prompting.
-  useEffect(() => {
-    void connectedAddress().then(setWalletAddress);
+  /**
+   * The half of wallet verification that's safe to run without a click: only checks
+   * whether this address is already proven, via `GET /session` -- which may itself
+   * report that back from `accountStore.ts`'s durable `linked_wallets` record, not just
+   * this exact in-memory session (`app.ts`'s `/session` handler seeds it either way, so
+   * "recently proven in another tab" and "proven in this one" read the same here).
+   * Never falls through to a live challenge/sign/verify round trip on its own -- that
+   * half must always follow an explicit Trader click (see `verifyWalletFor`), never a
+   * silent page-load effect, or WalletConnect could push a surprise notification to a
+   * Trader's phone before they have done anything at all.
+   */
+  const verifyIfAlreadyProven = useCallback(async (address: string): Promise<boolean> => {
+    const current = await getSession().catch(() => null);
+    const proven = !!current?.verifiedWallet && current.verifiedWallet.toLowerCase() === address.toLowerCase();
+    if (proven) setWalletVerified(true);
+    return proven;
   }, []);
 
   /**
    * Proves the connected wallet is who it says it is (ADR-0012) -- a text signature,
-   * never a transaction. Separate from `connectWallet` so a Trader whose wallet was
-   * already authorised before this page loaded (`connectedAddress()`, which never
-   * prompts) has a way to complete verification with one press, rather than a dead end.
+   * never a transaction. Separate from `connectWallet` so a Trader whose signature
+   * request failed or was dismissed (address set, but never verified) has a "Verify
+   * wallet" button to retry with one press, rather than a dead end.
+   *
+   * First checks whether this is already proven (`verifyIfAlreadyProven`): a refresh, a
+   * new tab, or reconnecting the same wallet again doesn't need a fresh signature for
+   * something already established. This reads back a proof already made -- it does not
+   * loosen what counts as one -- and a different address, or nothing proven yet, falls
+   * straight through to the normal challenge/sign/verify round trip.
    */
-  const verifyWalletFor = useCallback(async (address: string) => {
-    setWalletVerifying(true);
+  const verifyWalletFor = useCallback(
+    async (address: string) => {
+      setWalletVerifying(true);
+      setWalletError(null);
+      try {
+        if (await verifyIfAlreadyProven(address)) return;
+        const { message } = await requestAuthChallenge(address);
+        const signature = await signMessage(message);
+        await verifyAuthChallenge(signature);
+        setWalletVerified(true);
+      } catch (e) {
+        setWalletError(e instanceof Error ? e.message : "Could not verify this wallet.");
+      } finally {
+        setWalletVerifying(false);
+      }
+    },
+    [verifyIfAlreadyProven]
+  );
+
+  /**
+   * A different account than a moment ago -- signing in, switching accounts, or signing
+   * all the way out -- must never keep showing a PREVIOUS Trader's wallet as connected
+   * or verified. `undefined` (not `null`) marks "haven't run yet", so the very first
+   * render (nothing was ever connected regardless) doesn't fire a pointless reset; every
+   * actual change after that does. Ordered before the reconnect effect below,
+   * deliberately: React runs one component's effects in declaration order within a
+   * commit, so any stale wallet from a previous account is always cleared before this
+   * account's own reconnect attempt (if any) has a chance to run.
+   */
+  const previousAccountIdRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const currentId = account?.userId ?? null;
+    const changed = previousAccountIdRef.current !== undefined && previousAccountIdRef.current !== currentId;
+    previousAccountIdRef.current = currentId;
+    if (!changed) return;
+    setWalletAddress(null);
+    setRecentWallet(null);
+    setWalletVerified(false);
+    setWalletVerifying(false);
     setWalletError(null);
-    try {
-      const { message } = await requestAuthChallenge(address);
-      const signature = await signMessage(message);
-      await verifyAuthChallenge(signature);
-      setWalletVerified(true);
-    } catch (e) {
-      setWalletError(e instanceof Error ? e.message : "Could not verify this wallet.");
-    } finally {
-      setWalletVerifying(false);
+  }, [account]);
+
+  /**
+   * Once an account is known: if a wallet was connected recently enough (a rolling
+   * few-hour idle window -- `recentConnectionWithinTtl`), silently reconnect it: no
+   * picker, no prompt, since the origin is already authorised and every real extension
+   * answers `eth_requestAccounts` instantly in that case. This includes WalletConnect --
+   * resuming its own session is the same local, cached-account check an extension's
+   * reconnect is; nothing about that step alone reaches a Trader's phone.
+   *
+   * Gated on `account` for two reasons: ADR-0014 requires signing in before wallet
+   * actions at all, and `recentConnectionWithinTtl`/`lastConnectedWalletId` now read
+   * `wallet.ts`'s account-scoped storage (`setWalletMemoryScope`, set synchronously
+   * alongside `setAccount` above) -- attempting this before the account is known would
+   * always see empty, unscoped storage and never retry once it resolves. Depending on
+   * `account` is what makes this effect run again the moment that scope is actually set.
+   *
+   * Only `verifyIfAlreadyProven` runs after, deliberately, never the full
+   * `verifyWalletFor`: this is a page-load effect nobody clicked, so it may only
+   * confirm a proof that already exists, never request a fresh signature on its own --
+   * that would mean WalletConnect could push a surprise notification to a Trader's
+   * phone before they have done anything at all. An address that isn't already proven
+   * just leaves `walletVerified` false, same as it would if this whole effect never
+   * ran -- AccountControl's ordinary "Verify wallet" retry button covers it from there.
+   *
+   * Falls back to the picker-only flow whenever nothing recent exists, the remembered
+   * wallet is no longer available, or the silent reconnect itself fails -- a Trader is
+   * never left with no way to connect just because this shortcut didn't.
+   */
+  useEffect(() => {
+    const showRecentWalletOption = () =>
+      void lastConnectedWalletId().then((id) => setRecentWallet(id ? walletOptionFor(id) : null));
+
+    if (!account) return;
+
+    const recentId = recentConnectionWithinTtl();
+    if (!recentId) {
+      showRecentWalletOption();
+      return;
     }
+    const seq = ++walletConnectSeqRef.current;
+    connectWalletById(recentId)
+      .then((address) => {
+        // A Trader who clicked something in the picker while this was still resolving
+        // already has priority -- see `walletConnectSeqRef`'s own comment. Applying a
+        // stale "Last used" result on top of their deliberate pick would be exactly the
+        // "stuck on the wrong wallet" bug this guard exists to prevent.
+        if (walletConnectSeqRef.current !== seq) return;
+        setWalletAddress(address);
+        void verifyIfAlreadyProven(address);
+      })
+      .catch(showRecentWalletOption);
+  }, [account, verifyIfAlreadyProven]);
+
+  const openWalletPicker = useCallback(() => {
+    setAvailableWallets(listAvailableWallets());
+    setWalletPickerOpen(true);
   }, []);
 
-  const connectWallet = useCallback(async () => {
-    setWalletConnecting(true);
-    setWalletError(null);
+  const closeWalletPicker = useCallback(() => setWalletPickerOpen(false), []);
+
+  // While the picker is open, extensions can still be announcing themselves (EIP-6963
+  // has no guaranteed single moment "every wallet has announced by now") -- this keeps
+  // the list current for as long as a Trader is looking at it.
+  useEffect(() => {
+    if (!walletPickerOpen) return;
+    return watchAvailableWallets(setAvailableWallets);
+  }, [walletPickerOpen]);
+
+  const pickWallet = useCallback(
+    async (walletId: string, options?: { fresh?: boolean }) => {
+      // Claimed before anything async, so an explicit pick always outranks whatever
+      // came before it -- the silent on-load reconnect included. See
+      // `walletConnectSeqRef`'s own comment for the failure this closes.
+      const seq = ++walletConnectSeqRef.current;
+      setWalletPickerOpen(false);
+      setWalletConnecting(true);
+      setWalletError(null);
+      setWalletVerified(false);
+      try {
+        const address = await connectWalletById(walletId, options);
+        if (walletConnectSeqRef.current !== seq) return; // superseded by a newer pick
+        setWalletAddress(address);
+        await verifyWalletFor(address);
+      } catch (e) {
+        if (walletConnectSeqRef.current !== seq) return;
+        // A Trader closing the wallet's own connect/QR dialog is a plain cancel, not a
+        // failure worth an error banner -- surfacing viem's raw rejection message here
+        // would read as a scary, jargon-filled error for what was just a closed dialog.
+        if (e instanceof WalletConnectionCancelled) return;
+        setWalletError(e instanceof Error ? e.message : "Could not connect a wallet.");
+      } finally {
+        // A superseded attempt must not clear the flag a newer, still-running one set.
+        if (walletConnectSeqRef.current === seq) setWalletConnecting(false);
+      }
+    },
+    [verifyWalletFor]
+  );
+
+  /**
+   * Lets a Trader manually forget the connected wallet -- e.g. after revoking the dApp
+   * on the wallet's own side -- rather than being stuck showing a stale address the
+   * wallet itself no longer recognises. Resets every piece of wallet state back to
+   * "nothing connected," the same starting point as a fresh page load.
+   */
+  const disconnectWallet = useCallback(async () => {
+    await disconnectWalletById();
+    setWalletAddress(null);
     setWalletVerified(false);
-    try {
-      const address = await connectInjectedWallet();
-      setWalletAddress(address);
-      await verifyWalletFor(address);
-    } catch (e) {
-      setWalletError(e instanceof Error ? e.message : "Could not connect a wallet.");
-    } finally {
-      setWalletConnecting(false);
-    }
-  }, [verifyWalletFor]);
+    setWalletVerifying(false);
+    setWalletError(null);
+  }, []);
 
   /**
    * The current proposal, against the Deck as it stands now.
@@ -747,6 +1052,10 @@ export function useSurface(): Surface {
     setRfqHorizonDaysState(14);
     setRfqSizeUsdcState(STAKE_USDC);
     setRfqRefusal(null);
+    setRfqStatus(null);
+    setRfqSettle(null);
+    setRfqReceipt(null);
+    rfqRequestIdRef.current = null;
     setRfqOpen(true);
   }, [direction]);
 
@@ -782,35 +1091,175 @@ export function useSurface(): Surface {
   );
 
   /**
-   * POST /rfq. Always answers 501 -- the sealed-bid backend is out of scope (issue
-   * #31) -- so there is no success branch to render, only the refusal's own sentence,
-   * shown the way the Card confirmation shows a Risk Budget refusal: never a fake
-   * pending state.
+   * The FIRST of two signatures: open a sealed-bid request on-chain (ADR-0017).
+   *
+   * Nothing is bought here and no premium is known -- an RFQ has no price until a maker
+   * answers. What the Trader commits to is the Reserve Price, which the backend holds
+   * against the Risk Budget from the moment this returns and which the OptionFactory
+   * itself enforces once the transaction lands.
+   *
+   * Deliberately shaped like `confirm` rather than like a form submit: prepare, send,
+   * then report the outcome so the chain -- not this browser -- decides whether it
+   * worked. A prepared request whose transaction never went has to be reported too, or
+   * its reservation sits on the Risk Budget until it times out.
    */
   const submitRfq = useCallback(async () => {
+    if (!walletAddress || !walletVerified) {
+      setRfqRefusal(
+        "Connect and verify your wallet first \u2014 opening a request needs a signature from your own wallet."
+      );
+      return;
+    }
     setRfqBusy(true);
     setRfqRefusal(null);
+    let prepared: PreparedRfq | null = null;
     try {
-      await requestRfq({
+      prepared = await requestRfq({
         underlying: asset,
         direction,
         strikeOffsetPct: rfqOffsetPct,
         horizonDays: rfqHorizonDays,
         sizeUsdc: rfqSizeUsdc,
+        walletAddress,
       });
+      const txHash = await sendTx(prepared.requestTx);
+
+      const confirmed = await confirmRfq(prepared.requestId, txHash);
+      if (!confirmed.opened || !confirmed.status) {
+        setRfqRefusal("The request did not open on-chain. No USDC moved. You can try again.");
+        return;
+      }
+      rfqRequestIdRef.current = prepared.requestId;
+      setRfqStatus(confirmed.status);
+      say(`Requested: ${confirmed.status.ask.sentence}`);
+      await refreshMoney();
     } catch (e) {
+      // Only report a decline if the request was actually prepared -- there is nothing to
+      // release otherwise. `/rfq` reserves the Reserve Price synchronously the moment it
+      // runs, so the displayed budget has to catch up on this path too, not just on
+      // success, or the Trader reads a budget that looks untouched.
+      if (prepared) {
+        await confirmRfq(prepared.requestId).catch(() => {});
+        await refreshMoney();
+      }
       if (e instanceof ApiRefusal) setRfqRefusal(e.message);
-      else throw e;
+      else setRfqRefusal(e instanceof Error ? e.message : "The wallet could not open this request.");
     } finally {
       setRfqBusy(false);
     }
-  }, [asset, direction, rfqOffsetPct, rfqHorizonDays, rfqSizeUsdc]);
+  }, [asset, direction, rfqOffsetPct, rfqHorizonDays, rfqSizeUsdc, walletAddress, walletVerified, say, refreshMoney]);
+
+  /**
+   * Poll the open request while it is still waiting.
+   *
+   * Stops the moment there is nothing left to learn -- settled, withdrawn, or nobody
+   * answered -- rather than running forever behind a dialog nobody is watching. The
+   * interval is generous because the offer window is measured in minutes and every tick
+   * costs an on-chain read plus an indexer call.
+   */
+  useEffect(() => {
+    const requestId = rfqRequestIdRef.current;
+    if (!requestId || !rfqStatus) return;
+    if (rfqStatus.phase === "SETTLED" || rfqStatus.phase === "CANCELLED" || rfqStatus.phase === "NO_OFFERS") return;
+
+    const controller = new AbortController();
+    const timer = setInterval(() => {
+      void getRfqStatus(requestId, controller.signal)
+        .then(setRfqStatus)
+        // A poll that fails is just a poll: the next one tries again, and turning a blip
+        // into a refusal on screen would tell the Trader something is wrong while the
+        // request sits on-chain doing exactly what it should.
+        .catch(() => {});
+    }, RFQ_POLL_MS);
+
+    return () => {
+      controller.abort();
+      clearInterval(timer);
+    };
+  }, [rfqStatus]);
+
+  /**
+   * The SECOND signature: accept a maker's own price and pay it.
+   *
+   * The premium the dialog shows comes from `prepareRfqSettle` and is the exact amount
+   * encoded into the transaction being signed, so the number confirmed and the number
+   * charged cannot differ -- and if the chain disagrees, it reverts rather than
+   * overcharging. ADR-0008 says no signature without a human confirmation, and a
+   * confirmation of a blank is not a confirmation.
+   */
+  const acceptRfq = useCallback(async () => {
+    const requestId = rfqRequestIdRef.current;
+    if (!requestId) return;
+    setRfqBusy(true);
+    setRfqRefusal(null);
+    let prepared: PreparedRfqSettle | null = null;
+    try {
+      prepared = await prepareRfqSettle(requestId);
+      setRfqSettle(prepared);
+      if (prepared.approveTx) await sendTx(prepared.approveTx);
+      const txHash = await sendTx(prepared.settleTx);
+
+      // The wallet has broadcast and mined this -- the money has moved. Everything from
+      // here is bookkeeping, so a failure to reach /rfq/settle must never be caught below
+      // and reported as a failed purchase.
+      const done = await settleRfq(requestId, txHash).catch(() => null);
+      if (done) setRfqStatus(done.status);
+
+      setRfqReceipt({
+        txHash,
+        optionAddress: done?.status.optionAddress ?? "",
+        explorerUrl: `${prepared.explorerTxUrlBase}${txHash}`,
+      });
+      say(
+        `Bought. ${prepared.ask.contracts.display} ${asset} contracts at ${prepared.ask.strike.display}, paid ${prepared.premiumUsdc.display}.`
+      );
+      await refreshMoney();
+    } catch (e) {
+      if (prepared) {
+        await settleRfq(requestId, undefined).catch(() => {});
+        await refreshMoney();
+      }
+      if (e instanceof ApiRefusal) setRfqRefusal(e.message);
+      else setRfqRefusal(e instanceof Error ? e.message : "The wallet could not complete this purchase.");
+    } finally {
+      setRfqBusy(false);
+    }
+  }, [asset, say, refreshMoney]);
+
+  /** Withdraw a request nobody answered, taking the commitment to pay back off the chain. */
+  const withdrawRfq = useCallback(async () => {
+    const requestId = rfqRequestIdRef.current;
+    if (!requestId) return;
+    setRfqBusy(true);
+    setRfqRefusal(null);
+    try {
+      const prepared = await prepareRfqCancel(requestId);
+      const txHash = await sendTx(prepared.cancelTx);
+      await cancelRfq(requestId, txHash).catch(() => {});
+      const status = await getRfqStatus(requestId).catch(() => null);
+      if (status) setRfqStatus(status);
+      await refreshMoney();
+    } catch (e) {
+      if (e instanceof ApiRefusal) setRfqRefusal(e.message);
+      else setRfqRefusal(e instanceof Error ? e.message : "The wallet could not withdraw this request.");
+    } finally {
+      setRfqBusy(false);
+    }
+  }, [refreshMoney]);
 
   /** Escape, the backdrop, or the close button. Focus returns to whichever door opened it. */
   const closeRfq = useCallback(() => {
     const opener = rfqOpenerElRef.current;
     setRfqOpen(false);
     setRfqRefusal(null);
+    // Dismissing the dialog forgets the request on THIS screen; it does not withdraw it.
+    // The request stays live on-chain until it settles, is withdrawn, or expires, and the
+    // Risk Budget goes on holding its Reserve Price -- which is the truth, and the
+    // opposite of what quietly releasing it here would imply.
+    setRfqStatus(null);
+    setRfqSettle(null);
+    setRfqReceipt(null);
+    rfqRequestIdRef.current = null;
     opener?.focus?.();
   }, []);
 
@@ -985,12 +1434,56 @@ export function useSurface(): Surface {
   );
 
   /**
+   * Clicking a Card (issue #30), or accepting an AI-matched order. Prices it at the
+   * default stake and opens the confirmation -- the only Confirm in the product now
+   * lives there, so this is the one deliberate act that puts a Trader in front of it.
+   *
+   * `on`, when given and different from what's currently selected, switches the
+   * coin/direction/expiry chips first -- the same raw setters `deal()` already uses
+   * directly, which arm the existing Deck-reload effect (lines 793-796) in the
+   * background. Not awaited: `ask()` below prices directly against `on`'s own fields,
+   * never against `deck` state, so the confirmation is correct immediately regardless
+   * of how long the background Deck refetch takes to catch up.
+   */
+  const pick = useCallback(
+    async (cardRef: string, on?: { underlying: UnderlyingSymbol; direction: Direction; horizonDays: number }) => {
+      if (busy) return;
+      // Before anything else: `busy` is about to go true, which disables this same
+      // Card's button in the same render that opens the confirmation. Capture it now,
+      // while it is still the enabled, focused element -- an effect inside the modal
+      // would run one render too late to see it.
+      openerElRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+      const askingAsset = on?.underlying ?? asset;
+      const askingDirection = on?.direction ?? direction;
+      const askingHorizon = on?.horizonDays ?? horizonDays;
+      if (askingAsset !== asset || askingDirection !== direction || askingHorizon !== horizonDays) {
+        expiryChosen.current = true;
+        setAssetState(askingAsset);
+        setDirectionState(askingDirection);
+        setHorizonState(askingHorizon);
+      }
+
+      setSizeUsdcState(STAKE_USDC);
+      setConfirmOpen(true);
+      const answer = await ask(cardRef, askingDirection, STAKE_USDC, { underlying: askingAsset, horizonDays: askingHorizon });
+      if (answer?.kind === "PROPOSAL" && answer.proposal.chosenBy === "TRADER") {
+        const f = answer.proposal.figures;
+        say(`Your pick: ${f.strike.display}, ${f.contracts.display} contracts for ${f.premiumUsdc.display}. Same checks either way.`);
+      }
+    },
+    [ask, busy, direction, say, asset, horizonDays]
+  );
+
+  /**
    * Natural language trade entry point: sends user's free text to /propose/chat,
    * updates active Deck/asset/direction/horizon/size, highlights the proposed Card,
    * explains the trade in chat, and opens the confirmation modal for human review.
    */
-  const dealPrompt = useCallback(
-    async (prompt: string) => {
+  const submitTradeMessage = useCallback(
+    async (text: string) => {
+      const prompt = text.trim();
+      if (!prompt) return;
       heard(prompt);
       setBusy(true);
       setRefusal(null);
@@ -1034,43 +1527,24 @@ export function useSurface(): Surface {
         }
         return answer;
       } catch (e) {
-        if (e instanceof ApiRefusal) {
-          setRefusal(e.message);
-          setResult(null);
-          shownQuote.current = { ref: null, premium: null };
-          say(e.message);
-          return null;
-        }
-        throw e;
+        const message =
+          e instanceof ApiRefusal
+            ? e.message
+            : e instanceof Error && (e.message.includes("Failed to fetch") || e.message.includes("fetch"))
+            ? "Could not reach the backend API server. Make sure `npm run dev` is running on port 3001."
+            : e instanceof Error
+            ? e.message
+            : "Could not process that trade.";
+        setRefusal(message);
+        setResult(null);
+        shownQuote.current = { ref: null, premium: null };
+        say(message);
+        return null;
       } finally {
         setBusy(false);
       }
     },
     [asset, clearSelection, direction, heard, horizonDays, loadDeck, say]
-  );
-
-  /**
-   * Clicking a Card (issue #30). Prices it at the default stake and opens the
-   * confirmation -- the only Confirm in the product now lives there, so this is the
-   * one deliberate act that puts a Trader in front of it.
-   */
-  const pick = useCallback(
-    async (cardRef: string) => {
-      if (busy) return;
-      // Before anything else: `busy` is about to go true, which disables this same
-      // Card's button in the same render that opens the confirmation. Capture it now,
-      // while it is still the enabled, focused element -- an effect inside the modal
-      // would run one render too late to see it.
-      openerElRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      setSizeUsdcState(STAKE_USDC);
-      setConfirmOpen(true);
-      const answer = await ask(cardRef, direction, STAKE_USDC);
-      if (answer?.kind === "PROPOSAL" && answer.proposal.chosenBy === "TRADER") {
-        const f = answer.proposal.figures;
-        say(`Your pick: ${f.strike.display}, ${f.contracts.display} contracts for ${f.premiumUsdc.display}. Same checks either way.`);
-      }
-    },
-    [ask, busy, direction, say]
   );
 
   /**
@@ -1194,24 +1668,35 @@ export function useSurface(): Surface {
     rfqSizeUsdc,
     rfqBusy,
     rfqRefusal,
+    rfqStatus,
+    rfqSettle,
+    rfqReceipt,
     session,
     board,
     boardLoading,
     receipt,
     busy,
     log,
+    account,
+    signOut,
     walletAddress,
     walletConnecting,
     walletVerified,
     walletVerifying,
     walletError,
-    connectWallet,
+    walletPickerOpen,
+    availableWallets,
+    recentWallet,
+    onOpenWalletPicker: openWalletPicker,
+    onCloseWalletPicker: closeWalletPicker,
+    onPickWallet: pickWallet,
     verifyWallet: () => (walletAddress ? verifyWalletFor(walletAddress) : Promise.resolve()),
+    onDisconnectWallet: () => void disconnectWallet(),
     setAsset,
     setDirection,
     setHorizon,
     deal,
-    dealPrompt,
+    submitTradeMessage,
     pick,
     setSize,
     confirm,
@@ -1222,8 +1707,9 @@ export function useSurface(): Surface {
     setRfqTenor,
     setRfqSize,
     submitRfq,
+    acceptRfq,
+    withdrawRfq,
     closeRfq,
-    say,
     reset,
   };
 }

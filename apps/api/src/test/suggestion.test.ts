@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 vi.mock("../thetanuts/client.js", async () => await import("./stub-client.js"));
+vi.mock("../supabase.js", async () => await import("./stub-supabase.js"));
 vi.mock("../supabase/riskProfiles.js", () => ({
   getRiskProfile: vi.fn(),
   setRiskProfile: vi.fn(),
@@ -17,9 +18,9 @@ vi.mock("../strategy/suggest.js", async (importOriginal) => {
 });
 
 import type { FastifyInstance } from "fastify";
-import { Wallet } from "ethers";
 import { buildApp } from "../app.js";
 import { resetStub } from "./stub-client.js";
+import { resetSupabaseStub, registerUser } from "./stub-supabase.js";
 import { getRiskProfile } from "../supabase/riskProfiles.js";
 import { fetchSuggestion, SuggestionUnavailable } from "../strategy/suggest.js";
 
@@ -27,37 +28,22 @@ const mockedGetProfile = vi.mocked(getRiskProfile);
 const mockedFetchSuggestion = vi.mocked(fetchSuggestion);
 
 let app: FastifyInstance;
-let sessionSeq = 0;
-const freshSession = () => `suggestion-${++sessionSeq}`;
 
-// A fixed, never-funded real wallet -- same reasoning as stub-client.ts's TRADER_WALLET.
-const WALLET_A = new Wallet("0x" + "2".repeat(64));
-
-/** Drives the challenge/verify round trip so a session's wallet counts as proven (ADR-0012). */
-async function proveWallet(app: FastifyInstance, session: string, wallet: Wallet): Promise<void> {
-  const challenge = await app.inject({
-    method: "POST", url: "/auth/challenge", headers: { "x-session-id": session },
-    payload: { walletAddress: wallet.address },
-  });
-  const { message } = challenge.json() as { message: string };
-  const signature = await wallet.signMessage(message);
-  await app.inject({
-    method: "POST", url: "/auth/verify", headers: { "x-session-id": session },
-    payload: { signature },
-  });
-}
+/** The one fake account this file signs in as (ADR-0017). */
+const ACCOUNT_TOKEN = "acct-token-1";
+const ACCOUNT_ID = "aaaaaaaa-0000-4000-8000-000000000001";
 
 beforeEach(async () => {
   resetStub();
+  resetSupabaseStub();
+  registerUser(ACCOUNT_TOKEN, { id: ACCOUNT_ID, email: "trader@example.com" });
   mockedGetProfile.mockReset();
   mockedFetchSuggestion.mockReset();
   app = await buildApp();
 });
 
-async function getSuggestion() {
-  const session = freshSession();
-  await proveWallet(app, session, WALLET_A);
-  return app.inject({ method: "GET", url: "/suggestion", headers: { "x-session-id": session } });
+function getSuggestion() {
+  return app.inject({ method: "GET", url: "/suggestion", headers: { "x-account-token": ACCOUNT_TOKEN } });
 }
 
 describe("GET /suggestion", () => {
@@ -75,11 +61,10 @@ describe("GET /suggestion", () => {
     expect(mockedFetchSuggestion).not.toHaveBeenCalled();
   });
 
-  it("looks up the profile keyed on the proven wallet lowercased", async () => {
+  it("looks up the profile keyed on the signed-in account", async () => {
     mockedGetProfile.mockResolvedValue(null);
     await getSuggestion();
-    // WALLET_A.address is checksummed (mixed-case); the lookup must be keyed lowercase.
-    expect(mockedGetProfile).toHaveBeenCalledWith(WALLET_A.address.toLowerCase());
+    expect(mockedGetProfile).toHaveBeenCalledWith(ACCOUNT_ID);
   });
 
   it("fetches a Suggestion for the saved profile", async () => {
@@ -102,8 +87,8 @@ describe("GET /suggestion", () => {
     expect(mockedFetchSuggestion).toHaveBeenCalledWith("balanced");
   });
 
-  it("401s with no verified wallet on the session, before loading a profile", async () => {
-    const res = await app.inject({ method: "GET", url: "/suggestion", headers: { "x-session-id": freshSession() } });
+  it("401s with no account signed in, before loading a profile", async () => {
+    const res = await app.inject({ method: "GET", url: "/suggestion" });
     expect(res.statusCode).toBe(401);
     expect(mockedGetProfile).not.toHaveBeenCalled();
     expect(mockedFetchSuggestion).not.toHaveBeenCalled();
