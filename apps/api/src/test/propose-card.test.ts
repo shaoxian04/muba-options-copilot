@@ -88,6 +88,76 @@ describe("POST /propose with a cardRef", () => {
     expect(proposal.strike).toBe(2440);
   });
 
+  /*
+   * Sizing in contracts instead of dollars.
+   *
+   * The confirmation offers both units and keeps them in step. The conversion belongs
+   * here rather than in the browser: a stake worked out in React is option economics
+   * derived outside this process, which is exactly what ADR-0006 exists to prevent --
+   * and it would then be the number that gets paid.
+   */
+  describe("sized in contracts", () => {
+    it("buys the contracts asked for, and reports the stake they cost", async () => {
+      const session = freshSession();
+      const { cards } = await deck(session);
+      const card = cards[0];
+
+      const res = await propose(session, { ...INTENT, cardRef: card.cardRef, contracts: 0.5 });
+      expect(res.statusCode).toBe(200);
+      const { proposal } = res.json();
+
+      expect(proposal.figures.contracts.value).toBe(0.5);
+      // These are fixed-price limit orders, so the inversion is exact rather than a fit:
+      // half a contract costs half of one contract's price.
+      expect(proposal.premiumUsdc).toBeCloseTo(card.perContractUsd.value * 0.5, 6);
+      // And the stake the intent carries is the one the server derived, not the $2 sent.
+      expect(proposal.intent.sizeUsdc).not.toBe(2);
+      expect(proposal.intent.sizeUsdc).toBeCloseTo(card.perContractUsd.value * 0.5, 6);
+    });
+
+    it("prices the same trade whichever unit it is asked in", async () => {
+      const session = freshSession();
+      const { cards } = await deck(session);
+      const card = cards[1];
+
+      const byDollars = (await propose(session, { ...INTENT, cardRef: card.cardRef, sizeUsdc: 4 })).json();
+      const asContracts = byDollars.proposal.figures.contracts.value;
+
+      const byContracts = (
+        await propose(session, { ...INTENT, cardRef: card.cardRef, contracts: asContracts })
+      ).json();
+
+      // Round-tripping through the other unit lands on the same trade, character for
+      // character -- which is what lets the two fields be one quantity.
+      expect(byContracts.proposal.figures.contracts).toEqual(byDollars.proposal.figures.contracts);
+      expect(byContracts.proposal.figures.premiumUsdc).toEqual(byDollars.proposal.figures.premiumUsdc);
+      expect(byContracts.proposal.figures.maxLossUsdc).toEqual(byDollars.proposal.figures.maxLossUsdc);
+    });
+
+    it("refuses a contract count with no Card to count against", async () => {
+      const session = freshSession();
+      await deck(session);
+
+      // "How much is 1.2 contracts" has no answer until an Order is named, so the route
+      // says so rather than quietly falling back to the dollar size beside it.
+      const res = await propose(session, { ...INTENT, contracts: 1.2 });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toMatch(/cardRef/);
+    });
+
+    it("still enforces the Risk Budget on the stake it derived", async () => {
+      const session = freshSession();
+      const { cards } = await deck(session);
+      const card = cards[0];
+
+      // Far more contracts than the $5 budget could pay for. The budget is checked on
+      // the DERIVED stake -- a contract count is not a way around it.
+      const res = await propose(session, { ...INTENT, cardRef: card.cardRef, contracts: 1000 });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toMatch(/Risk Budget/);
+    });
+  });
+
   it("marks the choice as the Trader's", async () => {
     const session = freshSession();
     const { cards } = await deck(session);

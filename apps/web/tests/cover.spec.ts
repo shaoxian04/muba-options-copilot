@@ -27,7 +27,7 @@ async function readLoan(page: import("@playwright/test").Page, address: string) 
   await page.goto("/cover");
   await page.fill("#addr", address);
   await page.click('button[type="submit"]');
-  await page.waitForSelector(".disclaimer");
+  await page.waitForSelector(".cvr-disclosure");
 }
 
 test.describe("the Cover surface on a quoted Loan", () => {
@@ -78,9 +78,12 @@ test.describe("the Cover surface on a quoted Loan", () => {
     await expect(disclosure).toContainText(q.loan.healthFactor.display);
     await expect(disclosure).toContainText(q.cover.tenorDays.display);
 
-    // No warnings on the healthy scenario, and the disclaimer renders verbatim.
+    // No warnings on the healthy scenario. The server's `disclaimer` is deliberately not
+    // rendered any more -- it repeated what WHAT IT COSTS already says -- so assert its
+    // ABSENCE, which is the thing that could regress by someone re-adding the paragraph.
     await expect(page.locator(".cvr-warn")).toHaveCount(0);
-    await expect(page.locator(".disclaimer")).toHaveText(q.disclaimer);
+    await expect(page.locator(".disclaimer")).toHaveCount(0);
+    await expect(page.getByText(q.disclaimer)).toHaveCount(0);
   });
 
   test("renders the cbBTC Loan's figures exactly, including the 8-decimal token amount", async ({ page }) => {
@@ -105,7 +108,7 @@ test.describe("the Cover surface on a quoted Loan", () => {
     await expect(page.locator(".verdict")).toBeVisible();
     await expect(page.locator(".verdict .v.hero")).toHaveText(q.loan.healthFactor.display);
     await expect(page.locator(".sheets")).toBeVisible();
-    await expect(page.locator(".disclaimer")).toHaveText(q.disclaimer);
+    await expect(page.locator(".cvr-disclosure")).toBeVisible();
   });
 
   test("the health factor is the largest figure on the page", async ({ page }) => {

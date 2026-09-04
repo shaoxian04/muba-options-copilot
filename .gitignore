@@ -25,3 +25,6 @@ apps/agents/data/
 .mcp.json
 # playwright-mcp writes screenshots and snapshots here
 .playwright-mcp/
+
+# Playwright writes traces, screenshots and .last-run.json here
+test-results/
