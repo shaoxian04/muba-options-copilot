@@ -561,8 +561,17 @@ export function useSurface(): Surface {
    * Comparing the strings rather than the values is deliberate: the Trader was shown a
    * string, and "the price moved" means the string they would read has changed. Two
    * values that differ in the seventh decimal are not a moved quote.
+   *
+   * The string compared is the PER-CONTRACT price, never the total premium. The total is
+   * a function of the stake as well as the market -- a $5 stake buys about $5 of premium
+   * and a $2 stake about $2 -- while this background poll always prices the Deck at
+   * `STAKE_USDC`. Comparing totals therefore measured the stepper, not the book: the
+   * instant a Trader moved the size off the default, the next tick read "$2.00" against
+   * a remembered "$5.00", declared the quote moved, and disabled Confirm for good on a
+   * book that had not budged. Per-contract is what actually moves with spot and vol, and
+   * it means the same thing at every size.
    */
-  const shownQuote = useRef<{ ref: string | null; premium: string | null }>({ ref: null, premium: null });
+  const shownQuote = useRef<{ ref: string | null; perContract: string | null }>({ ref: null, perContract: null });
 
   /**
    * The Card that opened the confirmation (issue #30), so `closeConfirm` can give focus
@@ -622,10 +631,10 @@ export function useSurface(): Surface {
           if (fullest !== null && fullest !== h) setHorizonState(fullest);
         }
 
-        const { ref, premium } = shownQuote.current;
-        if (ref && premium !== null) {
+        const { ref, perContract } = shownQuote.current;
+        if (ref && perContract !== null) {
           const card = next.cards.find((c) => c.cardRef === ref);
-          setQuoteMoved(!card || card.premiumUsdc.display !== premium);
+          setQuoteMoved(!card || card.perContractUsd.display !== perContract);
         }
         return next;
       } catch (e) {
@@ -728,7 +737,7 @@ export function useSurface(): Surface {
     setConfirmOpen(false);
     setSizeUsdcState(STAKE_USDC);
     setPracticeDone(false);
-    shownQuote.current = { ref: null, premium: null };
+    shownQuote.current = { ref: null, perContract: null };
   }, []);
 
   /**
@@ -1056,16 +1065,16 @@ export function useSurface(): Surface {
         if (answer.kind === "PROPOSAL") {
           setSelectedRef(answer.cardRef);
           if (answer.proposal.chosenBy === "AGENT") setDealtRef(answer.cardRef);
-          shownQuote.current = { ref: answer.cardRef, premium: answer.proposal.figures.premiumUsdc.display };
+          shownQuote.current = { ref: answer.cardRef, perContract: answer.proposal.figures.perContractUsd.display };
         } else {
-          shownQuote.current = { ref: null, premium: null };
+          shownQuote.current = { ref: null, perContract: null };
         }
         return answer;
       } catch (e) {
         if (e instanceof ApiRefusal) {
           setRefusal(e.message);
           setResult(null);
-          shownQuote.current = { ref: null, premium: null };
+          shownQuote.current = { ref: null, perContract: null };
           return null;
         }
         throw e;

@@ -788,6 +788,37 @@ test.describe("finishing, for real and for practice", () => {
     await connectWallet(page);
     await expect(page.getByTestId("confirm")).toBeEnabled();
   });
+
+  test("changing the size is not a moved quote", async ({ page }) => {
+    // The guard used to compare the proposal's TOTAL premium against the Deck Card's.
+    // The total is a function of the stake as well as the book -- a $5 stake buys about
+    // $5 of premium -- while the background poll always prices the Deck at the default
+    // $2. So a Trader who touched the stepper had "$5.00" compared against "$2.00" on
+    // the very next tick, was told the price moved on a book that had not budged, and
+    // could never confirm at any size but the default. Per-contract is what the market
+    // moves and it reads the same at every stake.
+    const traffic = await stubApi(page);
+    await installFakeWallet(page);
+    await page.goto("/");
+    await deal(page);
+    await openConfirm(page, agentCard);
+    await connectWallet(page);
+
+    await page.getByTestId("size-preset-5").click();
+    await expect(page.getByTestId("size-value")).toHaveText("$5.00");
+
+    // Two full poll cycles against an unchanged book.
+    await page.clock.runFor(13000);
+
+    await expect(page.getByTestId("quote-moved")).toHaveCount(0);
+    await expect(page.getByTestId("confirm")).toBeEnabled();
+
+    // And the guard still bites when the book genuinely reprices under that same size.
+    traffic.moveTheQuote();
+    await page.clock.runFor(7000);
+    await expect(page.getByTestId("quote-moved")).toBeVisible();
+    await expect(page.getByTestId("confirm")).toBeDisabled();
+  });
 });
 
 test.describe("the Risk Budget refusing", () => {

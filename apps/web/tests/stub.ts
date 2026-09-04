@@ -236,10 +236,22 @@ const deckFor = (url: URL) => {
  *
  * Only the string is changed, because only the string is what a Trader was shown -- the
  * surface compares what they READ, not a value seven decimals down.
+ *
+ * Both figures move, because a real reprice moves both. `perContractUsd` is the one the
+ * staleness check actually reads: the total premium is a function of the stake as much
+ * as of the book, so comparing totals declared a moved quote every time a Trader touched
+ * the size stepper. Moving the total here too keeps the fixture honest rather than
+ * describing a book that repriced one figure and not the other.
  */
-const reprice = <T extends { cards: Array<{ premiumUsdc: { value: number; display: string } }> }>(deck: T): T => ({
+const reprice = <T extends {
+  cards: Array<{ perContractUsd: { value: number; display: string }; premiumUsdc: { value: number; display: string } }>;
+}>(deck: T): T => ({
   ...deck,
-  cards: deck.cards.map((c) => ({ ...c, premiumUsdc: { ...c.premiumUsdc, display: "$2.15" } })),
+  cards: deck.cards.map((c) => ({
+    ...c,
+    perContractUsd: { ...c.perContractUsd, display: "$2.23" },
+    premiumUsdc: { ...c.premiumUsdc, display: "$2.15" },
+  })),
 });
 
 /**
