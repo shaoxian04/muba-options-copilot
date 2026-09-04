@@ -457,4 +457,5 @@ export const getAccountActivity = (): Promise<AccountActivityResponse> =>
   call<AccountActivityResponse>("/account/activity");
 
 /** The History tab: every real Fill this account made, newest first (ADR-0018). */
-export const getHistory = (): Promise<HistoryResponse> => call<HistoryResponse>("/history");
+export const getHistory = (): Promise<HistoryResponse> =>
+  call<HistoryResponse>("/history", { headers: authHeaders() });

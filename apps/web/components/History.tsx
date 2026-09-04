@@ -84,8 +84,11 @@ export function History({ items, loading }: { items: HistoryItem[]; loading: boo
     );
   }
 
+  // tabIndex on a scrolling list: `.board` is overflow-x, and on a phone these cards run
+  // past the edge. Without it a keyboard can't scroll to the ones off-screen -- axe's
+  // scrollable-region-focusable, which the browser suite fails on.
   return (
-    <ul className="board" data-testid="history" aria-label="Your settled Fills">
+    <ul className="board" data-testid="history" aria-label="Your settled Fills" tabIndex={0}>
       {items.map((item, i) => (
         <HistoryRow key={`${item.txHash}-${item.optionAddress ?? "na"}-${item.filledAt.value}-${i}`} item={item} />
       ))}
