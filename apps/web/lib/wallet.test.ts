@@ -408,10 +408,10 @@ describe("disconnectWallet", () => {
     await expect(disconnectWallet()).resolves.toBeUndefined();
   });
 
-  describe("forgetting the 'last used' pointer, so the silent reconnect has nothing left to retry", () => {
+  describe("marking the 'last used' entry disconnected, without forgetting the wallet", () => {
     afterEach(() => vi.unstubAllGlobals());
 
-    it("clears the remembered connection and the WalletConnect peer cache", async () => {
+    it("stops the silent reconnect, but keeps offering the wallet as the picker's 'Last used'", async () => {
       stubBrowserLocalStorage();
       vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
       vi.mocked(getConnection).mockReturnValue({
@@ -423,25 +423,32 @@ describe("disconnectWallet", () => {
       } as unknown as ReturnType<typeof getConnection>);
       await connectWallet("walletConnect");
       expect(recentConnectionWithinTtl()).toBe("walletConnect");
-      expect(walletOptionFor("walletConnect").name).toBe("OKX Wallet");
 
       vi.mocked(disconnect).mockResolvedValueOnce(undefined);
       await disconnectWallet();
 
-      // Disconnecting is a deliberate "stop assuming this wallet" signal -- the silent
-      // on-load reconnect (surface.ts) must have nothing left to find, and the picker's
-      // "Last used" should go back to offering nothing rather than a stale wallet the
-      // Trader just walked away from.
+      // "I'm done with this wallet for now" is not "forget this wallet ever existed":
+      // only the automatic path honours the disconnect.
       expect(recentConnectionWithinTtl()).toBeNull();
-      await expect(lastConnectedWalletId()).resolves.toBeNull();
-      expect(walletOptionFor("walletConnect")).toEqual({
-        id: "walletConnect",
-        name: "WalletConnect",
-        icon: WALLETCONNECT_ICON,
-      });
+      await expect(lastConnectedWalletId()).resolves.toBe("walletConnect");
+      expect(walletOptionFor("walletConnect").name).toBe("OKX Wallet");
     });
 
-    it("still clears the pointer even when the SDK-level disconnect itself fails", async () => {
+    it("lets a fresh connect clear the flag, so the silent reconnect resumes", async () => {
+      stubBrowserLocalStorage();
+      vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
+      await connectWallet("walletConnect");
+      vi.mocked(disconnect).mockResolvedValueOnce(undefined);
+      await disconnectWallet();
+      expect(recentConnectionWithinTtl()).toBeNull();
+
+      vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
+      await connectWallet("walletConnect");
+
+      expect(recentConnectionWithinTtl()).toBe("walletConnect");
+    });
+
+    it("still marks it even when the SDK-level disconnect itself fails", async () => {
       stubBrowserLocalStorage();
       vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
       await connectWallet("walletConnect");
@@ -453,7 +460,18 @@ describe("disconnectWallet", () => {
       expect(recentConnectionWithinTtl()).toBeNull();
     });
 
-    it("does nothing with no account scope set -- there is nothing to clear", async () => {
+    it("treats an entry written before the flag existed as still connected", () => {
+      stubBrowserLocalStorage();
+      // No `disconnected` field at all -- exactly what earlier builds wrote.
+      window.localStorage.setItem(
+        `${LAST_CONNECTION_KEY}:${TEST_ACCOUNT_ID}`,
+        JSON.stringify({ id: "io.metamask", connectedAt: Date.now() })
+      );
+
+      expect(recentConnectionWithinTtl()).toBe("io.metamask");
+    });
+
+    it("does nothing with no account scope set -- there is nothing to mark", async () => {
       stubBrowserLocalStorage(null);
       vi.mocked(disconnect).mockResolvedValueOnce(undefined);
       await expect(disconnectWallet()).resolves.toBeUndefined();

@@ -1087,13 +1087,22 @@ test.describe("wallet connection survives a refresh, within a TTL", () => {
     await expect(page.getByTestId("connect-wallet")).toBeVisible();
 
     // No backdating here, deliberately: this is seconds-old, deep inside the TTL window
-    // -- if disconnecting hadn't cleared the "last used" pointer, the silent reconnect
+    // -- if disconnecting hadn't marked the "last used" entry, the silent reconnect
     // would fire right back on this very reload. It must not.
     await page.reload();
 
     await expect(page.getByTestId("connect-wallet")).toBeVisible();
     await expect(page.getByTestId("connect-wallet")).toBeEnabled();
     await expect(page.getByTestId("wallet-address")).toHaveCount(0);
+
+    // ...but the wallet itself is still remembered: disconnecting stops this app
+    // connecting on its own, it does not forget the wallet a Trader may want back.
+    await page.getByTestId("connect-wallet").click();
+    await expect(page.getByTestId("wallet-option-recent")).toContainText("Fake Wallet 1");
+
+    // And pressing it reconnects, which also clears the disconnected mark.
+    await page.getByTestId("wallet-option-recent").click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
   });
 
   test("reconnects and re-verifies silently within the window -- no picker, no Verify click", async ({ page }) => {

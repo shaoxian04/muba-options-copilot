@@ -798,12 +798,14 @@ export function useSurface(): Surface {
    * `wallet.ts` now disables that check outright (this app is permanently single-chain).
    * See that fix's own comment for the full story.
    *
-   * The other real gap this closes: `disconnectWallet` (wallet.ts) now forgets the "last
-   * used" pointer entirely on disconnect, specifically so THIS effect has nothing left to
-   * retry afterward -- without that, a Trader who disconnected would otherwise keep
-   * getting silently re-attempted (and, for WalletConnect, re-prompted with a pairing QR
-   * every single time, since disconnecting genuinely ends the underlying session) on
-   * every tab switch or reload until the TTL happened to lapse on its own.
+   * The other real gap this closes: `disconnectWallet` (wallet.ts) marks the "last used"
+   * entry as disconnected, and `recentConnectionWithinTtl` skips it, specifically so THIS
+   * effect has nothing to retry afterward -- without that, a Trader who disconnected would
+   * keep getting silently re-attempted (and, for WalletConnect, re-prompted with a pairing
+   * QR every single time, since disconnecting genuinely ends the underlying session) on
+   * every tab switch or reload until the TTL happened to lapse on its own. The entry is
+   * marked rather than deleted so the picker below still offers that wallet as its
+   * one-press "Last used" -- only the automatic path honours the flag.
    *
    * Gated on `accountId` for two reasons: ADR-0014 requires signing in before wallet
    * actions at all, and `recentConnectionWithinTtl`/`lastConnectedWalletId` now read
