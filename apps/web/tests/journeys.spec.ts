@@ -357,7 +357,86 @@ test.describe("size: presets, the stepper, and the cap", () => {
     // browser, re-read off the server's fresh answer.
     await expect(page.getByTestId("max-loss")).not.toHaveText(before!);
     await expect(page.getByTestId("max-loss")).toHaveText("$5.00");
-    await expect(page.getByTestId("size-value")).toHaveText("$5.00");
+    // The stake field is typeable now, so it carries the amount as a value rather than
+    // as text -- and it carries the STAKE the Trader chose, not the premium beside it.
+    await expect(page.getByTestId("size-value")).toHaveValue("5");
+  });
+
+  test("the stake can be typed, and it re-prices on Enter -- not on every keystroke", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await openConfirm(page, agentCard);
+
+    const proposals = () => traffic.paths().filter((p) => p === "/propose").length;
+    const before = proposals();
+
+    const field = page.getByTestId("size-value");
+    await field.fill("7");
+    // Every keystroke is a real Thetanuts pricing call server-side, so typing sends
+    // nothing. The field holds the draft and the book has not been asked anything.
+    expect(proposals()).toBe(before);
+
+    await field.press("Enter");
+    await expect.poll(proposals).toBe(before + 1);
+
+    const last = traffic.all.filter((r) => new URL(r.url()).pathname === "/propose").at(-1)!;
+    expect(last.postDataJSON()).toMatchObject({ cardRef: agentCard, sizeUsdc: 7 });
+    await expect(page.getByTestId("max-loss")).toHaveText("$7.00");
+  });
+
+  test("arrow keys step the stake without leaving the field", async ({ page }) => {
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await openConfirm(page, agentCard);
+
+    const field = page.getByTestId("size-value");
+    await field.focus();
+    await field.press("ArrowUp");
+
+    await expect.poll(() => traffic.paths().filter((p) => p === "/propose").length).toBeGreaterThanOrEqual(2);
+    await expect(field).toHaveValue("2.5");
+    await expect(field).toBeFocused();
+
+    await field.press("ArrowDown");
+    await expect(field).toHaveValue("2");
+    await expect(field).toBeFocused();
+  });
+
+  test("the contract count is typeable too, and the stake follows it", async ({ page }) => {
+    // The two fields are one quantity in two units. Neither is converted in the browser:
+    // the count goes to the server, the server prices the Order at that many contracts,
+    // and the stake field is set from the intent on the answer.
+    const traffic = await stubApi(page);
+    await page.goto("/");
+    await openConfirm(page, agentCard);
+
+    // The fixture Card is $2.08 per contract, so two contracts is a $4.16 stake.
+    await page.getByTestId("contracts-input").fill("2");
+    await page.getByTestId("contracts-input").press("Enter");
+
+    await expect.poll(() => traffic.paths().filter((p) => p === "/propose").length).toBeGreaterThanOrEqual(2);
+    const last = traffic.all.filter((r) => new URL(r.url()).pathname === "/propose").at(-1)!;
+    // Sent as contracts. The browser did not work out what that costs.
+    expect(last.postDataJSON()).toMatchObject({ cardRef: agentCard, contracts: 2 });
+
+    await expect(page.getByTestId("size-value")).toHaveValue("4.16");
+    await expect(page.getByTestId("max-loss")).toHaveText("$4.16");
+  });
+
+  test("moving the stake moves the contract count -- the link runs both ways", async ({ page }) => {
+    await stubApi(page);
+    await page.goto("/");
+    await openConfirm(page, agentCard);
+
+    const contracts = page.getByTestId("contracts-input");
+    const opening = await contracts.inputValue();
+
+    await page.getByTestId("size-preset-10").click();
+
+    await expect(page.getByTestId("size-value")).toHaveValue("10");
+    await expect(contracts).not.toHaveValue(opening);
+    // $10 at the fixture's $2.08 per contract, to the six decimals contracts carry.
+    await expect(contracts).toHaveValue("4.807690");
   });
 
   test("the stepper recomputes every figure the same way", async ({ page }) => {
@@ -782,6 +861,38 @@ test.describe("finishing, for real and for practice", () => {
     await expect(page.getByTestId("quote-moved")).toHaveCount(0);
     await expect(page.getByTestId("quote-refreshed")).toHaveCount(0);
     await expect(page.getByTestId("confirm")).toBeEnabled();
+  });
+
+  test("changing the size is not a moved quote", async ({ page }) => {
+    // The guard used to compare the proposal's TOTAL premium against the Deck Card's.
+    // The total is a function of the stake as well as the book -- a $5 stake buys about
+    // $5 of premium -- while the background poll always prices the Deck at the default
+    // $2. So a Trader who touched the stepper had "$5.00" compared against "$2.00" on
+    // the very next tick, was told the price moved on a book that had not budged, and
+    // could never confirm at any size but the default. Per-contract is what the market
+    // moves and it reads the same at every stake.
+    const traffic = await stubApi(page);
+    await installFakeWallet(page);
+    await page.goto("/");
+    // Sign in and connect BEFORE the confirmation opens: `AccountControl` sits outside
+    // the modal, and the modal's scrim would cover it once one is up.
+    await connectWallet(page);
+    await openConfirm(page, agentCard);
+
+    await page.getByTestId("size-preset-5").click();
+    await expect(page.getByTestId("size-value")).toHaveValue("5");
+
+    // Two full poll cycles against an unchanged book.
+    await page.clock.runFor(13000);
+
+    await expect(page.getByTestId("quote-moved")).toHaveCount(0);
+    await expect(page.getByTestId("confirm")).toBeEnabled();
+
+    // And the guard still bites when the book genuinely reprices under that same size.
+    traffic.moveTheQuote();
+    await page.clock.runFor(7000);
+    await expect(page.getByTestId("quote-moved")).toBeVisible();
+    await expect(page.getByTestId("confirm")).toBeDisabled();
   });
 });
 

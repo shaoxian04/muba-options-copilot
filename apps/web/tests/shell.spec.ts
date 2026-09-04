@@ -7,7 +7,7 @@
  *      carries `aria-current="page"` — axe-core checks contrast etc., and the attribute
  *      is what makes it machine-readable beyond colour.
  *
- *   2. The /cover page scrolls to its final disclaimer at both a desktop and a phone
+ *   2. The /cover page scrolls to the foot of its quote at both a desktop and a phone
  *      viewport, with no horizontal overflow at either width. This was impossible before
  *      this ticket because `body { overflow: hidden }` clipped everything past the fold.
  *
@@ -125,33 +125,35 @@ test.describe("application shell header", () => {
 test.describe("/cover scrollability", () => {
   /**
    * Fill in the address field and submit the form so the page renders the full quote —
-   * the panels, warnings, and the disclaimer at the very bottom.
+   * the panels, the warnings, and the Aave disclosure at the very bottom.
    */
   async function loadQuote(page: import("@playwright/test").Page) {
     await stubApi(page);
     await page.goto("/cover");
     await page.fill("#addr", "0x1234567890abcdef1234567890abcdef12345678");
     await page.click('button[type="submit"]');
-    // Wait for the disclaimer to appear — it is the last thing rendered when a QUOTE lands.
-    await page.waitForSelector(".disclaimer");
+    // The Aave disclosure is the last thing rendered when a QUOTE lands. It took over as
+    // the page's foot from the server disclaimer, which no longer renders — it repeated
+    // what the WHAT IT COSTS panel already says.
+    await page.waitForSelector(".cvr-disclosure");
   }
 
-  test("scrolls to the disclaimer at a desktop viewport (1280x800)", async ({ page }) => {
+  test("scrolls to the foot of the quote at a desktop viewport (1280x800)", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await loadQuote(page);
 
-    const disclaimer = page.locator(".disclaimer");
-    await disclaimer.scrollIntoViewIfNeeded();
-    await expect(disclaimer).toBeInViewport();
+    const foot = page.locator(".cvr-disclosure");
+    await foot.scrollIntoViewIfNeeded();
+    await expect(foot).toBeInViewport();
   });
 
-  test("scrolls to the disclaimer at a phone viewport (390x844)", async ({ page }) => {
+  test("scrolls to the foot of the quote at a phone viewport (390x844)", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await loadQuote(page);
 
-    const disclaimer = page.locator(".disclaimer");
-    await disclaimer.scrollIntoViewIfNeeded();
-    await expect(disclaimer).toBeInViewport();
+    const foot = page.locator(".cvr-disclosure");
+    await foot.scrollIntoViewIfNeeded();
+    await expect(foot).toBeInViewport();
   });
 
   test("has no horizontal overflow at a desktop viewport", async ({ page }) => {
