@@ -21,7 +21,7 @@ import type { Figure } from "@copilot/shared";
 import { getClient } from "./client.js";
 import { fromPrice } from "./units.js";
 import { underlyingForFeed, type Underlying } from "./underlyings.js";
-import { cached, OPEN_INTEREST_TTL_MS } from "./upstream.js";
+import { cached, withTimeout, OPEN_INTEREST_TTL_MS, UPSTREAM_TIMEOUT_MS } from "./upstream.js";
 import { count } from "../format.js";
 
 /**
@@ -47,10 +47,12 @@ export async function openInterest(underlying: Underlying): Promise<OpenInterest
   // Shared across every viewer and held for minutes, not seconds. This is the single
   // most expensive call in the app -- fifteen thousand all-time Positions, ~3s -- for the
   // least sensitive number on the surface, so it is the one that most needed sharing.
-  const state: any = await cached("book:state", OPEN_INTEREST_TTL_MS, async () => {
-    const api = getClient().api as any;
-    return (await api.getBookState?.()) ?? null;
-  });
+  const state: any = await cached("book:state", OPEN_INTEREST_TTL_MS, () =>
+    withTimeout("getBookState", UPSTREAM_TIMEOUT_MS, async () => {
+      const api = getClient().api as any;
+      return (await api.getBookState?.()) ?? null;
+    })
+  );
   const positions: any[] = Object.values(state?.positions ?? {});
 
   for (const p of positions) {

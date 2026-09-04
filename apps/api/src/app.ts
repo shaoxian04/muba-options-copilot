@@ -705,7 +705,16 @@ export async function buildApp(): Promise<FastifyInstance> {
         return;
       }
       const userId = await optionalAccountId(req);
-      if (userId) void logActivity(userId, "fill_settled", { proposalId, txHash, confirmed: verification.succeeded });
+      if (userId) {
+        // AWAITED, unlike the best-effort preference logging elsewhere. This row carries
+        // the txHash of a transaction that moved real USDC and is the record a dispute
+        // turns on -- see DURABLE_ACTIVITY. A failure here must not fail the request (the
+        // fill already happened and the Trader needs to be told), but it must be loud
+        // rather than a console.warn nobody reads.
+        await logActivity(userId, "fill_settled", { proposalId, txHash, confirmed: verification.succeeded }).catch(
+          (e) => req.log.error({ err: e, proposalId, txHash }, "Failed to record fill_settled")
+        );
+      }
       return { remainingUsdc: remainingBudget(s), confirmed: verification.succeeded };
     } catch (e) {
       reply.code(502).send(safeErrorResponse(req.log, e, "Could not verify that transaction. Try again."));

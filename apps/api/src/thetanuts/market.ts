@@ -7,7 +7,7 @@
  */
 import { getClient } from "./client.js";
 import { requireUnderlying, SYMBOLS } from "./underlyings.js";
-import { cached, BOOK_TTL_MS } from "./upstream.js";
+import { cached, withTimeout, BOOK_TTL_MS, UPSTREAM_TIMEOUT_MS } from "./upstream.js";
 import type { ReadOptions } from "./orders.js";
 
 /**
@@ -20,10 +20,11 @@ import type { ReadOptions } from "./orders.js";
  * `fresh` bypasses it for the money path, exactly as `buyableOrders` does: the spot a
  * Settlement Scenario ladder is drawn against must be the one read at commit time.
  */
-const marketData = ({ fresh }: { fresh: boolean }): Promise<any> =>
-  fresh
-    ? (getClient().api.getMarketData() as Promise<any>)
-    : cached("market:data", BOOK_TTL_MS, () => getClient().api.getMarketData() as Promise<any>);
+const marketData = ({ fresh }: { fresh: boolean }): Promise<any> => {
+  const read = () =>
+    withTimeout("getMarketData", UPSTREAM_TIMEOUT_MS, () => getClient().api.getMarketData() as Promise<any>);
+  return fresh ? read() : cached("market:data", BOOK_TTL_MS, read);
+};
 
 /** Every price the protocol is quoting, keyed by symbol. One fetch, six answers. */
 export async function spotPrices({ fresh = false }: ReadOptions = {}): Promise<Record<string, number>> {

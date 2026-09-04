@@ -96,3 +96,50 @@ export function __resetUpstreamCache(): void {
   entries.clear();
   inflight.clear();
 }
+
+/**
+ * An upstream read took too long and was abandoned.
+ *
+ * Distinct from a refusal so the caller can say "the market data service is slow" rather
+ * than inventing a market condition -- the failure mode this codebase has to work hardest
+ * to avoid is anything that renders as an ordinary quiet book.
+ */
+export class UpstreamTimeout extends Error {
+  constructor(what: string, ms: number) {
+    super(`Upstream read "${what}" did not answer within ${ms}ms.`);
+    this.name = "UpstreamTimeout";
+  }
+}
+
+/**
+ * Bound an upstream read.
+ *
+ * The SDK's indexer calls -- `fetchOrders`, `getMarketData`, `getBookState` -- are plain
+ * HTTP and do not go through the ethers provider, so the provider timeout in `client.ts`
+ * does nothing for them. Nothing bounded them at all: only `forecast/marketData.ts` had a
+ * timeout, and it covers the Forecast routes alone. A hung read held a Fastify connection
+ * open indefinitely, and the browser aborting its own request did nothing about the
+ * server-side work still running behind it.
+ *
+ * Note this abandons the WAIT, not the work -- there is no cancellation to hand the SDK.
+ * That is still the right trade: the connection is freed, the caller gets an honest error,
+ * and a stray late response resolves into nothing.
+ */
+export function withTimeout<T>(what: string, ms: number, run: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new UpstreamTimeout(what, ms)), ms);
+    run().then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      }
+    );
+  });
+}
+
+/** How long any single upstream read may take. Matches the RPC timeout for one story. */
+export const UPSTREAM_TIMEOUT_MS = Number(process.env.THETANUTS_RPC_TIMEOUT_MS ?? 15_000);

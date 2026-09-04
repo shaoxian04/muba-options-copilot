@@ -9,7 +9,7 @@ import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
 import { getClient } from "./client.js";
 import { USDC } from "./units.js";
 import { requireUnderlying, underlyingForFeed, type Underlying } from "./underlyings.js";
-import { cached, BOOK_TTL_MS } from "./upstream.js";
+import { cached, withTimeout, BOOK_TTL_MS, UPSTREAM_TIMEOUT_MS } from "./upstream.js";
 
 /** OptionTypeEnum: 0 = call, 1 = put. */
 export const CALL = 0;
@@ -164,10 +164,11 @@ export interface ReadOptions {
  * also why this is worth doing -- the same payload was being fetched once per route, per
  * poll, per tab.
  */
-const fetchBook = ({ fresh }: { fresh: boolean }): Promise<OrderWithSignature[]> =>
-  fresh
-    ? getClient().api.fetchOrders()
-    : cached("orders:all", BOOK_TTL_MS, () => getClient().api.fetchOrders());
+const fetchBook = ({ fresh }: { fresh: boolean }): Promise<OrderWithSignature[]> => {
+  // Bounded on BOTH paths. The money path skips the cache, never the timeout.
+  const read = () => withTimeout("fetchOrders", UPSTREAM_TIMEOUT_MS, () => getClient().api.fetchOrders());
+  return fresh ? read() : cached("orders:all", BOOK_TTL_MS, read);
+};
 
 /**
  * The door itself: the checks every Order must pass, wherever it is being read for.
