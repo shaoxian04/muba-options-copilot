@@ -10,6 +10,15 @@ on:
     branches: ["**"]
   pull_request:
 
+# Least privilege for the automatic GITHUB_TOKEN. This workflow only reads the
+# repository and uploads artifacts (which needs no repo write), so nothing here has any
+# use for the write scopes a repository's default setting may otherwise hand it. Stated
+# explicitly rather than inherited, for the same reason the actions above are pinned by
+# SHA: a workflow's blast radius should be a property of the workflow, not of a
+# repository setting someone can change without touching this file.
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -49,7 +58,7 @@ jobs:
       # CI step, so apps/agents was green by never having run -- including
       # test_profiles.py, which covers the Strategy Agent boundary ADR-0005 depends on.
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
