@@ -60,6 +60,9 @@ import {
   recallRfq,
   releaseRfq,
   rememberRfq,
+  persistRfq,
+  updateRfq,
+  rehydrateRfqs,
   remainingBudget,
   sessionFor,
   settleRfq,
@@ -291,7 +294,15 @@ const quietStatus = (record: RfqRecord): RfqStatus =>
  * reasoning `resolveCard` documents. A caller cannot act on the difference, and
  * distinguishing them would tell someone probing for ids whether a guess had ever existed.
  */
-function requireRecord(s: Session, requestId: string, reply: any): RfqRecord | null {
+/**
+ * The record this request names, pulling it back from storage if a restart lost it.
+ *
+ * `rehydrateRfqs` is what makes a request survive a deploy: the in-memory Map is empty in
+ * a fresh process, but the durable row still holds the keypair that reads its offers. One
+ * query per session lifetime, not per request.
+ */
+async function requireRecord(s: Session, requestId: string, reply: any): Promise<RfqRecord | null> {
+  await rehydrateRfqs(s);
   const record = recallRfq(s, requestId);
   if (!record) {
     reply.code(410).send({ error: "That request is no longer open. Ask for a fresh one." });
@@ -403,6 +414,30 @@ export async function rfqRoutes(app: FastifyInstance): Promise<void> {
         pendingPremiumUsdc: null,
       });
 
+      /**
+       * The record goes to durable storage BEFORE the requester is handed anything to
+       * sign, and this ordering is the whole of audit A1.
+       *
+       * `requestTx` below opens a quotation on-chain and commits the Reserve Price. The
+       * keypair that decrypts the offers against it exists nowhere but this record, so if
+       * the process dies between the signature and the confirm -- a deploy, a crash, an OS
+       * patch, and ADR-0017 says that window is minutes to an hour -- the requester is
+       * left with a funded quotation whose bids nobody can ever read. Persisting first
+       * makes that window survivable instead of fatal.
+       *
+       * A store that will not write is not a reason to refuse the request: `saveRfq`
+       * returns false when Supabase simply is not configured, which is the ordinary local
+       * posture and the posture every test runs in. It IS worth saying out loud, so the
+       * operator of a real deployment learns from a log line rather than from an incident.
+       */
+      const persisted = await persistRfq(s, record);
+      if (!persisted) {
+        req.log.warn(
+          { requestId: record.id, walletAddress: wallet },
+          "RFQ opened with no durable store: a restart before settle will lose the key that decrypts its offers"
+        );
+      }
+
       const body: PreparedRfq = {
         requestId: record.id,
         kind,
@@ -431,7 +466,7 @@ export async function rfqRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed.success) return reply.code(400).send({ error: "requestId is required" });
 
     const s = sessionFor(req.headers);
-    const record = requireRecord(s, parsed.data.requestId, reply);
+    const record = await requireRecord(s, parsed.data.requestId, reply);
     if (!record) return;
     if (!requireOwner(s, record.walletAddress, reply)) return;
 
@@ -452,6 +487,9 @@ export async function rfqRoutes(app: FastifyInstance): Promise<void> {
 
       record.quotationId = verification.quotationId;
       record.phase = "OPEN";
+      // The quotation id is what `readRfq` needs to find the offers at all, so it is
+      // written back the moment the chain reveals it.
+      updateRfq(s, record);
       return { opened: true, remainingUsdc: remainingBudget(s), status: quietStatus(record) };
     } catch (e) {
       return reply.code(502).send(safeErrorResponse(req.log, e, "Could not check that transaction. Try again."));
@@ -474,7 +512,7 @@ export async function rfqRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const s = sessionFor(req.headers);
-    const record = requireRecord(s, parsed.data.requestId, reply);
+    const record = await requireRecord(s, parsed.data.requestId, reply);
     if (!record) return;
 
     if (record.quotationId === null || record.phase === "SETTLED" || record.phase === "CANCELLED")
@@ -524,7 +562,7 @@ export async function rfqRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const s = sessionFor(req.headers);
-    const record = requireRecord(s, parsed.data.requestId, reply);
+    const record = await requireRecord(s, parsed.data.requestId, reply);
     if (!record) return;
     if (!requireOwner(s, record.walletAddress, reply)) return;
 
@@ -592,7 +630,7 @@ export async function rfqRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed.success) return reply.code(400).send({ error: "requestId is required" });
 
     const s = sessionFor(req.headers);
-    const record = requireRecord(s, parsed.data.requestId, reply);
+    const record = await requireRecord(s, parsed.data.requestId, reply);
     if (!record) return;
     if (!requireOwner(s, record.walletAddress, reply)) return;
     if (record.quotationId === null)
@@ -657,7 +695,7 @@ export async function rfqRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const s = sessionFor(req.headers);
-    const record = requireRecord(s, parsed.data.requestId, reply);
+    const record = await requireRecord(s, parsed.data.requestId, reply);
     if (!record) return;
     if (!requireOwner(s, record.walletAddress, reply)) return;
     if (record.quotationId === null) {
@@ -686,7 +724,7 @@ export async function rfqRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed.success) return reply.code(400).send({ error: "requestId is required" });
 
     const s = sessionFor(req.headers);
-    const record = requireRecord(s, parsed.data.requestId, reply);
+    const record = await requireRecord(s, parsed.data.requestId, reply);
     if (!record) return;
     if (!requireOwner(s, record.walletAddress, reply)) return;
     if (record.quotationId === null)

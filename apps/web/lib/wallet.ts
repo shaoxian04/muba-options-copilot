@@ -70,12 +70,11 @@ function scopedKey(base: string): string | null {
 /**
  * The id `connectWallet`/`walletOptionFor` use for WalletConnect -- must match
  * `@wagmi/connectors`' own `walletConnect()` factory's `id: 'walletConnect'` exactly
- * (confirmed by reading its source), NOT an arbitrary string this app invents. `connect()`
- * persists a successful connection's real `connector.id` as `recentConnectorId`, and
- * `lastConnectedWalletId()` reads that same value back -- a mismatched casing here would
- * make a returning Trader's "reconnect to WalletConnect" option silently fall through to
- * `injectedConnectorFor`, which only recognises MIPD `rdns` strings, and throw
- * `WalletUnavailable` instead of ever reaching WalletConnect.
+ * (confirmed by reading its source), NOT an arbitrary string this app invents. It is what
+ * `rememberConnection` stores and `lastConnectedWalletId()` reads back, so a mismatched
+ * casing here would make a returning Trader's "reconnect to WalletConnect" option silently
+ * fall through to `injectedConnectorFor`, which only recognises MIPD `rdns` strings, and
+ * throw `WalletUnavailable` instead of ever reaching WalletConnect.
  */
 export const WALLETCONNECT_ID = "walletConnect";
 
@@ -281,6 +280,26 @@ export function resetWalletConnectConnectorForTests(): void {
 }
 
 /**
+ * The address wagmi is connected to right now, or null if it isn't connected.
+ *
+ * Exists because wagmi's `config` is a module-level singleton while `/` and `/cover`
+ * each mount their own `useSurface()`: navigating between them resets React's copy of
+ * the wallet state to nothing, but the underlying connection is still live. Reconnecting
+ * from scratch there is at best wasted work, and for WalletConnect it actively fails --
+ * `walletConnectConnector` hands back the same cached connector, whose `uid` still
+ * matches `config.state.current`, so `connect()` throws `ConnectorAlreadyConnectedError`
+ * and the surface is left showing "Connect wallet" over a wallet that never left. Only a
+ * full reload cleared it, by discarding the module state that made them match.
+ *
+ * Reading the live connection instead is both cheaper and truthful: if wagmi says an
+ * address is connected, it is, whatever any remembered pointer or TTL says.
+ */
+export function connectedAddress(): string | null {
+  const { address, isConnected } = getConnection(config);
+  return isConnected && address ? address : null;
+}
+
+/**
  * Connects the wallet the Trader picked from `listAvailableWallets()` and returns its
  * address. Every id but `WALLETCONNECT_ID` names an `rdns` MIPD detected. WalletConnect
  * is built on-demand too, via a dynamic import -- `@wagmi/connectors/walletConnect` pulls
@@ -411,60 +430,70 @@ export function isConnectionFresh(connectedAt: number, now: number, ttlMs: numbe
 }
 
 /**
- * The raw `{id, connectedAt}} rememberConnection` last wrote for the current account, or
- * null if there's nothing usable -- no account known, nothing ever connected under it,
- * or a corrupted value. Shared by `recentConnectionWithinTtl` (which additionally checks
- * the TTL) and `lastConnectedWalletId` (which deliberately does not -- see its own
- * comment for why "Last used" in the picker outlives the silent-reconnect window).
+ * What `rememberConnection` last wrote for the current account, or null if there's
+ * nothing usable -- no account known, nothing ever connected under it, or a corrupted
+ * value.
+ *
+ * `disconnected` is what separates the two readers below. A Trader who disconnects is
+ * saying "stop connecting me to this automatically", not "forget this wallet ever
+ * existed": `recentConnectionWithinTtl` (the silent on-load reconnect) must honour it,
+ * while `lastConnectedWalletId` (the picker's one-press "Last used") must not -- offering
+ * it back is exactly the convenience they'd want next time. Absent on entries written
+ * before this flag existed, which read as still-connected: the same thing they meant then.
  */
-function readStoredConnection(): { id: string; connectedAt: number } | null {
+function readStoredConnection(): { id: string; connectedAt: number; disconnected: boolean } | null {
   if (typeof window === "undefined") return null;
   const key = scopedKey(LAST_CONNECTION_KEY);
   if (!key) return null;
   try {
     const raw = window.localStorage.getItem(key);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { id?: unknown; connectedAt?: unknown };
+    const parsed = JSON.parse(raw) as { id?: unknown; connectedAt?: unknown; disconnected?: unknown };
     if (typeof parsed.id !== "string" || typeof parsed.connectedAt !== "number") return null;
-    return { id: parsed.id, connectedAt: parsed.connectedAt };
+    return { id: parsed.id, connectedAt: parsed.connectedAt, disconnected: parsed.disconnected === true };
   } catch {
     return null;
   }
 }
 
 /**
- * The wallet id to silently reconnect on page load, or null if nothing recent enough
- * exists (nothing connected yet, the TTL lapsed, or storage is unavailable/corrupted).
- * Never itself prompts a wallet -- it only says which id, if any, is worth trying.
+ * The wallet id to silently reconnect on page load, or null if there is nothing to
+ * reconnect: nothing connected yet, the Trader disconnected on purpose, the TTL lapsed,
+ * or storage is unavailable/corrupted. Never itself prompts a wallet -- it only says
+ * which id, if any, is worth trying.
  */
 export function recentConnectionWithinTtl(ttlMs: number = DEFAULT_RECONNECT_TTL_MS): string | null {
   const stored = readStoredConnection();
-  if (!stored) return null;
+  if (!stored || stored.disconnected) return null;
   return isConnectionFresh(stored.connectedAt, Date.now(), ttlMs) ? stored.id : null;
 }
 
 /**
- * Clears whatever `rememberConnection`/`rememberWalletConnectPeer` left behind, so a
- * disconnected wallet has nothing left for the silent on-load reconnect
- * (`recentConnectionWithinTtl`, read by `surface.ts`) to retry.
+ * Marks what `rememberConnection` last wrote as disconnected, rather than deleting it.
  *
- * This is what `disconnectWallet` needs it for: without it, a Trader who explicitly
- * disconnects would keep getting silently re-attempted on every tab switch or reload
- * until the TTL happened to lapse on its own -- and for WalletConnect specifically, every
- * one of those attempts re-prompts with a fresh pairing QR, since disconnecting genuinely
- * ends the underlying session (there is nothing left to resume). Disconnecting is already
- * a deliberate "stop assuming this wallet" signal; this just makes that stick.
+ * The silent on-load reconnect (`recentConnectionWithinTtl`) then skips it, which is the
+ * whole point: without this, a Trader who explicitly disconnects keeps getting silently
+ * re-attempted on every tab switch or reload until the TTL happens to lapse -- and for
+ * WalletConnect, every one of those attempts re-prompts with a fresh pairing QR, since
+ * disconnecting genuinely ends the underlying session and leaves nothing to resume.
+ *
+ * The entry itself stays, deliberately, along with the WalletConnect peer name/icon, so
+ * the picker can still offer that wallet as its one-press "Last used". "I'm done with
+ * this wallet for now" is not "forget this wallet ever existed" -- an earlier version of
+ * this deleted both, and the wallet vanishing from the picker was surprising rather than
+ * helpful. Reconnecting overwrites the entry outright, flag included.
  */
-function forgetLastConnection(): void {
+function markLastConnectionDisconnected(): void {
   if (typeof window === "undefined") return;
+  const key = scopedKey(LAST_CONNECTION_KEY);
+  if (!key) return;
+  const stored = readStoredConnection();
+  if (!stored) return; // nothing remembered for this account -- nothing to mark
   try {
-    const key = scopedKey(LAST_CONNECTION_KEY);
-    if (key) window.localStorage.removeItem(key);
-    const peerKey = scopedKey(WALLETCONNECT_PEER_KEY);
-    if (peerKey) window.localStorage.removeItem(peerKey);
+    window.localStorage.setItem(key, JSON.stringify({ ...stored, disconnected: true }));
   } catch {
-    // Same reasoning as rememberConnection: losing this is fine, it only means a later
-    // load might still offer a stale "Last used" it otherwise wouldn't.
+    // Same reasoning as rememberConnection: losing this write only means the silent
+    // reconnect may try once more on the next load, not that anything breaks.
   }
 }
 
@@ -474,14 +503,12 @@ function forgetLastConnection(): void {
  * Swallows any error from the SDK-level disconnect -- there's nothing useful to show a
  * Trader for "the wallet we were about to disconnect from wasn't actually reachable,"
  * and the caller resets its own address/verified state regardless of whether this
- * resolves or rejects. `forgetLastConnection` runs unconditionally either way: the
- * Trader's intent to disconnect is clear regardless of whether the SDK call itself
- * succeeded, and there is nothing to gain from leaving a stale "last used" pointer
- * behind because of a failure in an unrelated step.
+ * resolves or rejects. `markLastConnectionDisconnected` runs unconditionally either way:
+ * the Trader's intent is clear regardless of whether the SDK call itself succeeded.
  */
 export async function disconnectWallet(): Promise<void> {
   await disconnect(config).catch(() => {});
-  forgetLastConnection();
+  markLastConnectionDisconnected();
 }
 
 /**
@@ -498,9 +525,12 @@ export async function disconnectWallet(): Promise<void> {
  * Trader on a shared device sees the FIRST Trader's "Last used" wallet the moment they
  * sign in, which is exactly what `walletMemoryScope` exists to prevent.
  *
- * Deliberately does not check `isConnectionFresh` the way `recentConnectionWithinTtl`
- * does: the picker's "Last used" quick-pick should keep offering a one-press reconnect
- * long after the silent auto-reconnect window has lapsed, same as before this existed.
+ * Deliberately checks neither `isConnectionFresh` nor the `disconnected` flag the way
+ * `recentConnectionWithinTtl` checks both: the picker's "Last used" quick-pick should
+ * keep offering a one-press reconnect long after the silent auto-reconnect window has
+ * lapsed, and after a Trader has deliberately disconnected. Both of those stop this app
+ * connecting *on its own*; neither is a reason to stop offering the wallet to someone
+ * who came back to press it.
  */
 export async function lastConnectedWalletId(): Promise<string | null> {
   return readStoredConnection()?.id ?? null;

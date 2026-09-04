@@ -43,7 +43,70 @@ if (host !== "127.0.0.1" && host !== "localhost" && process.env.EXTERNAL_AUTH_IN
   process.exit(1);
 }
 
+/**
+ * Reachable beyond loopback with no bearer token is refused, not warned about.
+ *
+ * This does NOT contradict the note above. COPILOT_API_TOKEN is not SUFFICIENT to make a
+ * public bind safe -- it ships in the frontend bundle and can be replayed -- which is why
+ * EXTERNAL_AUTH_IN_FRONT exists and why the token is deliberately not accepted in its
+ * place. But it is still NECESSARY: `requireToken` returns true for every caller when no
+ * token is configured, so an unset variable silently unauthenticates /session,
+ * /session/budget, /positions and /fill/settle with nothing reporting a problem.
+ *
+ * Failing closed here also settles a disagreement between the two gates:
+ * `verifyAccountToken` already refuses when Supabase is unconfigured, while
+ * `requireToken` waved everyone through. A missing secret must never widen access.
+ */
+if (host !== "127.0.0.1" && host !== "localhost" && !process.env.COPILOT_API_TOKEN) {
+  console.error(
+    `Refusing to bind to ${host} with no COPILOT_API_TOKEN. Without one, requireToken() ` +
+      `admits every caller, so /session, /session/budget, /positions and /fill/settle would ` +
+      `be open to anyone who can reach this port. Set COPILOT_API_TOKEN. Note this is a ` +
+      `necessary condition and not a sufficient one -- see EXTERNAL_AUTH_IN_FRONT above.`
+  );
+  process.exit(1);
+}
+
 await app.listen({ port, host });
+
+/**
+ * Finish what is in flight before going away.
+ *
+ * Every platform deploy sends SIGTERM, and without a handler the process dies mid-request.
+ * That is not merely untidy here: an in-flight `/fill/settle` waiting on a receipt, or an
+ * `/rfq/confirm` about to record a quotation id, is a money event. `app.close()` stops
+ * accepting new connections and lets the outstanding ones finish.
+ *
+ * The timeout is a backstop, not the plan: if something genuinely hangs, exiting late is
+ * still better than the platform issuing SIGKILL at a moment of its own choosing.
+ */
+const SHUTDOWN_GRACE_MS = 30_000;
+let shuttingDown = false;
+
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.on(signal, () => {
+    if (shuttingDown) return; // a second signal must not race the first
+    shuttingDown = true;
+    app.log.info(`${signal} received -- draining, up to ${SHUTDOWN_GRACE_MS / 1000}s`);
+
+    const forceExit = setTimeout(() => {
+      app.log.error("Drain did not finish in time -- exiting anyway");
+      process.exit(1);
+    }, SHUTDOWN_GRACE_MS);
+    forceExit.unref(); // do not hold the loop open if the drain finishes first
+
+    app.close().then(
+      () => {
+        app.log.info("Drained cleanly");
+        process.exit(0);
+      },
+      (err) => {
+        app.log.error({ err }, "Error while draining");
+        process.exit(1);
+      }
+    );
+  });
+}
 app.log.info(`endpoint: ${backendEndpoint()}`);
 app.log.info(`cors: ${allowedOrigins().join(", ")}`);
 app.log.info(`signer ${canSign() ? "attached" : "ABSENT -- /propose works, /fill will refuse"}`);
