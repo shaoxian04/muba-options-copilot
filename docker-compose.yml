@@ -1,0 +1,102 @@
+# The whole backend, as one file.
+#
+# Shaped for a single always-on host (an Oracle Cloud Always Free ARM VM is the case this
+# was written against) rather than for a managed platform, because that is the deployment
+# that is actually reachable at zero cost. The frontend is NOT here: it is a static Next
+# build and belongs on Cloudflare Pages or Netlify, whose terms permit commercial use.
+#
+# Deliberately committed rather than left in someone's shell history. Oracle halved its
+# free ARM allocation once already, without announcing it, so the whole stack has to be
+# rebuildable elsewhere in an afternoon -- which means it lives in the repo and its
+# backups live off-platform.
+#
+# Read alongside the audit's E-group findings: the health checks below are what E1 added,
+# the stop_grace_period is what makes E2's SIGTERM handler worth having, and `postgres`
+# exists because the managed free tier pauses after seven days of inactivity and keeps no
+# backups -- which is fatal for the RFQ keypairs A1 made durable.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Caddy terminates TLS and authenticates callers in front of this, which is the
+      # condition server.ts requires before it will bind beyond loopback. Setting this
+      # without actually putting something in front is how that check gets defeated.
+      EXTERNAL_AUTH_IN_FRONT: "true"
+      HOST: 0.0.0.0
+      PORT: 3001
+      AGENTS_ENDPOINT: http://agents:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # The readiness probe, not the liveness one: this is what should keep a broken
+      # instance out of rotation, and it checks the RPC rather than just the process.
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3001/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    # Long enough for the 30s drain in server.ts to actually finish.
+    stop_grace_period: 40s
+    networks: [copilot]
+
+  agents:
+    build:
+      context: ./apps/agents
+    restart: unless-stopped
+    # No ports published. Reached only over the private network by `api`, exactly as
+    # ADR-0007 describes -- it has no authentication of its own.
+    expose: ["8000"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/indicators?symbol=ETH', timeout=5) else 1)\""]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks: [copilot]
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-copilot}
+      POSTGRES_USER: ${POSTGRES_USER:-copilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Applied in filename order on FIRST boot only. Re-running them against an existing
+      # volume is a migration job, not a container start.
+      - ./supabase/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-copilot} -d ${POSTGRES_DB:-copilot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [copilot]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api]
+    networks: [copilot]
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+
+networks:
+  copilot:
+    driver: bridge

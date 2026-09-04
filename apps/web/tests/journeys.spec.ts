@@ -1087,13 +1087,49 @@ test.describe("wallet connection survives a refresh, within a TTL", () => {
     await expect(page.getByTestId("connect-wallet")).toBeVisible();
 
     // No backdating here, deliberately: this is seconds-old, deep inside the TTL window
-    // -- if disconnecting hadn't cleared the "last used" pointer, the silent reconnect
+    // -- if disconnecting hadn't marked the "last used" entry, the silent reconnect
     // would fire right back on this very reload. It must not.
     await page.reload();
 
     await expect(page.getByTestId("connect-wallet")).toBeVisible();
     await expect(page.getByTestId("connect-wallet")).toBeEnabled();
     await expect(page.getByTestId("wallet-address")).toHaveCount(0);
+
+    // ...but the wallet itself is still remembered: disconnecting stops this app
+    // connecting on its own, it does not forget the wallet a Trader may want back.
+    await page.getByTestId("connect-wallet").click();
+    await expect(page.getByTestId("wallet-option-recent")).toContainText("Fake Wallet 1");
+
+    // And pressing it reconnects, which also clears the disconnected mark.
+    await page.getByTestId("wallet-option-recent").click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+  });
+
+  /**
+   * `/` and `/cover` each mount their own `useSurface()`, so navigating between them
+   * resets the wallet half of that state to nothing while wagmi's own connection (a
+   * module-level `config`) is still very much live. The header must not flip back to
+   * "Connect wallet" in the gap -- it did, and only a full reload put the address back.
+   */
+  test("stays connected across a Copilot <-> Cover navigation, with no reload", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallet(page);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await page.getByTestId("wallet-option-test.fakewallet0").click();
+    const address = await page.getByTestId("wallet-address").innerText();
+
+    await page.locator("header.shell-header nav").getByRole("link", { name: "Cover" }).click();
+    await expect(page).toHaveURL("/cover");
+    await expect(page.getByTestId("wallet-address")).toHaveText(address);
+    await expect(page.getByTestId("connect-wallet")).toHaveCount(0);
+
+    await page.locator("header.shell-header nav").getByRole("link", { name: "Copilot" }).click();
+    await expect(page).toHaveURL("/");
+    await expect(page.getByTestId("wallet-address")).toHaveText(address);
+    await expect(page.getByTestId("connect-wallet")).toHaveCount(0);
   });
 
   test("reconnects and re-verifies silently within the window -- no picker, no Verify click", async ({ page }) => {

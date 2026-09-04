@@ -51,6 +51,7 @@ import {
   type SessionState,
 } from "./api";
 import {
+  connectedAddress,
   connectWallet as connectWalletById,
   disconnectWallet as disconnectWalletById,
   lastConnectedWalletId,
@@ -65,6 +66,13 @@ import {
   type WalletOption,
 } from "./wallet";
 import { clampSizeUsdc, rfqSizeCapUsdc } from "./geometry";
+import { confirmWithRetry, shouldReleaseReservation, RFQ_STRANDED_MESSAGE } from "./rfqSubmit";
+import { DECK_POLL_MS, RFQ_POLL_MS, pollWhileVisible, beginLatestOnly, isLatest, endLatestOnly } from "./polling";
+
+// Re-exported so every existing importer of these from `surface` keeps working. They
+// live in `polling.ts` now: the intervals, the hidden-tab rule and "latest wins" are one
+// concern, and they were sitting in the middle of a file that is mostly one large hook.
+export { DECK_POLL_MS, RFQ_POLL_MS, pollWhileVisible, beginLatestOnly, isLatest, endLatestOnly } from "./polling";
 import { supabase } from "./supabaseClient";
 import { STAKE_USDC } from "./constants";
 
@@ -123,18 +131,9 @@ export const RFQ_STRIKE_STEP_PCT = 0.5;
  */
 export const RFQ_TENOR_DAYS: readonly RfqTenorDays[] = [7, 14, 30, 60];
 
-/**
- * How often an open request is re-read while makers can still answer.
- *
- * Slower than the Deck's own poll on purpose. A Deck poll re-prices a book that moves
- * every block; an RFQ's offer window is measured in minutes and each tick costs an
- * on-chain read plus an indexer call. Six seconds is fast enough that an answer appears
- * while the Trader is still looking at the dialog, and slow enough not to hammer either.
- */
-export const RFQ_POLL_MS = 6_000;
 
-/** The tape has to look alive without hammering a route that reads the chain. */
-const DECK_POLL_MS = 6000;
+
+
 
 export type Direction = "UP" | "DOWN";
 
@@ -466,52 +465,7 @@ export function agentGate(result: ProposeResult | null): Array<{ label: string; 
   ];
 }
 
-/**
- * One in-flight request at a time per polled resource, and only the freshest answer
- * ever reaches state. Backs `loadDeck` and `loadDepth` below.
- *
- * At the RPC latencies this book is read at -- seconds, not milliseconds -- a single
- * `/deck` or `/depth` read can outlive several ticks of its own poll. Without this, each
- * tick would start its own fetch, several would sit in flight together, and whichever
- * happened to resolve LAST would win even if it was the oldest of the bunch: the
- * surface could walk backward to a stale price under a Trader's eyes.
- *
- * `spinner` is reused as the signal for which of the two problems a call is trying to
- * solve, rather than inventing a second flag: every DELIBERATE call already opts into
- * it -- first paint, and every asset/direction/horizon change -- so a call is
- * deliberate if and only if a Trader is waiting on it. That kind aborts whatever answer
- * is still in flight and starts fresh, because the Trader asked for something else and
- * the old read's answer, however it resolves, must never reach state. A background
- * poll tick omits `spinner`; if a read is already running when one of those fires, it
- * skips itself rather than piling a duplicate read on top of it.
- *
- * Plain functions taking the refs explicitly, not a custom hook returning them bundled
- * -- a hook's return value is a fresh object every render, and putting that in a
- * `useCallback` dependency array would give `loadDeck`/`loadDepth` a new identity on
- * every render too, re-arming their `useEffect`s (and the interval inside one of them)
- * on every render along with it.
- */
-export function beginLatestOnly(
-  abortRef: React.MutableRefObject<AbortController | null>,
-  seqRef: React.MutableRefObject<number>,
-  spinner: boolean
-): { signal: AbortSignal; seq: number } | null {
-  if (!spinner && abortRef.current) return null;
-  abortRef.current?.abort();
-  const controller = new AbortController();
-  abortRef.current = controller;
-  return { signal: controller.signal, seq: ++seqRef.current };
-}
 
-/** True when `seq` is still the latest call issued -- false when a newer one has since started. */
-export function isLatest(seqRef: React.MutableRefObject<number>, seq: number): boolean {
-  return seq === seqRef.current;
-}
-
-/** Clears the in-flight marker, but only if this call is still the latest -- an aborted, superseded call must not clear the newer controller that superseded it. */
-export function endLatestOnly(abortRef: React.MutableRefObject<AbortController | null>, seqRef: React.MutableRefObject<number>, seq: number): void {
-  if (isLatest(seqRef, seq)) abortRef.current = null;
-}
 
 export function useSurface(): Surface {
   const [asset, setAssetState] = useState<UnderlyingSymbol>(DEFAULT_ASSET);
@@ -579,6 +533,24 @@ export function useSurface(): Surface {
   const [account, setAccount] = useState<{ userId: string; email: string; avatarUrl: string | null } | null>(
     null
   );
+
+  /**
+   * WHICH account is signed in, as a plain string -- what the wallet effects below depend
+   * on, never the `account` object itself.
+   *
+   * `accountFrom()` builds a fresh object on every auth event, and Supabase fires those
+   * for far more than signing in and out: a token refresh, or the tab regaining focus,
+   * re-emits the same account as a NEW object. Depending on that object re-ran the
+   * reconnect effect at those arbitrary moments -- harmless while already connected
+   * (`connect()` throws `ConnectorAlreadyConnectedError`, which the effect's own catch
+   * swallows), but a genuine reconnect attempt whenever an earlier one had failed and
+   * left the remembered pointer in place. For WalletConnect with a session that has since
+   * died, that attempt is a pairing QR appearing out of nowhere, mid-session, on nothing
+   * more than a token refresh. Keyed on the id, the same account never re-triggers either
+   * effect; a genuinely different one still does.
+   */
+  const accountId = account?.userId ?? null;
+
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [walletConnecting, setWalletConnecting] = useState(false);
   const [walletVerified, setWalletVerified] = useState(false);
@@ -750,16 +722,15 @@ export function useSurface(): Surface {
    */
   const previousAccountIdRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {
-    const currentId = account?.userId ?? null;
-    const changed = previousAccountIdRef.current !== undefined && previousAccountIdRef.current !== currentId;
-    previousAccountIdRef.current = currentId;
+    const changed = previousAccountIdRef.current !== undefined && previousAccountIdRef.current !== accountId;
+    previousAccountIdRef.current = accountId;
     if (!changed) return;
     setWalletAddress(null);
     setRecentWallet(null);
     setWalletVerified(false);
     setWalletVerifying(false);
     setWalletError(null);
-  }, [account]);
+  }, [accountId]);
 
   /**
    * Once an account is known: if a wallet was connected recently enough (a rolling
@@ -781,19 +752,23 @@ export function useSurface(): Surface {
    * `wallet.ts` now disables that check outright (this app is permanently single-chain).
    * See that fix's own comment for the full story.
    *
-   * The other real gap this closes: `disconnectWallet` (wallet.ts) now forgets the "last
-   * used" pointer entirely on disconnect, specifically so THIS effect has nothing left to
-   * retry afterward -- without that, a Trader who disconnected would otherwise keep
-   * getting silently re-attempted (and, for WalletConnect, re-prompted with a pairing QR
-   * every single time, since disconnecting genuinely ends the underlying session) on
-   * every tab switch or reload until the TTL happened to lapse on its own.
+   * The other real gap this closes: `disconnectWallet` (wallet.ts) marks the "last used"
+   * entry as disconnected, and `recentConnectionWithinTtl` skips it, specifically so THIS
+   * effect has nothing to retry afterward -- without that, a Trader who disconnected would
+   * keep getting silently re-attempted (and, for WalletConnect, re-prompted with a pairing
+   * QR every single time, since disconnecting genuinely ends the underlying session) on
+   * every tab switch or reload until the TTL happened to lapse on its own. The entry is
+   * marked rather than deleted so the picker below still offers that wallet as its
+   * one-press "Last used" -- only the automatic path honours the flag.
    *
-   * Gated on `account` for two reasons: ADR-0014 requires signing in before wallet
+   * Gated on `accountId` for two reasons: ADR-0014 requires signing in before wallet
    * actions at all, and `recentConnectionWithinTtl`/`lastConnectedWalletId` now read
    * `wallet.ts`'s account-scoped storage (`setWalletMemoryScope`, set synchronously
    * alongside `setAccount` above) -- attempting this before the account is known would
    * always see empty, unscoped storage and never retry once it resolves. Depending on
-   * `account` is what makes this effect run again the moment that scope is actually set.
+   * `accountId` is what makes this effect run again the moment that scope is actually
+   * set -- and, being a plain string rather than the `account` object, what keeps it
+   * from re-running on every token refresh (see `accountId`'s own comment).
    *
    * Only `verifyIfAlreadyProven` runs after, deliberately, never the full
    * `verifyWalletFor`: this is a page-load effect nobody clicked, so it may only
@@ -811,7 +786,20 @@ export function useSurface(): Surface {
     const showRecentWalletOption = () =>
       void lastConnectedWalletId().then((id) => setRecentWallet(id ? walletOptionFor(id) : null));
 
-    if (!account) return;
+    if (!accountId) return;
+
+    // Already connected -- adopt it rather than connect again. `/` and `/cover` each
+    // mount their own `useSurface()`, so a navigation between them resets this state
+    // while wagmi's own connection (a module-level singleton) is still live. See
+    // `connectedAddress` for why re-connecting there doesn't just waste a round trip
+    // but actively fails for WalletConnect.
+    const live = connectedAddress();
+    if (live) {
+      setWalletAddress(live);
+      void verifyIfAlreadyProven(live);
+      showRecentWalletOption();
+      return;
+    }
 
     const recentId = recentConnectionWithinTtl();
     if (!recentId) {
@@ -830,7 +818,7 @@ export function useSurface(): Surface {
         void verifyIfAlreadyProven(address);
       })
       .catch(showRecentWalletOption);
-  }, [account, verifyIfAlreadyProven]);
+  }, [accountId, verifyIfAlreadyProven]);
 
   const openWalletPicker = useCallback(() => {
     setAvailableWallets(listAvailableWallets());
@@ -1010,11 +998,24 @@ export function useSurface(): Surface {
       .finally(() => setMarketsLoading(false));
   }, []);
 
-  // The tape is only honest if it keeps asking. Cheap: /deck is read-only and local.
-  useEffect(() => {
-    const timer = setInterval(() => void loadDeck(asset, direction, horizonDays), DECK_POLL_MS);
-    return () => clearInterval(timer);
-  }, [asset, direction, horizonDays, loadDeck]);
+  /**
+   * The tape is only honest if it keeps asking -- but only while somebody is looking.
+   *
+   * This comment used to read "Cheap: /deck is read-only and local", which was wrong in a
+   * way that mattered. `/deck` costs a full book read, a market-data read and a
+   * `getBookState` over every Position the indexer has ever recorded; the last of those
+   * alone runs to about three seconds. Nothing about it is local.
+   *
+   * The server now shares those reads between viewers (`upstream.ts`), so the cost of one
+   * more open tab is small -- but a backgrounded tab left open overnight was still firing
+   * every six seconds forever, for a screen nobody was looking at. `pollWhileVisible`
+   * stops that and catches up the moment the Trader comes back, so returning to the tab
+   * never shows a stale tape while waiting for the next tick.
+   */
+  useEffect(
+    () => pollWhileVisible(() => void loadDeck(asset, direction, horizonDays), DECK_POLL_MS),
+    [asset, direction, horizonDays, loadDeck]
+  );
 
   /**
    * The Maker Depth chart's data.
@@ -1058,10 +1059,10 @@ export function useSurface(): Surface {
     void loadDepth(asset, horizonDays, { spinner: true });
   }, [asset, horizonDays, loadDepth]);
 
-  useEffect(() => {
-    const timer = setInterval(() => void loadDepth(asset, horizonDays), DECK_POLL_MS);
-    return () => clearInterval(timer);
-  }, [asset, horizonDays, loadDepth]);
+  useEffect(
+    () => pollWhileVisible(() => void loadDepth(asset, horizonDays), DECK_POLL_MS),
+    [asset, horizonDays, loadDepth]
+  );
 
   const clearSelection = useCallback(() => {
     setSelectedRef(null);
@@ -1176,6 +1177,14 @@ export function useSurface(): Surface {
     setRfqBusy(true);
     setRfqRefusal(null);
     let prepared: PreparedRfq | null = null;
+    /**
+     * Proof that a transaction reached the chain, and the pivot the whole error path
+     * turns on. `sendTx` waits for its own receipt, so the moment this is set the
+     * Reserve Price is a real commitment and the reservation behind it may NEVER be
+     * released -- releasing deletes the record, and with it the only key that can
+     * decrypt this request's sealed bids.
+     */
+    let broadcastTxHash: string | null = null;
     try {
       prepared = await requestRfq({
         underlying: asset,
@@ -1185,11 +1194,18 @@ export function useSurface(): Surface {
         sizeUsdc: rfqSizeUsdc,
         walletAddress,
       });
-      const txHash = await sendTx(prepared.requestTx);
+      broadcastTxHash = await sendTx(prepared.requestTx);
 
-      const confirmed = await confirmRfq(prepared.requestId, txHash);
+      // Retried rather than taken at face value: the backend answers 425 while its own
+      // RPC catches up with the wallet's, and that "try again shortly" used to fall
+      // through to the release path below and destroy a live request.
+      const confirmed = await confirmWithRetry(confirmRfq, prepared.requestId, broadcastTxHash);
       if (!confirmed.opened || !confirmed.status) {
+        // The chain itself says it did not open -- reverted, or no quotation id in the
+        // receipt. The backend has already released the reservation, so there is nothing
+        // stranded and nothing was charged.
         setRfqRefusal("The request did not open on-chain. No USDC moved. You can try again.");
+        await refreshMoney();
         return;
       }
       rfqRequestIdRef.current = prepared.requestId;
@@ -1197,15 +1213,30 @@ export function useSurface(): Surface {
       say(`Requested: ${confirmed.status.ask.sentence}`);
       await refreshMoney();
     } catch (e) {
-      // Only report a decline if the request was actually prepared -- there is nothing to
-      // release otherwise. `/rfq` reserves the Reserve Price synchronously the moment it
-      // runs, so the displayed budget has to catch up on this path too, not just on
-      // success, or the Trader reads a budget that looks untouched.
-      if (prepared) {
-        await confirmRfq(prepared.requestId).catch(() => {});
+      // A reservation may only be given back when nothing was broadcast -- see
+      // `shouldReleaseReservation`. `/rfq` reserves the Reserve Price synchronously the
+      // moment it runs, so on that path the displayed budget has to catch up here too,
+      // or the Trader reads a budget that looks untouched.
+      if (shouldReleaseReservation({ prepared: prepared !== null, broadcastTxHash })) {
+        await confirmRfq(prepared!.requestId).catch(() => {
+          // The release itself failed. Say so rather than swallowing it: the Reserve
+          // Price stays held until the one-hour TTL sweeps it, and a Trader looking at
+          // budget they cannot spend deserves the reason (audit G6).
+          setRfqRefusal(
+            "That request was not opened, but the hold on your Risk Budget could not be released " +
+              "just now. It clears automatically within the hour."
+          );
+        });
         await refreshMoney();
       }
-      if (e instanceof ApiRefusal) setRfqRefusal(e.message);
+
+      if (broadcastTxHash) {
+        // Open on-chain, unconfirmed here. Keep the id so a reload can pick it back up,
+        // and never call the no-hash confirm that would delete it.
+        rfqRequestIdRef.current = prepared?.requestId ?? null;
+        setRfqRefusal(RFQ_STRANDED_MESSAGE);
+        await refreshMoney();
+      } else if (e instanceof ApiRefusal) setRfqRefusal(e.message);
       else setRfqRefusal(e instanceof Error ? e.message : "The wallet could not open this request.");
     } finally {
       setRfqBusy(false);

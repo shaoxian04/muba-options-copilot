@@ -90,8 +90,19 @@ export async function buildDeck(session: Session, request: DeckRequest): Promise
       return isPut ? diff : -diff;
     });
 
+  const ctx: CardContext = { sizeUsdc, spot, isPut, orders, held };
+
+  // Priced ONCE, here, and the result carried into both the Cards below and the expiry
+  // counts further down. `expiriesFor` used to price every Order in every bucket to count
+  // them, and then this line priced the chosen bucket's Orders all over again.
+  const quotes = new Map<OrderWithSignature, Quote>();
+  for (const order of inDirection) {
+    const priced = quote(order, ctx);
+    if (priced) quotes.set(order, priced);
+  }
+
   const cards = candidates
-    .map((order) => toCard(session, order, { sizeUsdc, spot, isPut, orders, held }))
+    .map((order) => toCard(session, order, ctx, quotes.get(order)))
     .filter((card): card is Card => card !== undefined);
 
   const chances = cards.map((c) => c.impliedChance.value);
@@ -103,9 +114,7 @@ export async function buildDeck(session: Session, request: DeckRequest): Promise
     horizonDays,
     sizeUsdc,
     spotUsd: usd(spot, underlying.priceDp),
-    expiries: expiriesFor(orders, inDirection, {
-      sizeUsdc, spot, isPut, orders, held, direction, asset: underlying.symbol,
-    }),
+    expiries: expiriesFor(orders, inDirection, quotes, { direction, asset: underlying.symbol }),
     expiry: cards[0]?.expiry ?? null,
     cards,
     // One Card cannot be a gradient, and neither can six that all sit at the same
@@ -134,7 +143,9 @@ export async function buildDeck(session: Session, request: DeckRequest): Promise
 function expiriesFor(
   everything: OrderWithSignature[],
   inDirection: OrderWithSignature[],
-  ctx: CardContext & { direction: "UP" | "DOWN"; asset: string }
+  /** Already priced by `buildDeck`. Counting must never price anything a second time. */
+  quotes: Map<OrderWithSignature, Quote>,
+  ctx: { direction: "UP" | "DOWN"; asset: string }
 ): ExpiryOption[] {
   const buckets = [...new Set(everything.map(wholeDaysToExpiry))].filter((d) => d >= 1).sort((a, b) => a - b);
 
@@ -142,12 +153,15 @@ function expiriesFor(
     const label = fmtDays(horizonDays).display;
     const cards = inDirection
       .filter((o) => wholeDaysToExpiry(o) === horizonDays)
-      // Counted by actually pricing them, because a cheaper predicate here and the real
-      // filter in `buildDeck` would be two answers to one question and they would drift.
-      // `quote`, not `toCard`: minting a cardRef is handing out a capability, and a
-      // capability for a Card nobody was shown has no business existing. Counting used
-      // to call `toCard` and did exactly that -- three Cards dealt, four refs minted.
-      .filter((o) => quote(o, ctx) !== undefined).length;
+      // Counted from the SAME pricing `buildDeck` did, because a cheaper predicate here
+      // and the real filter there would be two answers to one question and they would
+      // drift. Sharing the map is what stops it also being two computations: this used to
+      // re-price every Order in every bucket.
+      //
+      // Still not `toCard`: minting a cardRef is handing out a capability, and a
+      // capability for a Card nobody was shown has no business existing. Counting once
+      // called `toCard` and did exactly that -- three Cards dealt, four refs minted.
+      .filter((o) => quotes.has(o)).length;
 
     return {
       horizonDays,
@@ -222,9 +236,14 @@ interface Quote {
 }
 
 /** The Card a Trader is actually shown, named by an opaque reference. */
-function toCard(session: Session, order: OrderWithSignature, ctx: CardContext): Card | undefined {
+function toCard(
+  session: Session,
+  order: OrderWithSignature,
+  ctx: CardContext,
+  /** The Order's price, computed once in `buildDeck` and passed in rather than redone. */
+  priced: Quote | undefined
+): Card | undefined {
   const { isPut, orders, held, spot } = ctx;
-  const priced = quote(order, ctx);
   if (!priced) return undefined;
   const { economics, chance } = priced;
 

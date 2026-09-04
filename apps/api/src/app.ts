@@ -14,12 +14,13 @@
  * `server.ts`, so importing this module can never accidentally open a socket.
  */
 import Fastify, { type FastifyInstance } from "fastify";
+import { createHash, randomUUID } from "node:crypto";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
-import { ProposeRequest, UnderlyingSymbol, MAX_HORIZON_DAYS, type ProposeResult, RiskProfileName, DecisionRequest } from "@copilot/shared";
+import { ProposeRequest, UnderlyingSymbol, MAX_HORIZON_DAYS, MAX_RISK_BUDGET_USDC, type ProposeResult, RiskProfileName, DecisionRequest } from "@copilot/shared";
 import { canSign, walletAddress, chain } from "./thetanuts/client.js";
-import { buyableOrders, daysToExpiry, orderIdentity, PUT } from "./thetanuts/orders.js";
+import { buyableOrders, daysToExpiry, orderIdentity, PUT, UpstreamShapeChanged } from "./thetanuts/orders.js";
 import { impliedMovePct } from "./thetanuts/implied-move.js";
 import { spotPrice, spotPrices } from "./thetanuts/market.js";
 import { UnknownUnderlying } from "./thetanuts/underlyings.js";
@@ -101,9 +102,37 @@ export const allowedOrigins = (): string[] =>
  */
 export const COST_ROUTE_MAX_PER_MINUTE = 30;
 
+/**
+ * Applied to the read routes that are POLLED, and which are the most expensive things
+ * this process does.
+ *
+ * Rate limiting used to cover only the routes that spend billed API credit, which was
+ * sound reasoning that left the actual load-bearing routes uncapped: /deck and /depth each
+ * cost a full book read, a market-data read and a getBookState (all-time positions), and
+ * neither had any limit at all.
+ *
+ * Generous rather than tight, because a legitimate Trader polls each of these every six
+ * seconds -- ten a minute per route per tab -- and a limit that punishes two open tabs is a
+ * bug. 120 leaves room for around a dozen tabs before it bites, while still bounding what
+ * one address can do to the RPC bill.
+ */
+export const BOOK_ROUTE_MAX_PER_MINUTE = 120;
+
+/**
+ * Stricter, because these spend somebody else's quota.
+ *
+ * /news/* reaches CryptoPanic, GNews and NewsAPI on the operator's keys, is not token
+ * gated, and is not polled by the surface -- so it needs neither a generous ceiling nor
+ * the benefit of the doubt. It was previously the cheapest route in the app to abuse and
+ * the only one with no defence whatsoever.
+ */
+export const NEWS_ROUTE_MAX_PER_MINUTE = 20;
+
 /** The period `/book` quotes its Implied Move over. A week reads as "the near future". */
 const BOOK_MOVE_DAYS = 7;
 const COST_ROUTE_LIMIT = { rateLimit: { max: COST_ROUTE_MAX_PER_MINUTE, timeWindow: "1 minute" } };
+const BOOK_ROUTE_LIMIT = { rateLimit: { max: BOOK_ROUTE_MAX_PER_MINUTE, timeWindow: "1 minute" } };
+const NEWS_ROUTE_LIMIT = { rateLimit: { max: NEWS_ROUTE_MAX_PER_MINUTE, timeWindow: "1 minute" } };
 
 /**
  * How long a wallet already linked to this account (`accountStore.ts`'s `linked_wallets`,
@@ -155,6 +184,16 @@ const DepthQuery = z.object({
 });
 
 /**
+ * What POST /session/budget accepts.
+ *
+ * Bounded above as well as below -- see `MAX_RISK_BUDGET_USDC`. `setRiskBudget` re-checks
+ * the same bound, because this schema is the readable refusal and that is the guarantee.
+ */
+const BudgetRequest = z.object({
+  riskBudgetUsdc: z.number().positive().max(MAX_RISK_BUDGET_USDC),
+});
+
+/**
  * Guards the four /forecast/* GET routes specifically (news, price, risk-benefit,
  * indicators) -- nothing else calls this.
  *
@@ -192,7 +231,35 @@ function resolveCard(session: Session, ref: string) {
 }
 
 export async function buildApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
+  const app = Fastify({
+    logger: { level: process.env.LOG_LEVEL ?? "info" },
+    /**
+     * A request id that survives the trip to the browser and back.
+     *
+     * Fastify already stamps every log line with one, but it was purely internal: a
+     * Trader reporting "it said it couldn't prepare the fill" gave an operator nothing to
+     * search on, and `safeErrorResponse` deliberately withholds the detail from the
+     * response body (correctly -- THETANUTS_RPC_URL carries the provider key). The id is
+     * the missing half of that: safe to show, and the only thing that connects a sentence
+     * on screen to the stack trace behind it.
+     *
+     * An inbound `x-request-id` is honoured so a reverse proxy's id wins, which is what
+     * makes the two sides of a deployment correlate at all.
+     */
+    genReqId: (req) => {
+      const supplied = req.headers["x-request-id"];
+      // Bounded and character-checked: this reaches log lines, so an unbounded
+      // client-supplied string is a log-injection vector rather than a convenience.
+      if (typeof supplied === "string" && /^[A-Za-z0-9._-]{1,64}$/.test(supplied)) return supplied;
+      return randomUUID();
+    },
+  });
+
+  // Echoed on every response, success or failure. What a Trader can read out to an
+  // operator, and what an operator can grep for.
+  app.addHook("onRequest", async (req, reply) => {
+    reply.header("x-request-id", req.id);
+  });
 
   await app.register(cors, { origin: allowedOrigins(), credentials: false });
   await app.register(rateLimit, { global: false });
@@ -204,7 +271,119 @@ export async function buildApp(): Promise<FastifyInstance> {
     return payload;
   });
 
+  /**
+   * Conditional responses on the routes the surface polls (audit D9).
+   *
+   * The book rarely moves between two six-second polls, but every poll re-serialised and
+   * re-sent the whole Deck -- every Card, every figure, both the `value` and the `display`
+   * of each. An ETag turns an unchanged answer into a 304 with no body.
+   *
+   * Note what this does and does not save. The server still does the work and still builds
+   * the payload, so this is bandwidth and parse time, not upstream cost -- that is what
+   * `upstream.ts` is for. It matters most on a phone on a bad connection, which is a real
+   * way to use this app.
+   *
+   * Deliberately scoped to the polled READ routes. It is never applied to anything that
+   * reserves budget or preparescalldata: a 304 on a money route would be a cached answer
+   * to a question that must be asked fresh every time (ADR-0006).
+   */
+  const CONDITIONAL_ROUTES = new Set(["/deck", "/depth", "/markets", "/book"]);
+
+  app.addHook("onSend", async (req, reply, payload) => {
+    if (req.method !== "GET" || reply.statusCode !== 200) return payload;
+    if (!CONDITIONAL_ROUTES.has(req.routeOptions?.url ?? "")) return payload;
+    if (typeof payload !== "string") return payload;
+
+    // Weak validator: this is byte-equality of a JSON body we just built, not a claim
+    // about a resource's semantic version.
+    const etag = `W/"${createHash("sha1").update(payload).digest("base64url")}"`;
+    reply.header("ETag", etag);
+
+    // `no-cache` means "you may keep a copy, but REVALIDATE before every use" -- which is
+    // what makes the browser send If-None-Match on its own, so the surface gets the saving
+    // without any conditional-request code of its own. Emphatically not `no-store`, which
+    // would forbid the copy entirely, and not a max-age, which would let a Trader read a
+    // Deck the server never confirmed was current.
+    reply.header("Cache-Control", "no-cache");
+
+    if (req.headers["if-none-match"] === etag) {
+      reply.code(304);
+      // A 304 carries no body, and Fastify will not send one if the payload is empty.
+      return "";
+    }
+    return payload;
+  });
+
+  /**
+   * An upstream contract change is an outage, and must read as one.
+   *
+   * Handled centrally rather than per route because every route that touches the book --
+   * /deck, /depth, /book, /markets, /propose, the Cover quote -- inherits the same
+   * failure, and the whole point of `UpstreamShapeChanged` is that it must never be
+   * mistaken for a quiet market. 502 (this backend's upstream is wrong) rather than 500
+   * (this backend is wrong), and logged at error level so it is alertable.
+   *
+   * Everything else keeps Fastify's default handling.
+   */
+  app.setErrorHandler((error, req, reply) => {
+    if (error instanceof UpstreamShapeChanged) {
+      req.log.error({ err: error }, "Upstream order book shape changed");
+      return reply.code(502).send({ error: error.message });
+    }
+    req.log.error({ err: error }, "Unhandled error");
+    const status = typeof (error as { statusCode?: unknown }).statusCode === "number"
+      ? (error as { statusCode: number }).statusCode
+      : 500;
+    return reply.code(status).send(safeErrorResponse(req.log, error, "Something went wrong."));
+  });
+
+  /** Liveness: is this process up. Deliberately cheap -- it touches nothing. */
   app.get("/health", async () => ({ ok: true, canSign: canSign() }));
+
+  /**
+   * Readiness: can this process actually serve, which is a different question.
+   *
+   * `/health` answered `{ ok: true }` without touching a single dependency, so a load
+   * balancer would happily route to an instance whose RPC connection was dead -- and
+   * every request would then fail in the one way this app cannot distinguish from a quiet
+   * market. A health check that checks nothing is worse than none, because it is trusted.
+   *
+   * Split from `/health` rather than replacing it so the liveness probe stays free: this
+   * one makes real upstream calls, so it is rate-limited and meant to be polled slowly.
+   * Degraded (503) rather than down, and it names which dependency, because "the RPC is
+   * unreachable" and "Supabase is unreachable" need different people.
+   */
+  app.get("/health/ready", { config: BOOK_ROUTE_LIMIT }, async (_req, reply) => {
+    const timeout = <T>(p: Promise<T>, ms = 5000): Promise<T> =>
+      Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error("timed out")), ms))]);
+
+    const check = async (name: string, run: () => Promise<unknown>) => {
+      try {
+        await timeout(run());
+        return [name, { ok: true }] as const;
+      } catch (e) {
+        return [name, { ok: false, error: e instanceof Error ? e.message : String(e) }] as const;
+      }
+    };
+
+    const results = Object.fromEntries(
+      await Promise.all([
+        // The chain, through the same client every read path uses.
+        check("rpc", async () => spotPrices()),
+        // Supabase, via the account layer. Optional by design -- `getSupabase` returns
+        // undefined when unconfigured -- so "not configured" is reported, not failed.
+        check("supabase", async () => {
+          const { getSupabase } = await import("./supabase.js");
+          if (!getSupabase()) throw new Error("not configured");
+        }),
+      ])
+    );
+
+    // The agents service is a soft dependency by ADR-0007: Forecast and Suggestion
+    // degrade to 503 and the trading path never touches it. Reported, never fatal.
+    const ready = results.rpc?.ok === true;
+    return reply.code(ready ? 200 : 503).send({ ready, checks: results });
+  });
 
   /**
    * Every market that is quoting, for the ticker rail. Read-only, safe to poll.
@@ -212,7 +391,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    * One request rather than six. The rail is the first thing on the surface and six
    * round trips to paint it would make the app feel broken before a Trader has acted.
    */
-  app.get("/markets", async () => marketOverview());
+  app.get("/markets", { config: BOOK_ROUTE_LIMIT }, async () => marketOverview());
 
   /**
    * The ETH book in detail. Read-only, safe to poll.
@@ -222,7 +401,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    * name it. `impliedMovePct` is an observation derived from live premiums, not a
    * Forecast (ADR-0005).
    */
-  app.get("/book", async () => {
+  app.get("/book", { config: BOOK_ROUTE_LIMIT }, async () => {
     // Same `spotPrice` the Deck and the board read, so the tape and a Card can never
     // disagree about what ETH costs for any reason but the seconds between two polls.
     const [orders, spot] = await Promise.all([buyableOrders("ETH"), spotPrice("ETH").catch(() => null)]);
@@ -303,15 +482,49 @@ export async function buildApp(): Promise<FastifyInstance> {
       // not discarding one already made. Whatever casing the wallet originally signed
       // with, unchanged -- callers compare case-insensitively, same as any other wallet
       // address comparison in this file.
-      verifiedWallet: s.verifiedWallet,
+      //
+      // Withheld from a caller with no account, though (audit B4). The budget above is
+      // fine to read anonymously -- the surface draws the bar before sign-in, and ADR-0014
+      // keeps Deck browsing open to anyone. WHICH wallet a session has proven is a
+      // different class of fact, and a guessable `x-session-id` must not be enough to
+      // learn it. Anyone who legitimately needs it is signed in by definition: the
+      // verification that produced it required an account in the first place.
+      verifiedWallet: userId ? s.verifiedWallet : null,
     };
   });
 
+  /**
+   * Set the Risk Budget. Requires an account (audit B4).
+   *
+   * `x-session-id` is generated in the browser with `Math.random()` -- the exact scheme
+   * `sessions.ts` rejects for proposal ids as "neither unpredictable nor uniform" -- and
+   * any caller can name any session. While this route was gated by `requireToken` alone
+   * that made a stranger's ceiling writable: the token ships inside the public frontend
+   * bundle, and when it is unset `requireToken` admits everyone.
+   *
+   * What that defeats is the guardrail itself. The Risk Budget is the ceiling a Trader set
+   * while calm, and it is the product's central promise. It was never a route to their
+   * funds -- `/fill/prepare` still demands an account AND a wallet proven by signature --
+   * but "someone else can silently raise your limit" is its own kind of broken.
+   *
+   * Requiring an account costs nothing here, which is what makes this the right fix rather
+   * than a compromise: the surface has never called this route. It changes the budget
+   * through `POST /account/settings`, which was account-gated from the start. This is
+   * reached only by the CLI and by tests.
+   */
   app.post("/session/budget", async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const { riskBudgetUsdc } = (req.body ?? {}) as { riskBudgetUsdc?: number };
-    if (typeof riskBudgetUsdc !== "number" || riskBudgetUsdc <= 0)
-      return reply.code(400).send({ error: "riskBudgetUsdc must be a positive number" });
+    const owner = await requireAccount(req, reply);
+    if (!owner) return;
+    // Bounded at both ends. This used to be a bare `> 0`, which left the Trader's own
+    // guardrail unbounded above -- and a single trade was already capped at 1000, so the
+    // ceiling over all trades could be set far past the cap on any one of them.
+    const parsedBudget = BudgetRequest.safeParse(req.body);
+    if (!parsedBudget.success)
+      return reply.code(400).send({
+        error: `riskBudgetUsdc must be a number between $0 and $${MAX_RISK_BUDGET_USDC.toFixed(2)}.`,
+      });
+    const { riskBudgetUsdc } = parsedBudget.data;
     const s = sessionFor(req.headers);
     try {
       setRiskBudget(s, riskBudgetUsdc);
@@ -319,11 +532,11 @@ export async function buildApp(): Promise<FastifyInstance> {
       return reply.code(400).send({ error: e.message });
     }
 
-    const userId = await optionalAccountId(req);
-    if (userId) {
-      void saveAccountSettings(userId, { riskBudgetUsdc });
-      void logActivity(userId, "budget_changed", { riskBudgetUsdc });
-    }
+    // `owner`, not a second lookup: an account is now required above, so the caller is
+    // known by the time we get here and asking again would be a second answer to a
+    // settled question.
+    void saveAccountSettings(owner, { riskBudgetUsdc });
+    void logActivity(owner, "budget_changed", { riskBudgetUsdc });
 
     return { riskBudgetUsdc: s.riskBudgetUsdc, remainingUsdc: remainingBudget(s) };
   });
@@ -336,7 +549,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    * `DeckQuery`. The response also names which expiries this Underlying quotes in this
    * direction, so the surface can render an empty chip as dead rather than hide it.
    */
-  app.get("/deck", async (req, reply) => {
+  app.get("/deck", { config: BOOK_ROUTE_LIMIT }, async (req, reply) => {
     const parsed = DeckQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid Deck request", issues: parsed.error.issues });
 
@@ -365,7 +578,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    * -- the indexer hands back every Position it has ever recorded to count the live ones
    * -- and the fix for that is a loading state, not a cache (ADR-0003).
    */
-  app.get("/depth", async (req, reply) => {
+  app.get("/depth", { config: BOOK_ROUTE_LIMIT }, async (req, reply) => {
     const parsed = DepthQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid depth request", issues: parsed.error.issues });
 
@@ -630,7 +843,16 @@ export async function buildApp(): Promise<FastifyInstance> {
         return;
       }
       const userId = await optionalAccountId(req);
-      if (userId) void logActivity(userId, "fill_settled", { proposalId, txHash, confirmed: verification.succeeded });
+      if (userId) {
+        // AWAITED, unlike the best-effort preference logging elsewhere. This row carries
+        // the txHash of a transaction that moved real USDC and is the record a dispute
+        // turns on -- see DURABLE_ACTIVITY. A failure here must not fail the request (the
+        // fill already happened and the Trader needs to be told), but it must be loud
+        // rather than a console.warn nobody reads.
+        await logActivity(userId, "fill_settled", { proposalId, txHash, confirmed: verification.succeeded }).catch(
+          (e) => req.log.error({ err: e, proposalId, txHash }, "Failed to record fill_settled")
+        );
+      }
       if (userId && verification.succeeded && pendingTerms) {
         void recordFill(userId, {
           walletAddress: pendingTerms.walletAddress,
@@ -671,7 +893,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    * (ADR-0014), or the in-memory session otherwise -- never both, so a Practice Run
    * opened this session while signed in is not double-counted.
    */
-  app.get("/positions", async (req, reply) => {
+  app.get("/positions", { config: BOOK_ROUTE_LIMIT }, async (req, reply) => {
     if (!requireToken(req, reply)) return;
     const parsedQuery = PositionsQuery.safeParse(req.query);
     if (!parsedQuery.success) return reply.code(400).send({ error: parsedQuery.error.issues[0]?.message });
@@ -771,19 +993,19 @@ export async function buildApp(): Promise<FastifyInstance> {
    * CryptoCompare chain). Read-only, ungated like /book and /deck: real external
    * reads, not a billed AI call, so this does not use requireForecastToken.
    */
-  app.get("/news/crypto", async (req, reply) => {
+  app.get("/news/crypto", { config: NEWS_ROUTE_LIMIT }, async (req, reply) => {
     const parsed = CryptoNewsQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
     return getCryptoNewsFeed(parsed.data);
   });
 
-  app.get("/news/macro", async (req, reply) => {
+  app.get("/news/macro", { config: NEWS_ROUTE_LIMIT }, async (req, reply) => {
     const parsed = MacroNewsQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
     return getMacroNewsFeed(parsed.data);
   });
 
-  app.get("/news", async (req, reply) => {
+  app.get("/news", { config: NEWS_ROUTE_LIMIT }, async (req, reply) => {
     const parsed = AllNewsQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
     return getAllNewsFeed(parsed.data);
