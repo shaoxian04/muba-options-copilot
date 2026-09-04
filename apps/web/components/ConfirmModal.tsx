@@ -428,6 +428,13 @@ export function ConfirmModal({
               ))}
             </ul>
           </>
+        ) : busy ? (
+          // The confirmation opens before its price lands -- `pick()` sets confirmOpen
+          // synchronously, then awaits. Without this the in-flight moment rendered the
+          // failure line below, which said a Card had failed while it was still pricing.
+          <p className="belief" data-testid="belief-pricing" aria-live="polite">
+            Pricing this Card…
+          </p>
         ) : (
           <p className="belief" data-testid="belief-gone">
             That Card could not be priced.

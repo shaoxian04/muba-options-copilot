@@ -55,7 +55,11 @@ export function SuggestionCard({
   onAccepted,
 }: {
   /** Same signature as `Surface.deal` -- dealt on accept for the Suggestion's own intent. */
-  deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
+  deal: (
+    line?: string,
+    intent?: Partial<TradeIntent>,
+    opts?: { confirm?: boolean }
+  ) => Promise<ProposeResult | null>;
   /** Whether an account is signed in (ADR-0017). Gates the Risk Profile -- no wallet required. */
   signedIn: boolean;
   /** Switches Chat to the Trade tab. Called only once accept has actually dealt a Deck. */
@@ -190,9 +194,9 @@ export function SuggestionCard({
     // PROPOSAL means the Trader has something to look at.
     let answer: ProposeResult | null = null;
     try {
-      // Accept must never spend. This only records the Trader's intent and deals a
-      // fresh Deck from it -- a Card still has to be picked and Confirm still has to
-      // be pressed before any signature happens (ADR-0008).
+      // Accept must never spend. This records the Trader's intent, deals a fresh Deck
+      // and opens the confirmation on it -- Confirm still has to be pressed before any
+      // signature happens (ADR-0008).
       // All four fields, never a subset: the book is multi-asset now, and a Suggestion
       // made on ETH dealt against whichever Underlying the rail has selected is a trade
       // nobody suggested.
@@ -201,7 +205,7 @@ export function SuggestionCard({
         direction: intent.direction,
         sizeUsdc: intent.sizeUsdc,
         horizonDays: intent.horizonDays,
-      });
+      }, { confirm: true });
     } catch {
       answer = null;
     }
