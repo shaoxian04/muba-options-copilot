@@ -22,10 +22,13 @@ const openInsights = async (page: Page) => {
   await signIn(page);
   await page.goto("/");
   await page.getByRole("tab", { name: "Insights" }).click();
-  await expect(page.getByRole("radiogroup", { name: "Choose a Risk Profile" })).toBeVisible();
+  // No saved pick defaults to "balanced" (RiskProfileChip's own read-only default), shown
+  // on the closed chip immediately -- there is no sheet to open just to reach this state.
+  await expect(page.getByRole("button", { name: "Balanced" })).toBeVisible();
 };
 
 const pickBalanced = async (page: Page) => {
+  await page.getByRole("button", { name: "Balanced" }).click();
   await page.getByRole("radio", { name: /Balanced/ }).click();
   // Choosing a profile closes the sheet (RiskProfileChip's `choose()` runs `close()` in its
   // `finally`), so the radio has already unmounted by the time this resolves -- the pick is
@@ -50,13 +53,14 @@ test.describe("not signed in", () => {
 });
 
 test.describe("the Risk Profile picker", () => {
-  test("opening Insights renders the picker and issues no 404", async ({ page }) => {
+  test("opening Insights defaults to Balanced and issues no 404", async ({ page }) => {
     const traffic = await stubApi(page);
     await openInsights(page);
 
-    // Nothing was picked yet -- SuggestionCard does not call /suggestion until a
-    // profile exists, so the only new request here is the GET /risk-profile probe.
+    // No saved profile assumes "balanced" the moment GET /risk-profile answers null, so
+    // a Suggestion request follows immediately -- no explicit pick required.
     expect(traffic.paths()).toContain("/risk-profile");
+    await expect.poll(() => traffic.paths()).toContain("/suggestion");
     for (const body of traffic.bodies) expect(body).not.toContain('"not stubbed"');
   });
 

@@ -27,8 +27,6 @@ const CHOICES: { name: RiskProfileName; label: string; meaning: string }[] = [
   { name: "aggressive", label: "Aggressive", meaning: "late cover, shortest hold, lowest cost" },
 ];
 
-const PROMPTED_KEY = "copilot-profile-prompted";
-
 type Status = "loading" | "ready" | "error" | "unauthorized";
 
 export function RiskProfileChip({
@@ -60,23 +58,18 @@ export function RiskProfileChip({
     }
     let cancelled = false;
     getRiskProfile()
-      .then((p) => {
+      .then(async (p) => {
         if (cancelled) return;
-        setProfile(p);
-        onProfileChange(p);
+        // GET /suggestion derives the profile from what is actually saved server-side
+        // (ADR-0017) -- it takes no profile from the caller, so a client-only default
+        // would ask for a Suggestion the server still has nothing to answer with.
+        // "Balanced" is the real default: saved for real the first time there is
+        // nothing saved yet, not just assumed locally.
+        const resolved = p ?? (await setRiskProfile("balanced"));
+        if (cancelled) return;
+        setProfile(resolved);
+        onProfileChange(resolved);
         setStatus("ready");
-        if (p === null) {
-          // First run: no saved profile yet. Auto-open the sheet once, guarded by
-          // localStorage so a returning trader who dismissed it isn't nagged again.
-          try {
-            if (!window.localStorage.getItem(PROMPTED_KEY)) {
-              setOpen(true);
-              window.localStorage.setItem(PROMPTED_KEY, "1");
-            }
-          } catch {
-            // Private window / blocked site data -- losing the one-time nudge is fine.
-          }
-        }
       })
       .catch((e) => {
         if (cancelled) return;
