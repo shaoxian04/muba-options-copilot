@@ -1,0 +1,58 @@
+# TLS and the authentication layer in front of the backend.
+#
+# This file is what makes EXTERNAL_AUTH_IN_FRONT=true an honest claim rather than a flag
+# someone flipped to silence a startup check. server.ts refuses a non-loopback bind
+# without a real authentication mechanism in front, and states plainly that
+# COPILOT_API_TOKEN does NOT count -- it ships inside the public frontend bundle and can
+# be read out and replayed from outside the browser.
+#
+# Replace api.example.com with the real hostname. Caddy obtains and renews the
+# certificate itself.
+
+api.example.com {
+	encode gzip
+
+	# The Trader's browser is a cross-origin caller here (the frontend is on Cloudflare
+	# Pages), so the backend's own CORS allowlist does the origin check -- ALLOWED_ORIGIN
+	# must name the frontend's real domain. Caddy does not duplicate that.
+
+	# Security headers the app cannot set for itself.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# The API serves JSON only; nothing it returns should ever be executed.
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+		-Server
+	}
+
+	# The readiness probe stays reachable without authentication, so an external uptime
+	# check can see the difference between "down" and "up but the RPC is dead". It exposes
+	# no secret -- only which dependency is failing.
+	handle /health* {
+		reverse_proxy api:3001
+	}
+
+	# EVERYTHING ELSE IS AUTHENTICATED.
+	#
+	# The line below is a placeholder and must be replaced before this is exposed. Two
+	# options that actually work at zero cost:
+	#
+	#   1. Cloudflare Access in front of the whole hostname (free for up to 50 users),
+	#      which is the simplest real answer and needs no directive here.
+	#   2. `basic_auth` with a bcrypt hash from `caddy hash-password`, if the audience is
+	#      small and known.
+	#
+	# What must NOT go here is a check against COPILOT_API_TOKEN. It is in the public
+	# bundle; anyone who loads the site can read it out.
+	handle {
+		# basic_auth {
+		# 	trader $2a$14$REPLACE_WITH_A_REAL_BCRYPT_HASH
+		# }
+		reverse_proxy api:3001 {
+			# Correlates a browser's request with a backend log line -- app.ts honours an
+			# inbound x-request-id and echoes it back on every response.
+			header_up X-Request-Id {http.request.uuid}
+		}
+	}
+}

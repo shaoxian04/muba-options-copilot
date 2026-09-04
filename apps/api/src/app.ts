@@ -14,7 +14,7 @@
  * `server.ts`, so importing this module can never accidentally open a socket.
  */
 import Fastify, { type FastifyInstance } from "fastify";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
@@ -228,7 +228,35 @@ function resolveCard(session: Session, ref: string) {
 }
 
 export async function buildApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
+  const app = Fastify({
+    logger: { level: process.env.LOG_LEVEL ?? "info" },
+    /**
+     * A request id that survives the trip to the browser and back.
+     *
+     * Fastify already stamps every log line with one, but it was purely internal: a
+     * Trader reporting "it said it couldn't prepare the fill" gave an operator nothing to
+     * search on, and `safeErrorResponse` deliberately withholds the detail from the
+     * response body (correctly -- THETANUTS_RPC_URL carries the provider key). The id is
+     * the missing half of that: safe to show, and the only thing that connects a sentence
+     * on screen to the stack trace behind it.
+     *
+     * An inbound `x-request-id` is honoured so a reverse proxy's id wins, which is what
+     * makes the two sides of a deployment correlate at all.
+     */
+    genReqId: (req) => {
+      const supplied = req.headers["x-request-id"];
+      // Bounded and character-checked: this reaches log lines, so an unbounded
+      // client-supplied string is a log-injection vector rather than a convenience.
+      if (typeof supplied === "string" && /^[A-Za-z0-9._-]{1,64}$/.test(supplied)) return supplied;
+      return randomUUID();
+    },
+  });
+
+  // Echoed on every response, success or failure. What a Trader can read out to an
+  // operator, and what an operator can grep for.
+  app.addHook("onRequest", async (req, reply) => {
+    reply.header("x-request-id", req.id);
+  });
 
   await app.register(cors, { origin: allowedOrigins(), credentials: false });
   await app.register(rateLimit, { global: false });

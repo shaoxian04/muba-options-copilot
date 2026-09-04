@@ -66,6 +66,12 @@ import {
 } from "./wallet";
 import { clampSizeUsdc, rfqSizeCapUsdc } from "./geometry";
 import { confirmWithRetry, shouldReleaseReservation, RFQ_STRANDED_MESSAGE } from "./rfqSubmit";
+import { DECK_POLL_MS, RFQ_POLL_MS, pollWhileVisible, beginLatestOnly, isLatest, endLatestOnly } from "./polling";
+
+// Re-exported so every existing importer of these from `surface` keeps working. They
+// live in `polling.ts` now: the intervals, the hidden-tab rule and "latest wins" are one
+// concern, and they were sitting in the middle of a file that is mostly one large hook.
+export { DECK_POLL_MS, RFQ_POLL_MS, pollWhileVisible, beginLatestOnly, isLatest, endLatestOnly } from "./polling";
 import { supabase } from "./supabaseClient";
 import { STAKE_USDC } from "./constants";
 
@@ -124,51 +130,9 @@ export const RFQ_STRIKE_STEP_PCT = 0.5;
  */
 export const RFQ_TENOR_DAYS: readonly RfqTenorDays[] = [7, 14, 30, 60];
 
-/**
- * How often an open request is re-read while makers can still answer.
- *
- * Slower than the Deck's own poll on purpose. A Deck poll re-prices a book that moves
- * every block; an RFQ's offer window is measured in minutes and each tick costs an
- * on-chain read plus an indexer call. Six seconds is fast enough that an answer appears
- * while the Trader is still looking at the dialog, and slow enough not to hammer either.
- */
-export const RFQ_POLL_MS = 6_000;
 
-/**
- * Run `tick` on an interval, but only while the tab is actually being looked at.
- *
- * Returns a cleanup function, so it can be the whole body of a `useEffect`.
- *
- * Two behaviours, and the second is what keeps this invisible to a Trader: polling pauses
- * while the document is hidden, and fires once immediately on becoming visible again.
- * Without the catch-up, coming back to a tab would show a stale tape for up to the full
- * interval -- which would be a worse experience than the waste it replaced.
- *
- * Guarded for a server render, where `document` does not exist. If it is missing the
- * interval simply runs, which is the old behaviour.
- */
-export function pollWhileVisible(tick: () => void, intervalMs: number): () => void {
-  const hidden = () => typeof document !== "undefined" && document.visibilityState === "hidden";
 
-  const timer = setInterval(() => {
-    if (!hidden()) tick();
-  }, intervalMs);
 
-  if (typeof document === "undefined") return () => clearInterval(timer);
-
-  const onVisibility = () => {
-    if (document.visibilityState === "visible") tick();
-  };
-  document.addEventListener("visibilitychange", onVisibility);
-
-  return () => {
-    clearInterval(timer);
-    document.removeEventListener("visibilitychange", onVisibility);
-  };
-}
-
-/** The tape has to look alive without hammering a route that reads the chain. */
-const DECK_POLL_MS = 6000;
 
 export type Direction = "UP" | "DOWN";
 
@@ -486,52 +450,7 @@ export function agentGate(result: ProposeResult | null): Array<{ label: string; 
   ];
 }
 
-/**
- * One in-flight request at a time per polled resource, and only the freshest answer
- * ever reaches state. Backs `loadDeck` and `loadDepth` below.
- *
- * At the RPC latencies this book is read at -- seconds, not milliseconds -- a single
- * `/deck` or `/depth` read can outlive several ticks of its own poll. Without this, each
- * tick would start its own fetch, several would sit in flight together, and whichever
- * happened to resolve LAST would win even if it was the oldest of the bunch: the
- * surface could walk backward to a stale price under a Trader's eyes.
- *
- * `spinner` is reused as the signal for which of the two problems a call is trying to
- * solve, rather than inventing a second flag: every DELIBERATE call already opts into
- * it -- first paint, and every asset/direction/horizon change -- so a call is
- * deliberate if and only if a Trader is waiting on it. That kind aborts whatever answer
- * is still in flight and starts fresh, because the Trader asked for something else and
- * the old read's answer, however it resolves, must never reach state. A background
- * poll tick omits `spinner`; if a read is already running when one of those fires, it
- * skips itself rather than piling a duplicate read on top of it.
- *
- * Plain functions taking the refs explicitly, not a custom hook returning them bundled
- * -- a hook's return value is a fresh object every render, and putting that in a
- * `useCallback` dependency array would give `loadDeck`/`loadDepth` a new identity on
- * every render too, re-arming their `useEffect`s (and the interval inside one of them)
- * on every render along with it.
- */
-export function beginLatestOnly(
-  abortRef: React.MutableRefObject<AbortController | null>,
-  seqRef: React.MutableRefObject<number>,
-  spinner: boolean
-): { signal: AbortSignal; seq: number } | null {
-  if (!spinner && abortRef.current) return null;
-  abortRef.current?.abort();
-  const controller = new AbortController();
-  abortRef.current = controller;
-  return { signal: controller.signal, seq: ++seqRef.current };
-}
 
-/** True when `seq` is still the latest call issued -- false when a newer one has since started. */
-export function isLatest(seqRef: React.MutableRefObject<number>, seq: number): boolean {
-  return seq === seqRef.current;
-}
-
-/** Clears the in-flight marker, but only if this call is still the latest -- an aborted, superseded call must not clear the newer controller that superseded it. */
-export function endLatestOnly(abortRef: React.MutableRefObject<AbortController | null>, seqRef: React.MutableRefObject<number>, seq: number): void {
-  if (isLatest(seqRef, seq)) abortRef.current = null;
-}
 
 export function useSurface(): Surface {
   const [asset, setAssetState] = useState<UnderlyingSymbol>(DEFAULT_ASSET);
