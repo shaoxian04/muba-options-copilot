@@ -58,6 +58,7 @@ import {
   recentConnectionWithinTtl,
   sendTx,
   setWalletMemoryScope,
+  WALLETCONNECT_ID,
   WalletConnectionCancelled,
   signMessage,
   walletOptionFor,
@@ -748,9 +749,18 @@ export function useSurface(): Surface {
    * Once an account is known: if a wallet was connected recently enough (a rolling
    * few-hour idle window -- `recentConnectionWithinTtl`), silently reconnect it: no
    * picker, no prompt, since the origin is already authorised and every real extension
-   * answers `eth_requestAccounts` instantly in that case. This includes WalletConnect --
-   * resuming its own session is the same local, cached-account check an extension's
-   * reconnect is; nothing about that step alone reaches a Trader's phone.
+   * answers `eth_requestAccounts` instantly in that case.
+   *
+   * WalletConnect is deliberately excluded from this auto-attempt. The "resuming its own
+   * session is inert" assumption only holds if a live, already-paired provider instance
+   * is still in memory -- and it never is after a full page reload, since
+   * `walletConnectConnectorInstance` (wallet.ts) is a plain module-level variable that
+   * resets to nothing every time the module re-initialises. Calling `connect()` on a
+   * connector with no session to resume does not silently fail -- it opens a brand new
+   * pairing, which for WalletConnect means popping the QR modal completely unprompted,
+   * on every refresh or tab switch. Confirmed against a real browser: exactly this.
+   * WalletConnect still gets its one-press "Last used" option in the picker below,
+   * same as any other remembered wallet -- it just never auto-fires there.
    *
    * Gated on `account` for two reasons: ADR-0014 requires signing in before wallet
    * actions at all, and `recentConnectionWithinTtl`/`lastConnectedWalletId` now read
@@ -768,8 +778,9 @@ export function useSurface(): Surface {
    * ran -- AccountControl's ordinary "Verify wallet" retry button covers it from there.
    *
    * Falls back to the picker-only flow whenever nothing recent exists, the remembered
-   * wallet is no longer available, or the silent reconnect itself fails -- a Trader is
-   * never left with no way to connect just because this shortcut didn't.
+   * wallet is WalletConnect, the remembered wallet is no longer available, or the
+   * silent reconnect itself fails -- a Trader is never left with no way to connect just
+   * because this shortcut didn't.
    */
   useEffect(() => {
     const showRecentWalletOption = () =>
@@ -778,7 +789,7 @@ export function useSurface(): Surface {
     if (!account) return;
 
     const recentId = recentConnectionWithinTtl();
-    if (!recentId) {
+    if (!recentId || recentId === WALLETCONNECT_ID) {
       showRecentWalletOption();
       return;
     }
