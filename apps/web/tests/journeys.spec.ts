@@ -888,11 +888,23 @@ test.describe("finishing, for real and for practice", () => {
     await expect(page.getByTestId("quote-moved")).toHaveCount(0);
     await expect(page.getByTestId("confirm")).toBeEnabled();
 
-    // And the guard still bites when the book genuinely reprices under that same size.
+    // And the guard still bites when the book genuinely reprices under that same size --
+    // held open so the auto-refresh that follows can be observed mid-flight, the same
+    // reason the two tests above this one hold /propose too.
     traffic.moveTheQuote();
+    const release = traffic.hold("/propose");
     await page.clock.runFor(7000);
     await expect(page.getByTestId("quote-moved")).toBeVisible();
     await expect(page.getByTestId("confirm")).toBeDisabled();
+
+    // ...and still auto-refreshes at the size the Trader actually chose, not silently
+    // back to the default -- the same guard that used to compare the wrong total now
+    // has to survive a real re-price at $5 too.
+    release();
+    await expect(page.getByTestId("quote-refreshed")).toBeVisible();
+    await expect(page.getByTestId("quote-moved")).toHaveCount(0);
+    await expect(page.getByTestId("confirm")).toBeEnabled();
+    await expect(page.getByTestId("size-value")).toHaveValue("5");
   });
 });
 
