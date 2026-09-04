@@ -25,3 +25,9 @@ apps/agents/data/
 .mcp.json
 # playwright-mcp writes screenshots and snapshots here
 .playwright-mcp/
+# Playwright's own run output, and the scan directories the security tooling leaves behind.
+# Neither was ever tracked; both sat untracked in the root where a broad `git add` would
+# have swept them in.
+test-results/
+playwright-report/
+CLAUDE-SECURITY-*/

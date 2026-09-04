@@ -102,6 +102,12 @@ export interface Session {
    * in a way that could be mistaken for one (ADR-0003 keeps real money on the chain).
    */
   practice: PracticePosition[];
+  /**
+   * When this session was last reached through `sessionFor`. Read only by
+   * `sweepSessions`, which is the one thing standing between a public deployment and
+   * memory that grows with lifetime visitor count.
+   */
+  lastSeenAt: number;
 }
 
 const sessions = new Map<string, Session>();
@@ -145,6 +151,7 @@ export function getSession(id = "default"): Session {
       verifiedWallet: null,
       cardKey: randomBytes(32),
       practice: [],
+      lastSeenAt: Date.now(),
     };
     sessions.set(id, s);
   }
@@ -154,10 +161,52 @@ export function getSession(id = "default"): Session {
 /** The session named by an unauthenticated `x-session-id` header -- see the note above. */
 export const sessionFor = (headers: Record<string, unknown>): Session => {
   const s = getSession(typeof headers["x-session-id"] === "string" ? (headers["x-session-id"] as string) : "default");
+  s.lastSeenAt = Date.now();
   sweepPendingFills(s);
   sweepRfqs(s);
+  sweepSessions();
   return s;
 };
+
+/**
+ * How long a session may sit untouched before it is forgotten.
+ *
+ * Longer than every TTL inside a session, so eviction is never what ends a piece of work
+ * -- the inner sweeps get there first and hand budget back properly on the way. Two hours
+ * covers a Trader who leaves a tab open over lunch and comes back to it.
+ */
+export const SESSION_IDLE_TTL_MS = 2 * 60 * 60 * 1000;
+
+/** How many sessions are currently held. For tests and for an operational gauge. */
+export const sessionCount = (): number => sessions.size;
+
+/**
+ * Forget sessions nobody has touched in a while.
+ *
+ * The outer Map had no sweep at all: proposals, cards, pending fills and RFQs each
+ * expired, but the Session holding them never did, so every distinct visitor left a
+ * permanent entry and memory tracked lifetime visitors rather than concurrent ones.
+ *
+ * Idleness alone is deliberately NOT enough to evict. A Session holds the per-request
+ * ECDH keypair that decrypts an RFQ's sealed bids, and that key exists nowhere else --
+ * dropping a session with a request still live on-chain would strand it exactly as audit
+ * A1 and G1 describe, by a third route. So anything outstanding keeps the session alive,
+ * and the inner sweeps are what eventually clear the way for it to go.
+ */
+export function sweepSessions(): void {
+  const now = Date.now();
+  for (const [id, s] of [...sessions]) {
+    if (now - s.lastSeenAt <= SESSION_IDLE_TTL_MS) continue;
+    // Outstanding work outranks idleness, always.
+    if (s.rfqs.size > 0 || s.pendingFills.size > 0) continue;
+    sessions.delete(id);
+  }
+}
+
+/** Drop every session. Test-only -- the store is module state shared across a suite. */
+export function __resetSessionsForTest(): void {
+  sessions.clear();
+}
 
 export const remainingBudget = (s: Session): number => Math.max(0, s.riskBudgetUsdc - s.spentUsdc);
 

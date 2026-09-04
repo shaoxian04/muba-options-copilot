@@ -33,6 +33,20 @@ jobs:
       - name: Forecast tests
         run: npm run test:node
 
+      # The agents suite had exactly that problem: `test:py` is in `npm test` but had no
+      # CI step, so apps/agents was green by never having run -- including
+      # test_profiles.py, which covers the Strategy Agent boundary ADR-0005 depends on.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Agents tests
+        run: |
+          python -m venv apps/agents/.venv
+          apps/agents/.venv/bin/python -m pip install --quiet -r apps/agents/requirements.txt
+          npm run test:py
+
       # Chromium only. The suite asserts on rendered behaviour and network traffic, not
       # on how any particular engine paints, so a second browser would buy minutes and
       # no coverage.

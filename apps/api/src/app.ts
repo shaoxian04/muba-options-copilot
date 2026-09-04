@@ -98,9 +98,37 @@ export const allowedOrigins = (): string[] =>
  */
 export const COST_ROUTE_MAX_PER_MINUTE = 30;
 
+/**
+ * Applied to the read routes that are POLLED, and which are the most expensive things
+ * this process does.
+ *
+ * Rate limiting used to cover only the routes that spend billed API credit, which was
+ * sound reasoning that left the actual load-bearing routes uncapped: /deck and /depth each
+ * cost a full book read, a market-data read and a getBookState (all-time positions), and
+ * neither had any limit at all.
+ *
+ * Generous rather than tight, because a legitimate Trader polls each of these every six
+ * seconds -- ten a minute per route per tab -- and a limit that punishes two open tabs is a
+ * bug. 120 leaves room for around a dozen tabs before it bites, while still bounding what
+ * one address can do to the RPC bill.
+ */
+export const BOOK_ROUTE_MAX_PER_MINUTE = 120;
+
+/**
+ * Stricter, because these spend somebody else's quota.
+ *
+ * /news/* reaches CryptoPanic, GNews and NewsAPI on the operator's keys, is not token
+ * gated, and is not polled by the surface -- so it needs neither a generous ceiling nor
+ * the benefit of the doubt. It was previously the cheapest route in the app to abuse and
+ * the only one with no defence whatsoever.
+ */
+export const NEWS_ROUTE_MAX_PER_MINUTE = 20;
+
 /** The period `/book` quotes its Implied Move over. A week reads as "the near future". */
 const BOOK_MOVE_DAYS = 7;
 const COST_ROUTE_LIMIT = { rateLimit: { max: COST_ROUTE_MAX_PER_MINUTE, timeWindow: "1 minute" } };
+const BOOK_ROUTE_LIMIT = { rateLimit: { max: BOOK_ROUTE_MAX_PER_MINUTE, timeWindow: "1 minute" } };
+const NEWS_ROUTE_LIMIT = { rateLimit: { max: NEWS_ROUTE_MAX_PER_MINUTE, timeWindow: "1 minute" } };
 
 /**
  * How long a wallet already linked to this account (`accountStore.ts`'s `linked_wallets`,
@@ -234,7 +262,53 @@ export async function buildApp(): Promise<FastifyInstance> {
     return reply.code(status).send(safeErrorResponse(req.log, error, "Something went wrong."));
   });
 
+  /** Liveness: is this process up. Deliberately cheap -- it touches nothing. */
   app.get("/health", async () => ({ ok: true, canSign: canSign() }));
+
+  /**
+   * Readiness: can this process actually serve, which is a different question.
+   *
+   * `/health` answered `{ ok: true }` without touching a single dependency, so a load
+   * balancer would happily route to an instance whose RPC connection was dead -- and
+   * every request would then fail in the one way this app cannot distinguish from a quiet
+   * market. A health check that checks nothing is worse than none, because it is trusted.
+   *
+   * Split from `/health` rather than replacing it so the liveness probe stays free: this
+   * one makes real upstream calls, so it is rate-limited and meant to be polled slowly.
+   * Degraded (503) rather than down, and it names which dependency, because "the RPC is
+   * unreachable" and "Supabase is unreachable" need different people.
+   */
+  app.get("/health/ready", { config: BOOK_ROUTE_LIMIT }, async (_req, reply) => {
+    const timeout = <T>(p: Promise<T>, ms = 5000): Promise<T> =>
+      Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error("timed out")), ms))]);
+
+    const check = async (name: string, run: () => Promise<unknown>) => {
+      try {
+        await timeout(run());
+        return [name, { ok: true }] as const;
+      } catch (e) {
+        return [name, { ok: false, error: e instanceof Error ? e.message : String(e) }] as const;
+      }
+    };
+
+    const results = Object.fromEntries(
+      await Promise.all([
+        // The chain, through the same client every read path uses.
+        check("rpc", async () => spotPrices()),
+        // Supabase, via the account layer. Optional by design -- `getSupabase` returns
+        // undefined when unconfigured -- so "not configured" is reported, not failed.
+        check("supabase", async () => {
+          const { getSupabase } = await import("./supabase.js");
+          if (!getSupabase()) throw new Error("not configured");
+        }),
+      ])
+    );
+
+    // The agents service is a soft dependency by ADR-0007: Forecast and Suggestion
+    // degrade to 503 and the trading path never touches it. Reported, never fatal.
+    const ready = results.rpc?.ok === true;
+    return reply.code(ready ? 200 : 503).send({ ready, checks: results });
+  });
 
   /**
    * Every market that is quoting, for the ticker rail. Read-only, safe to poll.
@@ -242,7 +316,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    * One request rather than six. The rail is the first thing on the surface and six
    * round trips to paint it would make the app feel broken before a Trader has acted.
    */
-  app.get("/markets", async () => marketOverview());
+  app.get("/markets", { config: BOOK_ROUTE_LIMIT }, async () => marketOverview());
 
   /**
    * The ETH book in detail. Read-only, safe to poll.
@@ -252,7 +326,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    * name it. `impliedMovePct` is an observation derived from live premiums, not a
    * Forecast (ADR-0005).
    */
-  app.get("/book", async () => {
+  app.get("/book", { config: BOOK_ROUTE_LIMIT }, async () => {
     // Same `spotPrice` the Deck and the board read, so the tape and a Card can never
     // disagree about what ETH costs for any reason but the seconds between two polls.
     const [orders, spot] = await Promise.all([buyableOrders("ETH"), spotPrice("ETH").catch(() => null)]);
@@ -372,7 +446,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    * `DeckQuery`. The response also names which expiries this Underlying quotes in this
    * direction, so the surface can render an empty chip as dead rather than hide it.
    */
-  app.get("/deck", async (req, reply) => {
+  app.get("/deck", { config: BOOK_ROUTE_LIMIT }, async (req, reply) => {
     const parsed = DeckQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid Deck request", issues: parsed.error.issues });
 
@@ -401,7 +475,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    * -- the indexer hands back every Position it has ever recorded to count the live ones
    * -- and the fix for that is a loading state, not a cache (ADR-0003).
    */
-  app.get("/depth", async (req, reply) => {
+  app.get("/depth", { config: BOOK_ROUTE_LIMIT }, async (req, reply) => {
     const parsed = DepthQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid depth request", issues: parsed.error.issues });
 
@@ -658,7 +732,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    * (ADR-0014), or the in-memory session otherwise -- never both, so a Practice Run
    * opened this session while signed in is not double-counted.
    */
-  app.get("/positions", async (req, reply) => {
+  app.get("/positions", { config: BOOK_ROUTE_LIMIT }, async (req, reply) => {
     if (!requireToken(req, reply)) return;
     const parsedQuery = PositionsQuery.safeParse(req.query);
     if (!parsedQuery.success) return reply.code(400).send({ error: parsedQuery.error.issues[0]?.message });
@@ -758,19 +832,19 @@ export async function buildApp(): Promise<FastifyInstance> {
    * CryptoCompare chain). Read-only, ungated like /book and /deck: real external
    * reads, not a billed AI call, so this does not use requireForecastToken.
    */
-  app.get("/news/crypto", async (req, reply) => {
+  app.get("/news/crypto", { config: NEWS_ROUTE_LIMIT }, async (req, reply) => {
     const parsed = CryptoNewsQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
     return getCryptoNewsFeed(parsed.data);
   });
 
-  app.get("/news/macro", async (req, reply) => {
+  app.get("/news/macro", { config: NEWS_ROUTE_LIMIT }, async (req, reply) => {
     const parsed = MacroNewsQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
     return getMacroNewsFeed(parsed.data);
   });
 
-  app.get("/news", async (req, reply) => {
+  app.get("/news", { config: NEWS_ROUTE_LIMIT }, async (req, reply) => {
     const parsed = AllNewsQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
     return getAllNewsFeed(parsed.data);
