@@ -276,7 +276,7 @@ button[disabled] {
   align-items: center;
   gap: 18px;
   padding: 0 20px;
-  height: 46px;
+  height: 60px;
   flex: 0 0 auto;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
@@ -288,17 +288,13 @@ button[disabled] {
 }
 .shell-header nav {
   display: flex;
-  align-self: stretch;
+  /* No longer stretched to the header's full height -- centred instead (inherited from
+     `.shell-header`'s own `align-items: center`), so the pill has visible breathing room
+     above and below it rather than touching the header's top edge and bottom border. */
   align-items: center;
   gap: 2px;
-  /*
-    Vertical padding is 0 so the nav's interior height matches 44px (header 46px minus
-    1px border top and bottom), which is exactly what the links need for a tap target.
-    The pill background and border-radius supply the visual grouping without adding
-    extra height.
-  */
   padding: 0 3px;
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--well);
   border: 1px solid var(--line);
 }
@@ -313,7 +309,7 @@ button[disabled] {
   display: flex;
   align-items: center;
   padding: 0 14px;
-  border-radius: 999px;
+  border-radius: 4px;
   font-size: 12.5px;
   color: var(--ink-2);
   text-decoration: none;
@@ -2423,6 +2419,11 @@ button[disabled] {
   font-size: 12.5px;
   font-weight: 500;
   text-align: center;
+  /* A narrow column still has to hold "Conservative" -- wrap to a second line
+     instead of clipping it, rather than relying on the sheet always being wide
+     enough. */
+  white-space: normal;
+  overflow-wrap: break-word;
   transition: border-color 0.14s, color 0.14s, background 0.14s;
 }
 .suggestion-card-profile-row button:hover {
@@ -2546,10 +2547,16 @@ button[disabled] {
   margin-top: 2px;
 }
 
-/* The Risk Profile picker's compact form (RiskProfileChip.tsx) -- a chip at the start
-   of the Insights composer row, with a small popover sheet above it. Kept as its own
-   wrapper so the sheet can position relative to the chip without disturbing .ask-row's
-   own flex layout. */
+/* The Risk Profile picker's compact form (RiskProfileChip.tsx) -- a chip on its own row
+   above the ask-row, with a small popover sheet above it. Used to share the ask-row with
+   the question input, but a fixed-width chip alongside a full sentence of placeholder
+   text and an "Ask" button left the input too narrow to read its own placeholder in the
+   Insights column's width -- its own row gives the input the whole row back. */
+.profile-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: 6px 18px 6px;
+}
 .profile-chip-wrap {
   position: relative;
   flex: none;
@@ -2585,9 +2592,16 @@ button[disabled] {
 .profile-sheet {
   position: absolute;
   bottom: calc(100% + 8px);
-  left: 0;
+  /* The chip now sits at the row's right edge (.profile-row), so the sheet anchors to
+     the chip's right edge too and grows leftward -- anchoring left here would instead
+     grow the sheet off the right side of the panel. */
+  right: 0;
   z-index: 5;
-  width: max(240px, 100%);
+  /* Wide enough that "Conservative" (the longest of the three choices) fits its own
+     column without the flex row clipping it -- 240px left "Conservative" truncated to
+     "Conservativ" at this font size. */
+  width: max(320px, 100%);
+  max-width: calc(100vw - 24px);
   padding: 12px;
   background: var(--surface-2);
   border: 1px solid var(--line);
@@ -2598,7 +2612,8 @@ button[disabled] {
 .ask-row {
   display: flex;
   gap: 8px;
-  margin: 6px 18px 18px;
+  /* No top margin: .profile-row directly above already carries its own bottom margin. */
+  margin: 0 18px 18px;
 }
 .ask-row input {
   flex: 1;

@@ -584,6 +584,10 @@ function InsightsEngine({
         {busy ? <p className="from-copilot">Asking…</p> : null}
       </div>
 
+      <div className="profile-row">
+        <RiskProfileChip signedIn={signedIn} onProfileChange={setProfile} />
+      </div>
+
       <form
         className="ask-row"
         onSubmit={(e) => {
@@ -592,7 +596,6 @@ function InsightsEngine({
           setQuestion("");
         }}
       >
-        <RiskProfileChip signedIn={signedIn} onProfileChange={setProfile} />
         <input
           type="text"
           value={question}
