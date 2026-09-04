@@ -383,10 +383,22 @@ const deckFor = (url: URL) => {
  *
  * Only the string is changed, because only the string is what a Trader was shown -- the
  * surface compares what they READ, not a value seven decimals down.
+ *
+ * Both figures move, because a real reprice moves both. `perContractUsd` is the one the
+ * staleness check actually reads: the total premium is a function of the stake as much
+ * as of the book, so comparing totals declared a moved quote every time a Trader touched
+ * the size stepper. Moving the total here too keeps the fixture honest rather than
+ * describing a book that repriced one figure and not the other.
  */
-const reprice = <T extends { cards: Array<{ premiumUsdc: { value: number; display: string } }> }>(deck: T): T => ({
+const reprice = <T extends {
+  cards: Array<{ perContractUsd: { value: number; display: string }; premiumUsdc: { value: number; display: string } }>;
+}>(deck: T): T => ({
   ...deck,
-  cards: deck.cards.map((c) => ({ ...c, premiumUsdc: { ...c.premiumUsdc, display: "$2.15" } })),
+  cards: deck.cards.map((c) => ({
+    ...c,
+    perContractUsd: { ...c.perContractUsd, display: "$2.23" },
+    premiumUsdc: { ...c.premiumUsdc, display: "$2.15" },
+  })),
 });
 
 /**
@@ -715,12 +727,22 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         if (scenario === "empty" || scenario === "no-order") return json(route, noOrder, traffic);
         if (scenario === "over-budget") return json(route, refusal.body, traffic, refusal.status);
 
-        const body = request.postDataJSON() as { cardRef?: string; sizeUsdc?: number };
+        const body = request.postDataJSON() as { cardRef?: string; sizeUsdc?: number; contracts?: number };
         const answer = body.cardRef ? fixtures.proposeByCard[body.cardRef] : proposeAgent;
         if (!answer) return route.fulfill({ status: 410, contentType: "application/json", body: '{"error":"gone"}' });
+
+        // A size asked in contracts becomes a stake, exactly as `stakeForContracts` does
+        // it server-side: these are fixed-price limit orders, so the price per contract
+        // does not move with the size and the conversion is one multiplication. The
+        // browser never does this sum -- that is the whole reason the field round-trips.
+        const size =
+          body.contracts !== undefined && body.cardRef
+            ? Number((body.contracts * answer.proposal.figures.perContractUsd.value).toFixed(6))
+            : body.sizeUsdc ?? answer.proposal.intent.sizeUsdc;
+
         // Issue #30: a resize is a fresh round trip against the same `cardRef` at a
         // different `sizeUsdc`. Standing in for what `priceOrder` would re-derive.
-        return json(route, resizeProposal(answer, body.sizeUsdc ?? answer.proposal.intent.sizeUsdc), traffic);
+        return json(route, resizeProposal(answer, size), traffic);
       }
 
       case "/practice":

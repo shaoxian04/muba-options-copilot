@@ -252,6 +252,7 @@ export default function Page() {
               practiceDone={s.practiceDone}
               gates={agentGate(s.result)}
               onResize={(usdc) => void s.setSize(usdc)}
+              onResizeContracts={(count) => void s.setContracts(count)}
               onConfirm={() => void s.confirm()}
               onPractice={() => void s.runPractice()}
               onClose={s.closeConfirm}

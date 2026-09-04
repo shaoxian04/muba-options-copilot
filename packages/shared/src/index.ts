@@ -132,6 +132,19 @@ export type TradeProposal = z.infer<typeof TradeProposal>;
  */
 export const ProposeRequest = TradeIntent.extend({
   cardRef: z.string().optional(),
+  /**
+   * The size asked for in CONTRACTS instead of dollars.
+   *
+   * The confirmation offers both units and keeps them in step. When this is present the
+   * server converts it to a stake against the named Order and ignores `sizeUsdc`, so the
+   * conversion happens in the one process that is allowed to derive economics at all
+   * (ADR-0006) -- never in the browser, which would be a figure originated in React and
+   * then paid.
+   *
+   * Only meaningful WITH a `cardRef`: "how much is 1.2 contracts" has no answer until an
+   * Order is named, and the route refuses the combination rather than picking one.
+   */
+  contracts: z.number().positive().max(100_000).optional(),
 });
 export type ProposeRequest = z.infer<typeof ProposeRequest>;
 
