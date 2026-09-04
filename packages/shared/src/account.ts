@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { UnderlyingSymbol } from "./primitives.js";
 import { WalletAddress } from "./fill.js";
-import { MAX_RISK_BUDGET_USDC } from "./index.js";
+import { MAX_RISK_BUDGET_USDC } from "./limits.js";
 
 /**
  * What POST /account/settings accepts -- every field optional, a partial update.

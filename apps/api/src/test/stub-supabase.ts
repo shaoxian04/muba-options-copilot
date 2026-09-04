@@ -22,6 +22,8 @@ interface StubState {
   linkedWallets: Map<string, { wallet_address: string; verified_at: string }>;
   practicePositions: Array<{ id: string; user_id: string; figures: unknown; asset: string; direction: string; opened_at: string }>;
   activity: Array<{ id: string; user_id: string; action_type: string; detail: unknown; created_at: string }>;
+  /** Durable sealed-bid requests (audit A1), keyed by request id. */
+  rfqRequests: Map<string, Record<string, unknown>>;
 }
 
 export const state: StubState = {
@@ -30,6 +32,7 @@ export const state: StubState = {
   linkedWallets: new Map(),
   practicePositions: [],
   activity: [],
+  rfqRequests: new Map(),
 };
 
 export function resetSupabaseStub(): void {
@@ -38,6 +41,7 @@ export function resetSupabaseStub(): void {
   state.linkedWallets.clear();
   state.practicePositions = [];
   state.activity = [];
+  state.rfqRequests.clear();
   timestampCounter = 0;
 }
 
@@ -62,7 +66,22 @@ export function registerUser(token: string, user: StubUser): void {
 function tableFor(table: string) {
   return {
     select: (_cols?: string) => ({
-      eq: (_col: string, val: string) => ({
+      eq: (col: string, val: string) => ({
+        // rfq_requests is read two ways: every row for a session, and one row by id.
+        // `then` makes the un-terminated `.eq()` chain awaitable, which is how
+        // `loadRfqs` reads it.
+        then: (resolve: (r: { data: unknown; error: null }) => void) => {
+          if (table !== "rfq_requests") return resolve({ data: [], error: null });
+          const rows = [...state.rfqRequests.values()].filter((r) => r[col] === val);
+          return resolve({ data: rows, error: null });
+        },
+        eq: (col2: string, val2: string) => ({
+          maybeSingle: async () => {
+            if (table !== "rfq_requests") return { data: null, error: { message: `unstubbed table ${table}` } };
+            const row = [...state.rfqRequests.values()].find((r) => r[col] === val && r[col2] === val2);
+            return { data: row ?? null, error: null };
+          },
+        }),
         single: async () => {
           if (table === "account_settings") {
             const row = state.accountSettings.get(val);
@@ -110,8 +129,18 @@ function tableFor(table: string) {
         });
         return { error: null };
       }
+      if (table === "rfq_requests") {
+        state.rfqRequests.set(row.id as string, { ...row, created_at: nextTimestamp() });
+        return { error: null };
+      }
       return { error: { message: `unstubbed table ${table}` } };
     },
+    delete: () => ({
+      eq: async (_col: string, val: string) => {
+        state.rfqRequests.delete(val);
+        return { error: null };
+      },
+    }),
     insert: async (row: Record<string, unknown>) => {
       if (table === "practice_positions") {
         state.practicePositions.push({

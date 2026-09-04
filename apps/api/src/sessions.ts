@@ -108,6 +108,14 @@ export interface Session {
    * memory that grows with lifetime visitor count.
    */
   lastSeenAt: number;
+  /**
+   * Whether durable RFQ records have already been pulled back for this session.
+   *
+   * One query per session lifetime rather than one per request. A session created fresh
+   * after a restart has an empty Map and requests sitting in the store; this is what
+   * reunites them.
+   */
+  rfqsRehydrated: boolean;
 }
 
 const sessions = new Map<string, Session>();
@@ -152,6 +160,7 @@ export function getSession(id = "default"): Session {
       cardKey: randomBytes(32),
       practice: [],
       lastSeenAt: Date.now(),
+      rfqsRehydrated: false,
     };
     sessions.set(id, s);
   }
@@ -369,6 +378,56 @@ export function rememberRfq(s: Session, record: Omit<RfqRecord, "id" | "at">): R
   return stored;
 }
 
+/**
+ * Put a request beyond the reach of a restart, and say whether it worked.
+ *
+ * Separate from `rememberRfq` and deliberately awaited by the caller BEFORE any signature
+ * is requested. The in-memory Map alone was the whole of audit A1: opening an RFQ commits
+ * a Reserve Price on-chain and then waits, ADR-0017 says that wait is real and can run to
+ * an hour, and any restart in between destroyed the ECDH key that decrypts the offers --
+ * leaving a funded quotation nobody could ever read.
+ *
+ * Returns false when no store is configured, which is the ordinary local posture. `/rfq`
+ * decides what to do about it rather than this module guessing.
+ */
+export async function persistRfq(s: Session, record: RfqRecord): Promise<boolean> {
+  const { saveRfq } = await import("./supabase/rfqStore.js");
+  return saveRfq(s.id, record);
+}
+
+/**
+ * Write a record's current state back, best-effort.
+ *
+ * Used after a phase change -- a quotation id arriving, a settle landing. Unlike the
+ * initial write this one is not awaited by its callers: by the time it runs the key is
+ * already safe, and what is being updated is state the chain can be re-read for.
+ */
+export function updateRfq(s: Session, record: RfqRecord): void {
+  void import("./supabase/rfqStore.js").then(({ saveRfq }) => saveRfq(s.id, record));
+}
+
+/**
+ * Bring back any requests this session opened before a restart.
+ *
+ * Records land back in the Map with their reservations re-applied to `spentUsdc`, because
+ * a Reserve Price committed on-chain is still committed after a restart and a ceiling that
+ * forgets it is not a ceiling.
+ *
+ * Idempotent: a record already in memory is left alone, so calling this on every request
+ * costs one query and changes nothing.
+ */
+export async function rehydrateRfqs(s: Session): Promise<void> {
+  if (s.rfqsRehydrated) return;
+  s.rfqsRehydrated = true;
+
+  const { loadRfqs } = await import("./supabase/rfqStore.js");
+  for (const record of await loadRfqs(s.id)) {
+    if (s.rfqs.has(record.id)) continue;
+    s.rfqs.set(record.id, record);
+    if (record.phase !== "SETTLED" && record.phase !== "CANCELLED") s.spentUsdc += record.reservedUsdc;
+  }
+}
+
 /** Constant-time lookup, so response timing does not leak how much of an id was right. */
 export function recallRfq(s: Session, id: string): RfqRecord | undefined {
   const key = constantTimeFind([...s.rfqs.keys()], id);
@@ -392,6 +451,15 @@ export function releaseRfq(s: Session, record: RfqRecord): void {
   s.spentUsdc -= record.reservedUsdc;
   record.reservedUsdc = 0;
   s.rfqs.delete(record.id);
+
+  // A record that never reached the chain can be forgotten entirely. One that DID must
+  // not be: its keypair is the only thing that can read the offers against it, and
+  // deleting it here is precisely the loss audit A1 and G1 describe. Keep it, marked
+  // cancelled, holding nothing against the budget.
+  void import("./supabase/rfqStore.js").then(async ({ saveRfq, deleteRfq }) => {
+    if (record.quotationId === null) await deleteRfq(record.id);
+    else await saveRfq(s.id, { ...record, phase: "CANCELLED", reservedUsdc: 0 });
+  });
 }
 
 /**
@@ -406,6 +474,7 @@ export function settleRfq(s: Session, record: RfqRecord, premiumUsdc: number, op
   record.reservedUsdc = premiumUsdc;
   record.optionAddress = optionAddress;
   record.phase = "SETTLED";
+  updateRfq(s, record);
 }
 
 /** Release anything abandoned. Deleting the current key during a for-of over the same Map is safe. */
