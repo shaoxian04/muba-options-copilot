@@ -65,6 +65,7 @@ import {
   type WalletOption,
 } from "./wallet";
 import { clampSizeUsdc, rfqSizeCapUsdc } from "./geometry";
+import { confirmWithRetry, shouldReleaseReservation, RFQ_STRANDED_MESSAGE } from "./rfqSubmit";
 import { supabase } from "./supabaseClient";
 import { STAKE_USDC } from "./constants";
 
@@ -1145,6 +1146,14 @@ export function useSurface(): Surface {
     setRfqBusy(true);
     setRfqRefusal(null);
     let prepared: PreparedRfq | null = null;
+    /**
+     * Proof that a transaction reached the chain, and the pivot the whole error path
+     * turns on. `sendTx` waits for its own receipt, so the moment this is set the
+     * Reserve Price is a real commitment and the reservation behind it may NEVER be
+     * released -- releasing deletes the record, and with it the only key that can
+     * decrypt this request's sealed bids.
+     */
+    let broadcastTxHash: string | null = null;
     try {
       prepared = await requestRfq({
         underlying: asset,
@@ -1154,11 +1163,18 @@ export function useSurface(): Surface {
         sizeUsdc: rfqSizeUsdc,
         walletAddress,
       });
-      const txHash = await sendTx(prepared.requestTx);
+      broadcastTxHash = await sendTx(prepared.requestTx);
 
-      const confirmed = await confirmRfq(prepared.requestId, txHash);
+      // Retried rather than taken at face value: the backend answers 425 while its own
+      // RPC catches up with the wallet's, and that "try again shortly" used to fall
+      // through to the release path below and destroy a live request.
+      const confirmed = await confirmWithRetry(confirmRfq, prepared.requestId, broadcastTxHash);
       if (!confirmed.opened || !confirmed.status) {
+        // The chain itself says it did not open -- reverted, or no quotation id in the
+        // receipt. The backend has already released the reservation, so there is nothing
+        // stranded and nothing was charged.
         setRfqRefusal("The request did not open on-chain. No USDC moved. You can try again.");
+        await refreshMoney();
         return;
       }
       rfqRequestIdRef.current = prepared.requestId;
@@ -1166,15 +1182,30 @@ export function useSurface(): Surface {
       say(`Requested: ${confirmed.status.ask.sentence}`);
       await refreshMoney();
     } catch (e) {
-      // Only report a decline if the request was actually prepared -- there is nothing to
-      // release otherwise. `/rfq` reserves the Reserve Price synchronously the moment it
-      // runs, so the displayed budget has to catch up on this path too, not just on
-      // success, or the Trader reads a budget that looks untouched.
-      if (prepared) {
-        await confirmRfq(prepared.requestId).catch(() => {});
+      // A reservation may only be given back when nothing was broadcast -- see
+      // `shouldReleaseReservation`. `/rfq` reserves the Reserve Price synchronously the
+      // moment it runs, so on that path the displayed budget has to catch up here too,
+      // or the Trader reads a budget that looks untouched.
+      if (shouldReleaseReservation({ prepared: prepared !== null, broadcastTxHash })) {
+        await confirmRfq(prepared!.requestId).catch(() => {
+          // The release itself failed. Say so rather than swallowing it: the Reserve
+          // Price stays held until the one-hour TTL sweeps it, and a Trader looking at
+          // budget they cannot spend deserves the reason (audit G6).
+          setRfqRefusal(
+            "That request was not opened, but the hold on your Risk Budget could not be released " +
+              "just now. It clears automatically within the hour."
+          );
+        });
         await refreshMoney();
       }
-      if (e instanceof ApiRefusal) setRfqRefusal(e.message);
+
+      if (broadcastTxHash) {
+        // Open on-chain, unconfirmed here. Keep the id so a reload can pick it back up,
+        // and never call the no-hash confirm that would delete it.
+        rfqRequestIdRef.current = prepared?.requestId ?? null;
+        setRfqRefusal(RFQ_STRANDED_MESSAGE);
+        await refreshMoney();
+      } else if (e instanceof ApiRefusal) setRfqRefusal(e.message);
       else setRfqRefusal(e instanceof Error ? e.message : "The wallet could not open this request.");
     } finally {
       setRfqBusy(false);
