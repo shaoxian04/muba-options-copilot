@@ -33,9 +33,20 @@ test("MarketData rejects an unknown priceSource", () => {
   assert.equal(MarketData.safeParse({ ...validMarketData, priceSource: "binance" }).success, false);
 });
 
-test("Headline requires source to be literally 'simulated'", () => {
-  const result = Headline.safeParse({ text: "ETH rallies", sentiment: "bullish", source: "live" });
-  assert.equal(result.success, false);
+test("Headline accepts any source string, and requires text and sentiment", () => {
+  assert.equal(Headline.safeParse({ text: "ETH rallies", sentiment: "bullish", source: "cryptopanic" }).success, true);
+  assert.equal(Headline.safeParse({ text: "ETH rallies", sentiment: "bullish" }).success, false);
+});
+
+test("Headline accepts optional url and publishedAt", () => {
+  const result = Headline.safeParse({
+    text: "ETH rallies",
+    sentiment: "bullish",
+    source: "cryptopanic",
+    url: "https://example.com/eth-rallies",
+    publishedAt: "2026-09-04T00:00:00Z",
+  });
+  assert.equal(result.success, true);
 });
 
 test("MarketScenario accepts a full valid scenario", () => {
@@ -49,18 +60,18 @@ test("MarketScenario accepts a full valid scenario", () => {
   assert.equal(result.success, true);
 });
 
-test("NewsAnalysis requires source to be literally 'simulated'", () => {
+test("NewsAnalysis accepts any source string", () => {
   const result = NewsAnalysis.safeParse({
     symbol: "ETH",
     horizon: "7d",
     overallSentiment: "bullish",
     summary: "Mixed but leaning positive.",
     headlines: [],
-    source: "live",
+    source: "cryptopanic",
     disclaimer: "opinion",
     generatedAt: new Date().toISOString(),
   });
-  assert.equal(result.success, false);
+  assert.equal(result.success, true);
 });
 
 test("PricePrediction requires a groundedOn MarketData object", () => {
