@@ -162,7 +162,14 @@ export default function Page() {
                   {proposal ? (
                     <span className={`tag${proposal.chosenBy === "TRADER" ? " mine" : ""}`} data-testid="chosen-by">
                       <i aria-hidden="true" />
-                      {proposal.chosenBy === "TRADER" ? "your pick, not the agent's" : "the agent picked this"}
+                      {/*
+                        The agent's half names the strike rather than saying "this". The
+                        tag sits above the Deck, and "this" pointed at nothing a Trader
+                        could find -- the ringed Card can be several rows down.
+                      */}
+                      {proposal.chosenBy === "TRADER"
+                        ? "your pick, not the agent's"
+                        : `the agent picked ${proposal.figures.strike.display}`}
                     </span>
                   ) : null}
                 </div>

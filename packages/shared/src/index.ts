@@ -603,6 +603,14 @@ export const ProposeResult = z.discriminatedUnion("kind", [
      * does not already expose.
      */
     cardRef: z.string(),
+    /**
+     * The expiry bucket /deck would file this Order under -- not the horizon that was
+     * asked for. /propose takes the NEAREST expiry to a horizon and /deck filters on
+     * the exact one, so the two disagree whenever the book has no order on the day
+     * requested. Without this the surface renders a Deck the dealt cardRef isn't in,
+     * and nothing highlights.
+     */
+    horizonDays: z.number().int(),
     remainingUsdc: z.number(),
   }),
   z.object({

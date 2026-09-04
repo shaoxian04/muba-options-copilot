@@ -108,6 +108,40 @@ test.describe("a Suggestion", () => {
     expect(traffic.paths()).not.toContain("/fill");
   });
 
+  /*
+    The regression this suite could not see before.
+
+    `/propose` takes the NEAREST live expiry; `/deck` filters on the exact one. A
+    Suggestion over 3 days is dealt the 2-day $2,380 put, so the Card it names is in
+    `deck-down-2` -- not in the row the surface was showing. Until the answer carried
+    its own `horizonDays`, the surface stayed on the wrong expiry and the ring landed
+    on nothing a Trader could match to the tag above it.
+
+    Note the fixtures number cardRefs per file, so `card-0` here is genuinely the
+    2-day $2,380 Card in `deck-down-2` and a different Order than `deck-down-1`'s
+    `card-0` -- which is exactly why the assertions below check the STRIKE, not the ref.
+  */
+  test("Accept follows the proposal to its own expiry and rings the Card it named", async ({ page }) => {
+    await stubApi(page, "suggestion-off-horizon");
+    await openInsights(page);
+    await pickBalanced(page);
+    await page.getByRole("button", { name: "See what this buys" }).click();
+
+    await expect(page.getByRole("tab", { name: "Trade", exact: true })).toHaveAttribute("aria-selected", "true");
+
+    // The Suggestion asked for 3 days; the Order dealt expires in 2, so that is the
+    // chip that has to be live and selected. Given longer than the default: accept is
+    // three round trips deep -- /suggestion, /propose, then the Deck reload the answer
+    // triggers -- and the default 5s is tight for that under a full parallel run.
+    await expect(page.getByTestId("horizon-2")).toHaveAttribute("aria-pressed", "true", { timeout: 15_000 });
+
+    // Exactly one Card is ringed, and it is the one the tag names.
+    await expect(page.getByTestId("chosen-by")).toContainText("the agent picked $2,380.00");
+    const dealt = page.locator("[data-testid='card'].dealt");
+    await expect(dealt).toHaveCount(1);
+    await expect(dealt).toContainText("$2,380.00");
+  });
+
   test("Dismiss collapses to the dismissed state and records the Decision", async ({ page }) => {
     const traffic = await stubApi(page);
     await openInsights(page);
