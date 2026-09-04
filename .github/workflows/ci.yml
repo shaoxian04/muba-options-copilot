@@ -25,8 +25,20 @@ jobs:
       - name: Typecheck both workspaces
         run: npm run typecheck
 
-      - name: Unit and contract tests
-        run: npm run test:unit
+      # Runs the same suite as `test:unit` and additionally enforces the coverage
+      # thresholds in vitest.config.ts. Nothing measured coverage before, so the house
+      # rule of 80% was an impression rather than a number; this makes a regression fail
+      # the build instead of going unnoticed.
+      - name: Unit and contract tests, with coverage thresholds
+        run: npm run test:coverage
+
+      - name: Keep the coverage report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
 
       # The Forecast suites are written against `node:test` rather than Vitest, so they
       # need their own step -- otherwise they are green by never having run.

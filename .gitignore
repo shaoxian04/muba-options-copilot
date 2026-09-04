@@ -31,3 +31,6 @@ apps/agents/data/
 test-results/
 playwright-report/
 CLAUDE-SECURITY-*/
+# v8 coverage output. The thresholds live in vitest.config.ts; the report is a build
+# artifact, uploaded by CI rather than committed.
+coverage/

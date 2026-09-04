@@ -47,7 +47,7 @@ function endpoint(url: string): ethers.JsonRpcProvider {
  * poll to defend against a disagreement that does not arise for `eth_call` on a finalized
  * block. The primary keeps priority 1 so the fallback is genuinely a fallback.
  */
-function buildProvider(): ethers.AbstractProvider {
+export function buildProvider(): ethers.AbstractProvider {
   const primary = endpoint(requireRpc());
   const spare = fallbackRpc();
   if (!spare) return primary;
