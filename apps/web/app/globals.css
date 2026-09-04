@@ -400,6 +400,70 @@ button[disabled] {
   color: var(--ink-2);
   max-width: 94%;
 }
+
+/*
+  The collapsible Copilot rail. Additive only -- `.app`'s and `.chat`'s own rules
+  above are untouched; these just say what changes when `collapsed` is true.
+
+  `.chat-body` is a new wrapper around what used to be `.chat`'s direct flex
+  children (the tabs, the log, the ask row) -- it needs `.chat`'s own flex behaviour
+  reproduced on it so wrapping them changes nothing about how they lay out.
+*/
+.chat-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.app.app-chat-collapsed {
+  grid-template-columns: 44px minmax(0, 1fr);
+}
+.app {
+  transition: grid-template-columns 0.18s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .app {
+    transition: none;
+  }
+}
+.chat-collapsed .chat-body {
+  display: none;
+}
+.chat-collapsed .hd {
+  padding: 15px 4px;
+  justify-content: center;
+}
+.chat-collapsed .hd .who,
+.chat-collapsed .hd .lbl {
+  display: none;
+}
+.chat-collapse-btn {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1;
+}
+.chat-collapse-btn:focus-visible {
+  outline: 2px solid var(--hue);
+  outline-offset: 2px;
+}
+.chat-collapsed-label {
+  writing-mode: vertical-rl;
+  color: var(--ink-2);
+  letter-spacing: 0.08em;
+  font-size: 11px;
+  text-align: center;
+  margin: 0 auto;
+  padding-top: 6px;
+}
 /* ================= right: money ================= */
 /* ================= the ticker rail ================= */
 /*
@@ -1762,6 +1826,24 @@ button[disabled] {
     position: sticky;
     bottom: 0;
     z-index: 5;
+  }
+}
+
+/*
+  A 44px rail makes no sense on a phone -- the mobile layout above already stacks
+  `.chat` above `.rig` at full width, so collapsing just hides the panel outright.
+*/
+@media (max-width: 900px) {
+  .app.app-chat-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .chat-collapsed .chat-body {
+    display: flex;
+    flex-direction: column;
+  }
+  .chat-collapse-btn,
+  .chat-collapsed-label {
+    display: none;
   }
 }
 

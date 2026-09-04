@@ -91,6 +91,8 @@ export function Chat({
   deal,
   pick,
   signedIn,
+  collapsed,
+  onToggleCollapsed,
 }: {
   log: ChatLine[];
   busy: boolean;
@@ -109,6 +111,10 @@ export function Chat({
    * check, to decide whether it fetches (ADR-0017).
    */
   signedIn: boolean;
+  /** Whether the panel is collapsed to a thin rail -- owned by `page.tsx`, not this file. */
+  collapsed: boolean;
+  /** Flips `collapsed` in `page.tsx`. The same button does both directions. */
+  onToggleCollapsed: () => void;
 }) {
   // The route this page happened to load from decides the starting tab (so a direct
   // hit or refresh on /insights opens there) -- but switching tabs afterward never
@@ -222,7 +228,7 @@ export function Chat({
 
   return (
     <div
-      className="chat"
+      className={`chat${collapsed ? " chat-collapsed" : ""}`}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes(CARD_DRAG_MIME)) e.preventDefault();
       }}
@@ -231,42 +237,60 @@ export function Chat({
       <div className="hd">
         <span className="who">Copilot</span>
         <span className="lbl">{engine === "trade" ? "proposes · never spends" : "answers · never trades"}</span>
-      </div>
-
-      <div className="engine-tabs" role="tablist" aria-label="What Copilot is doing">
-        <button type="button" role="tab" aria-selected={engine === "trade"} onClick={() => selectEngine("trade")}>
-          Trade
-        </button>
         <button
           type="button"
-          role="tab"
-          aria-selected={engine === "insights"}
-          onClick={() => selectEngine("insights")}
+          className="chat-collapse-btn"
+          onClick={onToggleCollapsed}
+          aria-expanded={!collapsed}
+          aria-controls="copilot-body"
+          aria-label={collapsed ? "Show the Copilot panel" : "Hide the Copilot panel"}
         >
-          Insights
+          <span aria-hidden="true">{collapsed ? "›" : "‹"}</span>
         </button>
       </div>
 
-      {signedIn ? null : (
-        <a href="/login" className="chat-signin-gate" data-testid="chat-signin-gate">
-          Sign in to chat with the Copilot.
-        </a>
-      )}
+      {collapsed ? (
+        <span className="chat-collapsed-label" aria-hidden="true">
+          Copilot
+        </span>
+      ) : null}
 
-      {engine === "trade" ? (
-        <TradeEngine log={log} busy={busy} submitTradeMessage={submitTradeMessage} disabled={!signedIn} />
-      ) : (
-        <InsightsEngine
-          log={insightsLog}
-          busy={insightsBusy}
-          onAsk={(q) => void runInsightsQuestion(q)}
-          deal={deal}
-          pick={pick}
-          signedIn={signedIn}
-          onAccepted={() => selectEngine("trade")}
-          disabled={!signedIn}
-        />
-      )}
+      <div id="copilot-body" className="chat-body">
+        <div className="engine-tabs" role="tablist" aria-label="What Copilot is doing">
+          <button type="button" role="tab" aria-selected={engine === "trade"} onClick={() => selectEngine("trade")}>
+            Trade
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={engine === "insights"}
+            onClick={() => selectEngine("insights")}
+          >
+            Insights
+          </button>
+        </div>
+
+        {signedIn ? null : (
+          <a href="/login" className="chat-signin-gate" data-testid="chat-signin-gate">
+            Sign in to chat with the Copilot.
+          </a>
+        )}
+
+        {engine === "trade" ? (
+          <TradeEngine log={log} busy={busy} submitTradeMessage={submitTradeMessage} disabled={!signedIn} />
+        ) : (
+          <InsightsEngine
+            log={insightsLog}
+            busy={insightsBusy}
+            onAsk={(q) => void runInsightsQuestion(q)}
+            deal={deal}
+            pick={pick}
+            signedIn={signedIn}
+            onAccepted={() => selectEngine("trade")}
+            disabled={!signedIn}
+          />
+        )}
+      </div>
     </div>
   );
 }

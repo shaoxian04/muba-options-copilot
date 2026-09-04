@@ -15,6 +15,7 @@
  * `ConfirmModal`, which holds the only Confirm in the product -- so the Deck section
  * below is the one place left that can put a Trader in front of it.
  */
+import { useEffect, useState } from "react";
 import { AccountControl } from "../components/AccountControl";
 import { Board } from "../components/Board";
 import { Chat } from "../components/Chat";
@@ -30,9 +31,32 @@ import { WalletPicker } from "../components/WalletPicker";
 import { YoursPanel } from "../components/YoursPanel";
 import { agentGate, useNow, useSurface } from "../lib/surface";
 
+const COPILOT_COLLAPSED_KEY = "copilot-collapsed";
+
 export default function Page() {
   const s = useSurface();
   const now = useNow();
+
+  // Starts false so server and first client render match, then reads the saved
+  // choice once mounted -- localStorage doesn't exist during SSR, and reading it
+  // synchronously here would mismatch the server's render.
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    try {
+      setCollapsed(window.localStorage.getItem(COPILOT_COLLAPSED_KEY) === "1");
+    } catch {
+      // Private mode can throw on read -- default to expanded.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(COPILOT_COLLAPSED_KEY, collapsed ? "1" : "0");
+    } catch {
+      // Private mode can throw on write -- losing the preference is fine.
+    }
+  }, [collapsed]);
 
   const proposal = s.result?.kind === "PROPOSAL" ? s.result.proposal : null;
 
@@ -44,7 +68,7 @@ export default function Page() {
   const horizonLabel = s.deck?.expiries.find((e) => e.horizonDays === s.horizonDays)?.label;
 
   return (
-    <main className="app">
+    <main className={`app${collapsed ? " app-chat-collapsed" : ""}`}>
       <Chat
         log={s.log}
         busy={s.busy}
@@ -52,6 +76,8 @@ export default function Page() {
         deal={s.deal}
         pick={s.pick}
         signedIn={!!s.account}
+        collapsed={collapsed}
+        onToggleCollapsed={() => setCollapsed((v) => !v)}
       />
 
       <div className="rig">

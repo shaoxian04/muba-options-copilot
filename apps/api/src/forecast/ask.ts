@@ -133,15 +133,18 @@ async function gatherCoinData(
   const gathered: GatheredCoin = { symbol: marketData.symbol, market: marketData };
 
   
-  if (request.analyses.includes("indicators") || request.analyses.includes("price")) {
-    try {
-      gathered.indicators = await (deps?.indicators ?? fetchIndicators)(marketData.symbol);
-    } catch {
-      /* no indicators for this coin right now */
-    }
-  }
+  // Started, not awaited: only `predictPrice` below needs this, and `analyzeNews` runs
+  // in between -- so the fetch overlaps that call instead of delaying it. The catch is
+  // attached here so a failure stays "no indicators for this coin" and never rejects.
+  const indicatorsPending =
+    request.analyses.includes("indicators") || request.analyses.includes("price")
+      ? (deps?.indicators ?? fetchIndicators)(marketData.symbol).catch(() => undefined)
+      : undefined;
 
   if (request.analyses.includes("news") && scenario) gathered.news = await analyzeNews(scenario, deps?.create);
+
+  gathered.indicators = await indicatorsPending;
+
   if (request.analyses.includes("price") && scenario)
     gathered.price = await predictPrice(scenario, deps?.create, gathered.indicators);
   if (request.analyses.includes("risk-benefit") && scenario)
