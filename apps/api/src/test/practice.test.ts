@@ -384,13 +384,19 @@ describe("account-aware GET /session and POST /session/budget", () => {
     expect(activity.some((a) => a.actionType === "budget_changed")).toBe(true);
   });
 
-  it("an anonymous budget change does not touch any account", async () => {
-    await app.inject({
+  it("an anonymous budget change is refused outright, not merely ignored", async () => {
+    // This used to assert only that no account row was written, which stayed true for the
+    // wrong reason once the route began refusing: a `Math.random()` session id was enough
+    // to move ANY session's ceiling, and the account was simply not the thing being
+    // damaged (audit B4). Asserting the refusal is what actually pins the fix.
+    const res = await app.inject({
       method: "POST",
       url: "/session/budget",
       headers: { "x-session-id": freshSession() },
       payload: { riskBudgetUsdc: 40 },
     });
+
+    expect(res.statusCode).toBe(401);
     expect(supabaseState.accountSettings.size).toBe(0);
   });
 

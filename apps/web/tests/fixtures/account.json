@@ -1,6 +1,6 @@
 {
   "settings": {
-    "riskBudgetUsdc": 5,
+    "riskBudgetUsdc": 10,
     "defaultAsset": null,
     "defaultDirection": null
   },

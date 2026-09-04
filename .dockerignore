@@ -1,0 +1,31 @@
+# Never build a secret into an image.
+.env
+.env.local
+.env*.local
+*.key
+wallet.json
+
+node_modules
+**/node_modules
+.git
+.worktrees
+.claude
+
+# Build and test output -- nothing here belongs in a runtime image.
+**/.next
+dist
+build
+out
+test-results
+playwright-report
+*.log
+apps/agents/.venv
+**/__pycache__
+CLAUDE-SECURITY-*
+
+# NOTE on apps/web: it is deliberately NOT excluded wholesale. The frontend is deployed
+# separately as a static build (Cloudflare Pages / Netlify) and none of its source enters
+# the image -- the Dockerfile copies only `apps/web/package.json`, which `npm ci` needs to
+# resolve the workspace graph at all. Excluding the directory here would break that COPY.
+apps/web/tests
+apps/web/public

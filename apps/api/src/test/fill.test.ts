@@ -255,7 +255,8 @@ describe("POST /fill/prepare", () => {
     await app.inject({
       method: "POST",
       url: "/session/budget",
-      headers: { "x-session-id": session },
+      // Account-gated since audit B4: a session id alone can no longer move a ceiling.
+      headers: { "x-session-id": session, "x-account-token": ACCOUNT_TOKEN },
       payload: { riskBudgetUsdc: 1 },
     });
     const res = await prepare(session, { proposalId, walletAddress: TRADER_ADDRESS });
@@ -487,7 +488,9 @@ describe("GET /account, POST /account/settings, GET /account/activity", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
-      settings: { riskBudgetUsdc: 5, defaultAsset: null, defaultDirection: null },
+      // DEFAULT_BUDGET, not a literal -- see the note in accountStore.test.ts about the
+      // two defaults that used to disagree.
+      settings: { riskBudgetUsdc: DEFAULT_BUDGET, defaultAsset: null, defaultDirection: null },
       linkedWallet: null,
     });
   });
