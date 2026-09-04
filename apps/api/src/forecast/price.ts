@@ -39,7 +39,7 @@ export async function predictPrice(
   const model = await callAgentForJson(
     PricePredictionModel,
     'You produce a speculative price prediction for a crypto asset given real current market data ' +
-      'and simulated news headlines. This is opinion, not certainty. Any technical indicators given are ' +
+      'and real news headlines. This is opinion, not certainty. Any technical indicators given are ' +
       'computed fact -- weigh them, never restate them as the prediction. ' +
       'Output ONLY JSON: {"direction": "up"|"down"|"flat", "predictedRange": {"low": number, "high": number}, ' +
       '"confidence": "low"|"medium"|"high", "rationale": string (2-3 sentences)}.',

@@ -30,7 +30,7 @@ async function main() {
   console.log(`  24h low:  $${scenario.marketData.low24h}`);
   console.log(`  24h vol:  $${scenario.marketData.volume24h}`);
 
-  console.log(`\n=== simulated headlines ===`);
+  console.log(`\n=== headlines ===`);
   for (const h of scenario.headlines) console.log(`  [${h.sentiment}] ${h.text}`);
 
   const [news, price, riskBenefit] = await Promise.all([
@@ -39,7 +39,7 @@ async function main() {
     assessRiskBenefit(scenario),
   ]);
 
-  console.log(`\n=== news analysis (opinion, simulated) ===`);
+  console.log(`\n=== news analysis (opinion) ===`);
   console.log(`  sentiment: ${news.overallSentiment}`);
   console.log(`  ${news.summary}`);
 
