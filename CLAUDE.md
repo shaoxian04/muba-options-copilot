@@ -128,7 +128,12 @@ These are needed on every task. Violating one silently breaks the product's cent
   settlement calldata and never cross to a browser. A surface gets a count and a premium.
   (ADR-0017)
 - **The chain owns money.** No `positions` table, no balance cache. Fix slowness with a loading
-  state, not a cache. (ADR-0003)
+  state, not a cache. (ADR-0003) Two bounded exceptions, each with its own ADR and its own test:
+  read-only **observations** (the book, spot, open interest) are shared between viewers for
+  seconds, and the money path opts out of that sharing entirely (ADR-0020); and an open **RFQ** is
+  persisted, because its decryption key is the one piece of state re-reading the chain cannot
+  reconstruct (ADR-0021). The test for both is the same: if losing it can be fixed by asking the
+  chain, do not store it.
 - **A Forecast never appears beside a Max Loss** or inside a confirmation. Implied Move and
   Implied Chance are observations, not opinions, and may appear anywhere. (ADR-0005)
 - **One pricing path.** The Deck and the Trade Proposal both come from `priceOrder` in
@@ -226,8 +231,11 @@ it here with a one-line lesson.
   partial rather than all-or-nothing, 0017 is why an RFQ is two signatures with a wait
   between them and why no price appears before a maker answers, 0018 is why a Risk
   Profile and a Decision are keyed on the signed-in account rather than a wallet
-  (supersedes 0013), and 0019 is why the drag-drop closest-order search may let an
-  AI's predicted price choose a strike without breaking ADR-0005. **Read before
+  (supersedes 0013), 0019 is why the drag-drop closest-order search may let an
+  AI's predicted price choose a strike without breaking ADR-0005, 0020 is why the book
+  and spot are shared between viewers while `/propose` and `/fill/prepare` always
+  re-read, and 0021 is why an open RFQ is the one thing persisted despite ADR-0003 —
+  its decryption key cannot be re-derived from anywhere. **Read before
   changing architecture, or when code looks deliberately odd and you're tempted to
   "fix" it.**
 - **`README.md`** — API route table, repo layout, setup, security posture of the API process.
