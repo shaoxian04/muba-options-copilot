@@ -58,7 +58,6 @@ import {
   recentConnectionWithinTtl,
   sendTx,
   setWalletMemoryScope,
-  WALLETCONNECT_ID,
   WalletConnectionCancelled,
   signMessage,
   walletOptionFor,
@@ -749,18 +748,28 @@ export function useSurface(): Surface {
    * Once an account is known: if a wallet was connected recently enough (a rolling
    * few-hour idle window -- `recentConnectionWithinTtl`), silently reconnect it: no
    * picker, no prompt, since the origin is already authorised and every real extension
-   * answers `eth_requestAccounts` instantly in that case.
+   * answers `eth_requestAccounts` instantly in that case. This includes WalletConnect:
+   * resuming its own session is a local, cached-account check backed by its own SDK's
+   * persisted storage (independent of anything in this app, and it does survive a page
+   * reload), not something that alone reaches a Trader's phone.
    *
-   * WalletConnect is deliberately excluded from this auto-attempt. The "resuming its own
-   * session is inert" assumption only holds if a live, already-paired provider instance
-   * is still in memory -- and it never is after a full page reload, since
-   * `walletConnectConnectorInstance` (wallet.ts) is a plain module-level variable that
-   * resets to nothing every time the module re-initialises. Calling `connect()` on a
-   * connector with no session to resume does not silently fail -- it opens a brand new
-   * pairing, which for WalletConnect means popping the QR modal completely unprompted,
-   * on every refresh or tab switch. Confirmed against a real browser: exactly this.
-   * WalletConnect still gets its one-press "Last used" option in the picker below,
-   * same as any other remembered wallet -- it just never auto-fires there.
+   * A previous version of this comment excluded WalletConnect entirely, reasoning that
+   * "resuming is only inert while a live provider instance is still in memory, and a
+   * reload always destroys it" -- that conflated this app's OWN module-level connector
+   * cache (`walletConnectConnectorInstance` in wallet.ts, which does reset on reload) with
+   * WalletConnect's own session persistence (which doesn't, and is what "Last used" has
+   * relied on this whole time). The QR that reasoning was actually chasing had a
+   * different, real cause: `@wagmi/connectors`' own `isNewChainsStale` staleness check
+   * forcing a fresh pairing regardless of whether a resumable session existed --
+   * `wallet.ts` now disables that check outright (this app is permanently single-chain).
+   * See that fix's own comment for the full story.
+   *
+   * The other real gap this closes: `disconnectWallet` (wallet.ts) now forgets the "last
+   * used" pointer entirely on disconnect, specifically so THIS effect has nothing left to
+   * retry afterward -- without that, a Trader who disconnected would otherwise keep
+   * getting silently re-attempted (and, for WalletConnect, re-prompted with a pairing QR
+   * every single time, since disconnecting genuinely ends the underlying session) on
+   * every tab switch or reload until the TTL happened to lapse on its own.
    *
    * Gated on `account` for two reasons: ADR-0014 requires signing in before wallet
    * actions at all, and `recentConnectionWithinTtl`/`lastConnectedWalletId` now read
@@ -778,9 +787,8 @@ export function useSurface(): Surface {
    * ran -- AccountControl's ordinary "Verify wallet" retry button covers it from there.
    *
    * Falls back to the picker-only flow whenever nothing recent exists, the remembered
-   * wallet is WalletConnect, the remembered wallet is no longer available, or the
-   * silent reconnect itself fails -- a Trader is never left with no way to connect just
-   * because this shortcut didn't.
+   * wallet is no longer available, or the silent reconnect itself fails -- a Trader is
+   * never left with no way to connect just because this shortcut didn't.
    */
   useEffect(() => {
     const showRecentWalletOption = () =>
@@ -789,7 +797,7 @@ export function useSurface(): Surface {
     if (!account) return;
 
     const recentId = recentConnectionWithinTtl();
-    if (!recentId || recentId === WALLETCONNECT_ID) {
+    if (!recentId) {
       showRecentWalletOption();
       return;
     }

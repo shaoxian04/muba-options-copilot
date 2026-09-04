@@ -930,47 +930,28 @@ test.describe("wallet connection survives a refresh, within a TTL", () => {
       { key: `${LAST_CONNECTION_KEY}:${FIXTURE_USER_ID}`, ageMs }
     );
 
-  /**
-   * Writes a fresh stored-connection entry directly, rather than connecting for real
-   * first -- needed for WalletConnect, which this test env has no way to actually
-   * connect through (there is no real relay reachable here, on purpose).
-   */
-  const seedStoredConnection = (page: Page, id: string, ageMs: number) =>
-    page.evaluate(
-      ({ key, id, ageMs }) => {
-        window.localStorage.setItem(key, JSON.stringify({ id, connectedAt: Date.now() - ageMs }));
-      },
-      { key: `${LAST_CONNECTION_KEY}:${FIXTURE_USER_ID}`, id, ageMs }
-    );
-
-  /**
-   * WalletConnect never gets the silent auto-reconnect the extension case above does --
-   * unlike an extension, its "resume" only works if a live, already-paired provider is
-   * still in memory, which a page reload always destroys (`walletConnectConnectorInstance`
-   * is a module-level variable). Attempting it anyway does not silently fail: it opens a
-   * brand new pairing, which for WalletConnect means popping the QR modal completely
-   * unprompted on every refresh or tab switch -- confirmed against a real browser. So this
-   * id is excluded from the auto-attempt entirely and only ever offered as a one-press
-   * "Last used" pick, same as the lapsed-TTL case above.
-   */
-  test("never auto-attempts a WalletConnect reconnect, even within the window", async ({ page }) => {
+  test("disconnecting stops the silent reconnect from retrying, even well within the window", async ({ page }) => {
     await stubApi(page);
     await installFakeWallet(page);
     await signIn(page);
     await page.goto("/");
-    await seedStoredConnection(page, "walletConnect", 60 * 1000);
+
+    await page.getByTestId("connect-wallet").click();
+    await page.getByTestId("wallet-option-test.fakewallet0").click();
+    await expect(page.getByTestId("wallet-address")).toBeVisible();
+
+    await page.getByTestId("account-avatar").click();
+    await page.getByTestId("account-disconnect-wallet").click();
+    await expect(page.getByTestId("connect-wallet")).toBeVisible();
+
+    // No backdating here, deliberately: this is seconds-old, deep inside the TTL window
+    // -- if disconnecting hadn't cleared the "last used" pointer, the silent reconnect
+    // would fire right back on this very reload. It must not.
     await page.reload();
 
-    // Never silently connected, never stuck attempting to -- the ordinary entry point
-    // is exactly as reachable as it would be with nothing remembered at all.
     await expect(page.getByTestId("connect-wallet")).toBeVisible();
     await expect(page.getByTestId("connect-wallet")).toBeEnabled();
     await expect(page.getByTestId("wallet-address")).toHaveCount(0);
-
-    // Still offered as the picker's one-press option -- just never fired automatically.
-    await page.getByTestId("connect-wallet").click();
-    await expect(page.getByTestId("wallet-picker")).toBeVisible();
-    await expect(page.getByTestId("wallet-option-recent")).toContainText("WalletConnect");
   });
 
   test("reconnects and re-verifies silently within the window -- no picker, no Verify click", async ({ page }) => {

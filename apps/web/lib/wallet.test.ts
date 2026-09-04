@@ -13,7 +13,17 @@ vi.mock("./wagmiConfig", () => ({
   },
 }));
 
+// Wraps the real factory as a spy rather than replacing it, so `walletConnectConnector`
+// still gets a real CreateConnectorFn to hand to the (separately mocked)
+// `config._internal.connectors.setup` -- this test file only needs to see WHAT it was
+// called with, specifically `isNewChainsStale`, never to fake its behaviour.
+vi.mock("@wagmi/connectors/walletConnect", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@wagmi/connectors/walletConnect")>();
+  return { ...actual, walletConnect: vi.fn(actual.walletConnect) };
+});
+
 import { connect, disconnect, getConnection } from "@wagmi/core";
+import { walletConnect as walletConnectFactory } from "@wagmi/connectors/walletConnect";
 import { config } from "./wagmiConfig";
 import {
   connectWallet,
@@ -50,6 +60,7 @@ const OTHER_ACCOUNT_ID = "acct-2";
 afterEach(() => {
   resetWalletConnectConnectorForTests();
   vi.mocked(config._internal.connectors.setup).mockReset();
+  vi.mocked(walletConnectFactory).mockClear();
   setWalletMemoryScope(null);
 });
 
@@ -279,6 +290,22 @@ describe("connectWallet", () => {
     });
   });
 
+  describe("never forcing a QR for an app that only ever has one chain", () => {
+    it("builds the connector with isNewChainsStale disabled", async () => {
+      const fakeConnector = { getProvider: vi.fn().mockResolvedValue({}) };
+      vi.mocked(config._internal.connectors.setup).mockReturnValue(fakeConnector as never);
+      vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
+
+      // "Last used" (fresh omitted) -- @wagmi/connectors' own connect() forces a fresh
+      // QR pairing whenever it thinks isChainsStale(), REGARDLESS of `fresh`, unless
+      // this is turned off. Verified by reading its source: the disconnect-and-repair
+      // branch checks `isChainsStale` before it ever looks at anything this app passed.
+      await connectWallet("walletConnect");
+
+      expect(walletConnectFactory).toHaveBeenCalledWith(expect.objectContaining({ isNewChainsStale: false }));
+    });
+  });
+
   describe("reusing one WalletConnect connector across repeated picks in a page load", () => {
     it("registers the connector only once across several picks, fresh or not", async () => {
       const fakeConnector = { getProvider: vi.fn().mockResolvedValue({}) };
@@ -379,6 +406,58 @@ describe("disconnectWallet", () => {
   it("never throws even when nothing is connected", async () => {
     vi.mocked(disconnect).mockRejectedValueOnce(new Error("no active connection"));
     await expect(disconnectWallet()).resolves.toBeUndefined();
+  });
+
+  describe("forgetting the 'last used' pointer, so the silent reconnect has nothing left to retry", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("clears the remembered connection and the WalletConnect peer cache", async () => {
+      stubBrowserLocalStorage();
+      vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
+      vi.mocked(getConnection).mockReturnValue({
+        connector: {
+          getProvider: async () => ({
+            session: { peer: { metadata: { name: "OKX Wallet", icons: ["https://okx.example/icon.png"] } } },
+          }),
+        },
+      } as unknown as ReturnType<typeof getConnection>);
+      await connectWallet("walletConnect");
+      expect(recentConnectionWithinTtl()).toBe("walletConnect");
+      expect(walletOptionFor("walletConnect").name).toBe("OKX Wallet");
+
+      vi.mocked(disconnect).mockResolvedValueOnce(undefined);
+      await disconnectWallet();
+
+      // Disconnecting is a deliberate "stop assuming this wallet" signal -- the silent
+      // on-load reconnect (surface.ts) must have nothing left to find, and the picker's
+      // "Last used" should go back to offering nothing rather than a stale wallet the
+      // Trader just walked away from.
+      expect(recentConnectionWithinTtl()).toBeNull();
+      await expect(lastConnectedWalletId()).resolves.toBeNull();
+      expect(walletOptionFor("walletConnect")).toEqual({
+        id: "walletConnect",
+        name: "WalletConnect",
+        icon: WALLETCONNECT_ICON,
+      });
+    });
+
+    it("still clears the pointer even when the SDK-level disconnect itself fails", async () => {
+      stubBrowserLocalStorage();
+      vi.mocked(connect).mockResolvedValueOnce({ accounts: ["0xabc"], chainId: 8453 });
+      await connectWallet("walletConnect");
+      expect(recentConnectionWithinTtl()).toBe("walletConnect");
+
+      vi.mocked(disconnect).mockRejectedValueOnce(new Error("no active connection"));
+      await disconnectWallet();
+
+      expect(recentConnectionWithinTtl()).toBeNull();
+    });
+
+    it("does nothing with no account scope set -- there is nothing to clear", async () => {
+      stubBrowserLocalStorage(null);
+      vi.mocked(disconnect).mockResolvedValueOnce(undefined);
+      await expect(disconnectWallet()).resolves.toBeUndefined();
+    });
   });
 });
 
