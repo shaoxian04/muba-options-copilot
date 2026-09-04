@@ -33,6 +33,7 @@ import positionsEmpty from "./fixtures/positions-empty.json" with { type: "json"
 import positionsAfterPractice from "./fixtures/positions-after-practice.json" with { type: "json" };
 import proposeAgent from "./fixtures/propose-agent.json" with { type: "json" };
 import proposeByCard from "./fixtures/propose-by-card.json" with { type: "json" };
+import proposeHorizon3 from "./fixtures/propose-horizon-3.json" with { type: "json" };
 import practiceResult from "./fixtures/practice.json" with { type: "json" };
 import fillPrepare from "./fixtures/fill-prepare.json" with { type: "json" };
 import authChallenge from "./fixtures/auth-challenge.json" with { type: "json" };
@@ -52,6 +53,7 @@ import riskProfileUnset from "./fixtures/risk-profile-unset.json" with { type: "
 import riskProfileBalanced from "./fixtures/risk-profile-balanced.json" with { type: "json" };
 import suggestionUnset from "./fixtures/suggestion-unset.json" with { type: "json" };
 import suggestionEth from "./fixtures/suggestion-eth.json" with { type: "json" };
+import suggestionEth3d from "./fixtures/suggestion-eth-3d.json" with { type: "json" };
 import suggestionNoSignal from "./fixtures/suggestion-no-signal.json" with { type: "json" };
 import decisionsAccepted from "./fixtures/decisions-accepted.json" with { type: "json" };
 import history from "./fixtures/history.json" with { type: "json" };
@@ -215,6 +217,7 @@ export const fixtures = {
   session,
   proposeAgent,
   proposeByCard: proposeByCard as Record<string, any>,
+  proposeHorizon3,
   veto,
   practiceResult,
   positionsAfterPractice,
@@ -229,6 +232,7 @@ export const fixtures = {
   riskProfileBalanced,
   suggestionUnset,
   suggestionEth,
+  suggestionEth3d,
   suggestionNoSignal,
   decisionsAccepted,
   history,
@@ -313,7 +317,14 @@ export type Scenario =
    * only scenario where `/deck` ever serves `deck-up-2`, proving the closest-order
    * search actually unions candidates across expiries. See `forecastAskEthUpMulti`.
    */
-  | "forecast-up-multi";
+  | "forecast-up-multi"
+  /**
+   * A Suggestion asked over an expiry the book does not quote (3 days), which
+   * `/propose` answers on the nearest live one (2 days) instead. The one scenario
+   * where the dealt Order sits in a DIFFERENT Deck than the horizon asked for --
+   * the surface has to follow the answer to `deck-down-2` and ring the Card there.
+   */
+  | "suggestion-off-horizon";
 
 export interface Traffic {
   /** Every request the page made to the API, in order. */
@@ -792,8 +803,14 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         if (scenario === "empty" || scenario === "no-order") return json(route, noOrder, traffic);
         if (scenario === "over-budget") return json(route, refusal.body, traffic, refusal.status);
 
-        const body = request.postDataJSON() as { cardRef?: string; sizeUsdc?: number; contracts?: number };
-        const answer = body.cardRef ? fixtures.proposeByCard[body.cardRef] : proposeAgent;
+        const body = request.postDataJSON() as {
+          cardRef?: string; sizeUsdc?: number; contracts?: number; horizonDays?: number;
+        };
+        // The off-horizon answer, which names an expiry other than the one asked for.
+        // Only for the agent's own pick: a cardRef names a Card in a Deck already shown.
+        const agentPick =
+          scenario === "suggestion-off-horizon" && body.horizonDays === 3 ? proposeHorizon3 : proposeAgent;
+        const answer = body.cardRef ? fixtures.proposeByCard[body.cardRef] : agentPick;
         if (!answer) return route.fulfill({ status: 410, contentType: "application/json", body: '{"error":"gone"}' });
 
         // A size asked in contracts becomes a stake, exactly as `stakeForContracts` does
@@ -863,7 +880,12 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         // Python. Once one is saved: the no-signal fixture for the "no-signal"
         // scenario, the fired Suggestion for every other scenario.
         if (!savedProfile) return json(route, suggestionUnset, traffic);
-        const base = scenario === "no-signal" ? suggestionNoSignal : suggestionEth;
+        const base =
+          scenario === "no-signal"
+            ? suggestionNoSignal
+            : scenario === "suggestion-off-horizon"
+              ? suggestionEth3d
+              : suggestionEth;
         return json(route, { ...base, profile: savedProfile }, traffic);
       }
 

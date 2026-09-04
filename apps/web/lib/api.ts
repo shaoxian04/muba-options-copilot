@@ -36,7 +36,13 @@ export function getApiBase(): string {
   }
   if (typeof window !== "undefined") {
     const host = window.location.hostname || "localhost";
-    return `${window.location.protocol}//${host}:3001`;
+    // A loopback NEXT_PUBLIC_API_BASE is rewritten to the page's own hostname (a preview
+    // deploy's build-time value can otherwise point the browser at a host it can't reach)
+    // -- but the PORT still has to come from that configured value, not a hardcoded
+    // guess, or a local API bound to anything other than 3001 (see .env's PORT) is simply
+    // unreachable and every call fails with "Failed to fetch".
+    const port = (configured && new URL(configured).port) || "3001";
+    return `${window.location.protocol}//${host}:${port}`;
   }
   return configured ?? "http://127.0.0.1:3001";
 }

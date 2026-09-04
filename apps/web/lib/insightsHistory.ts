@@ -5,6 +5,7 @@
  * (an unrecognized symbol, a server failure) never enters history.
  */
 import { CONVERSATION_HISTORY_MAX_TURNS, type ConversationTurn, type CoinAskResult, type UnderlyingSymbol } from "@copilot/shared";
+import type { SuggestionResponse } from "./api";
 
 export interface InsightsLine {
   who: "trader" | "copilot";
@@ -23,14 +24,31 @@ export interface InsightsLine {
     direction: "UP" | "DOWN";
     horizonDays: number;
   };
+  /**
+   * Set only on the copilot line that carries a Suggestion (Chat.tsx appends these
+   * when the Risk Profile resolves or changes). Lives in the log so it scrolls with
+   * the rest of the conversation instead of pinned outside it. `suggestion` is only
+   * present once a fetch actually resolved to data (ready or no-signal); the fetch's
+   * other states -- loading, and the ways it can fail -- ride in `suggestionStatus`/
+   * `suggestionError` instead, since none of them are a real SuggestionResponse.
+   */
+  suggestion?: SuggestionResponse;
+  suggestionStatus?: "loading" | "no-signal" | "ready" | "unsupported" | "unavailable" | "unauthorized" | "error";
+  suggestionError?: string;
 }
 
 export function deriveHistory(log: InsightsLine[]): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
 
-  for (let i = 0; i < log.length - 1; i++) {
-    const question = log[i];
-    const response = log[i + 1];
+  // A suggestion line is not part of the trader/copilot Q&A -- it's appended out of
+  // band whenever the Risk Profile resolves, not in reply to whatever the trader just
+  // asked. Pairing by raw index would slot it between a question and its answer and
+  // silently drop that turn, so it's filtered out before the adjacent-pair walk below.
+  const conversation = log.filter((l) => l.suggestion === undefined && l.suggestionStatus === undefined);
+
+  for (let i = 0; i < conversation.length - 1; i++) {
+    const question = conversation[i];
+    const response = conversation[i + 1];
     if (!question || !response || question.who !== "trader" || response.who !== "copilot" || !response.results) continue;
 
     const coins = Object.values(response.results)

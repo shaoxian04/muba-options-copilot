@@ -346,7 +346,11 @@ export interface Surface {
   setAsset: (a: UnderlyingSymbol) => void;
   setDirection: (d: Direction) => void;
   setHorizon: (h: number) => void;
-  deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
+  deal: (
+    line?: string,
+    intent?: Partial<TradeIntent>,
+    opts?: { confirm?: boolean }
+  ) => Promise<ProposeResult | null>;
   submitTradeMessage: (text: string) => void;
   /**
    * Clicking a Card (issue #30), or accepting an AI-matched order from
@@ -1410,11 +1414,14 @@ export function useSurface(): Surface {
       setRefusal(null);
       setReceipt(null);
       setPracticeDone(false);
+      // Read once: the answer is compared against the horizon this call actually asked
+      // for, not against state the caller may have set in this same tick.
+      const askedHorizon = on.horizonDays ?? horizonDays;
       try {
         const answer = await propose({
           underlying: on.underlying ?? asset,
           direction: asking,
-          horizonDays: on.horizonDays ?? horizonDays,
+          horizonDays: askedHorizon,
           sizeUsdc: size,
           cardRef,
           // Present only when the Trader typed a contract count. The server converts it
@@ -1428,6 +1435,13 @@ export function useSurface(): Surface {
           setSelectedRef(answer.cardRef);
           if (answer.proposal.chosenBy === "AGENT") setDealtRef(answer.cardRef);
           shownQuote.current = { ref: answer.cardRef, perContract: answer.proposal.figures.perContractUsd.display };
+          // The server takes the nearest live expiry, so the Order dealt can sit in a
+          // bucket we are not showing -- and its Card would be in a Deck the Trader
+          // cannot see, so nothing highlights. Follow the answer to its own expiry.
+          if (answer.horizonDays !== askedHorizon) {
+            expiryChosen.current = true;
+            setHorizonState(answer.horizonDays);
+          }
         } else {
           shownQuote.current = { ref: null, perContract: null };
         }
@@ -1467,7 +1481,7 @@ export function useSurface(): Surface {
    * a Trader off a chip that answers with nothing.
    */
   const deal = useCallback(
-    async (line?: string, intent?: Partial<TradeIntent>) => {
+    async (line?: string, intent?: Partial<TradeIntent>, opts?: { confirm?: boolean }) => {
       if (line) heard(line);
 
       if (intent?.horizonDays !== undefined && !Number.isInteger(intent.horizonDays)) {
@@ -1506,6 +1520,13 @@ export function useSurface(): Surface {
             `${f.contracts.display} contracts for ${f.premiumUsdc.display}. Ends ${f.expiry.display}. ` +
             `Flick to another if you disagree with me.`
         );
+        // opt-in only -- the seed prompts call deal() without opts and just deal, same as
+        // always. Reuses this already-priced proposal instead of asking again, since a
+        // second ask() would relabel it as a Trader override rather than an agent Suggestion.
+        if (opts?.confirm) {
+          openerElRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          setConfirmOpen(true);
+        }
       } else if (answer?.kind === "NO_ORDER") {
         say(answer.message);
       }

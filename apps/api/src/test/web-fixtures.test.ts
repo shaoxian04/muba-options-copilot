@@ -98,6 +98,7 @@ const NAMES = [
   "positions-after-practice",
   "propose-agent",
   "propose-by-card",
+  "propose-horizon-3",
   "practice",
   "auth-challenge",
   "fill-prepare",
@@ -122,6 +123,7 @@ const NAMES = [
   "risk-profile-balanced",
   "suggestion-unset",
   "suggestion-eth",
+  "suggestion-eth-3d",
   "suggestion-no-signal",
   "decisions-accepted",
   "history",
@@ -241,6 +243,16 @@ beforeAll(async () => {
     byCard[card.cardRef] = (await post("/propose", { ...intent, cardRef: card.cardRef })).json();
   }
   generated["propose-by-card"] = byCard;
+
+  /*
+   * The same intent asked at a horizon nothing on the book quotes.
+   *
+   * /propose takes the NEAREST live expiry and /deck filters on the exact one, so this
+   * answer is the 2-day $2,380 put with `horizonDays: 2` -- not the 3 that was asked
+   * for. Its cardRef is the only Card in `deck-down-2`, which is what makes the
+   * mismatch testable in a browser: the surface has to end up rendering THAT row.
+   */
+  generated["propose-horizon-3"] = (await post("/propose", { ...intent, horizonDays: 3 })).json();
 
   // A Practice Run against a freshly minted proposal, plus the board it produces.
   const forPractice = (await post("/propose", intent)).json() as { proposalId: string };
@@ -552,6 +564,21 @@ beforeAll(async () => {
     asOf: "2026-01-15T00:00:00Z",
   });
   generated["suggestion-eth"] = await getAsOwner("/suggestion");
+
+  // The same Suggestion asked over three days -- an expiry the book does not quote, so
+  // the proposal it deals comes back on a different one. Pairs with "propose-horizon-3".
+  mockedGetProfile.mockResolvedValueOnce("balanced");
+  mockedFetchSuggestion.mockResolvedValueOnce({
+    profile: "balanced",
+    strategyId: "rsi-oversold-eth",
+    strategyName: "RSI oversold bounce",
+    firedAt: "2026-01-14T00:00:00Z",
+    coverSummary: "Buys a modest cover and holds it only briefly.",
+    marketBand: "weak",
+    intent: { ...intent, horizonDays: 3 },
+    asOf: "2026-01-15T00:00:00Z",
+  });
+  generated["suggestion-eth-3d"] = await getAsOwner("/suggestion");
 
   // A saved profile, but the Strategy Agent's RSI check did not fire -- the "nothing
   // to suggest" case, distinct from an unset profile (which never calls Python at

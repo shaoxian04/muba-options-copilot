@@ -15,6 +15,7 @@ import { buildApp } from "../app.js";
 import { resetStub, state, spies } from "./stub-client.js";
 import { NOW, PRICES, makeOrder, makeBookPositions } from "./fixtures.js";
 import { WINDOW } from "../thetanuts/depth-view.js";
+import { resetOpenInterestCache } from "../thetanuts/open-interest.js";
 
 vi.useFakeTimers({ toFake: ["Date"] });
 vi.setSystemTime(NOW);
@@ -24,6 +25,9 @@ let app: FastifyInstance;
 
 beforeEach(async () => {
   resetStub();
+  // Open interest is cached across requests now, and module state outlives a beforeEach.
+  // Without this a test that warmed it serves the previous test's positions.
+  resetOpenInterestCache();
   app = await buildApp();
 });
 

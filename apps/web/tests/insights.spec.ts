@@ -22,12 +22,19 @@ const openInsights = async (page: Page) => {
   await signIn(page);
   await page.goto("/");
   await page.getByRole("tab", { name: "Insights" }).click();
-  await expect(page.getByRole("radiogroup", { name: "Choose a Risk Profile" })).toBeVisible();
+  // No saved pick defaults to "balanced" (RiskProfileChip's own read-only default), shown
+  // on the closed chip immediately -- there is no sheet to open just to reach this state.
+  await expect(page.getByRole("button", { name: "Balanced" })).toBeVisible();
 };
 
 const pickBalanced = async (page: Page) => {
+  await page.getByRole("button", { name: "Balanced" }).click();
   await page.getByRole("radio", { name: /Balanced/ }).click();
-  await expect(page.getByRole("radio", { name: /Balanced/ })).toHaveAttribute("aria-checked", "true");
+  // Choosing a profile closes the sheet (RiskProfileChip's `choose()` runs `close()` in its
+  // `finally`), so the radio has already unmounted by the time this resolves -- the pick is
+  // verified through the closed chip's own label instead.
+  await expect(page.getByRole("radio", { name: /Balanced/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Balanced" })).toBeVisible();
 };
 
 test.describe("not signed in", () => {
@@ -36,20 +43,24 @@ test.describe("not signed in", () => {
     await page.goto("/");
     await page.getByRole("tab", { name: "Insights" }).click();
 
-    await expect(page.getByText("Sign in to save a Risk Profile.")).toBeVisible();
+    // The chip itself is disabled when signed out, so its sheet -- and the fuller
+    // "Sign in to save a Risk Profile." sentence inside it -- can never open; the
+    // chip's own collapsed label is the whole prompt a signed-out Trader ever sees.
+    await expect(page.getByRole("button", { name: "Sign in for a Risk Profile" })).toBeVisible();
     await expect(page.getByRole("radiogroup", { name: "Choose a Risk Profile" })).toHaveCount(0);
     expect(traffic.paths()).not.toContain("/risk-profile");
   });
 });
 
 test.describe("the Risk Profile picker", () => {
-  test("opening Insights renders the picker and issues no 404", async ({ page }) => {
+  test("opening Insights defaults to Balanced and issues no 404", async ({ page }) => {
     const traffic = await stubApi(page);
     await openInsights(page);
 
-    // Nothing was picked yet -- SuggestionCard does not call /suggestion until a
-    // profile exists, so the only new request here is the GET /risk-profile probe.
+    // No saved profile assumes "balanced" the moment GET /risk-profile answers null, so
+    // a Suggestion request follows immediately -- no explicit pick required.
     expect(traffic.paths()).toContain("/risk-profile");
+    await expect.poll(() => traffic.paths()).toContain("/suggestion");
     for (const body of traffic.bodies) expect(body).not.toContain('"not stubbed"');
   });
 
@@ -64,7 +75,7 @@ test.describe("the Risk Profile picker", () => {
     expect(puts.at(-1)!.postDataJSON()).toEqual({ profile: "balanced" });
 
     // The pick survives -- not just an optimistic click that reverts.
-    await expect(page.getByRole("radio", { name: /Balanced/ })).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByRole("button", { name: "Balanced" })).toBeVisible();
     await expect.poll(() => traffic.paths().filter((p) => p === "/suggestion").length).toBeGreaterThanOrEqual(1);
   });
 });
@@ -108,6 +119,40 @@ test.describe("a Suggestion", () => {
     expect(traffic.paths()).not.toContain("/fill");
   });
 
+  /*
+    The regression this suite could not see before.
+
+    `/propose` takes the NEAREST live expiry; `/deck` filters on the exact one. A
+    Suggestion over 3 days is dealt the 2-day $2,380 put, so the Card it names is in
+    `deck-down-2` -- not in the row the surface was showing. Until the answer carried
+    its own `horizonDays`, the surface stayed on the wrong expiry and the ring landed
+    on nothing a Trader could match to the tag above it.
+
+    Note the fixtures number cardRefs per file, so `card-0` here is genuinely the
+    2-day $2,380 Card in `deck-down-2` and a different Order than `deck-down-1`'s
+    `card-0` -- which is exactly why the assertions below check the STRIKE, not the ref.
+  */
+  test("Accept follows the proposal to its own expiry and rings the Card it named", async ({ page }) => {
+    await stubApi(page, "suggestion-off-horizon");
+    await openInsights(page);
+    await pickBalanced(page);
+    await page.getByRole("button", { name: "See what this buys" }).click();
+
+    await expect(page.getByRole("tab", { name: "Trade", exact: true })).toHaveAttribute("aria-selected", "true");
+
+    // The Suggestion asked for 3 days; the Order dealt expires in 2, so that is the
+    // chip that has to be live and selected. Given longer than the default: accept is
+    // three round trips deep -- /suggestion, /propose, then the Deck reload the answer
+    // triggers -- and the default 5s is tight for that under a full parallel run.
+    await expect(page.getByTestId("horizon-2")).toHaveAttribute("aria-pressed", "true", { timeout: 15_000 });
+
+    // Exactly one Card is ringed, and it is the one the tag names.
+    await expect(page.getByTestId("chosen-by")).toContainText("the agent picked $2,380.00");
+    const dealt = page.locator("[data-testid='card'].dealt");
+    await expect(dealt).toHaveCount(1);
+    await expect(dealt).toContainText("$2,380.00");
+  });
+
   test("Dismiss collapses to the dismissed state and records the Decision", async ({ page }) => {
     const traffic = await stubApi(page);
     await openInsights(page);
@@ -142,8 +187,9 @@ test.describe("a Suggestion", () => {
 
     await expect(page.getByText("Could not deal that Suggestion", { exact: false })).toBeVisible();
     // Still on Insights, where they pressed -- not switched to a Trade tab holding
-    // nothing.
-    await expect(page.getByRole("radiogroup", { name: "Choose a Risk Profile" })).toBeVisible();
+    // nothing. The radiogroup itself is a poor proxy for this: picking a profile
+    // already closed its sheet, same as every other pick in this file.
+    await expect(page.getByRole("tab", { name: "Insights" })).toHaveAttribute("aria-selected", "true");
     expect(traffic.all.filter((r) => new URL(r.url()).pathname === "/decisions")).toEqual([]);
   });
 });

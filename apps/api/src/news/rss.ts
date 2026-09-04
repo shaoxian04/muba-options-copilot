@@ -93,6 +93,7 @@ export async function fetchRssNews(
         });
       }
     } catch (err) {
+      // nosemgrep: javascript.lang.security.audit.unsafe-formatstring.unsafe-formatstring -- feed.url is from the hardcoded RSS_FEEDS constant above, never user input
       console.warn(`Failed to fetch RSS from ${feed.url}:`, err);
     }
   }

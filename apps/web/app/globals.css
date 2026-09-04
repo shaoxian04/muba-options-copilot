@@ -276,7 +276,7 @@ button[disabled] {
   align-items: center;
   gap: 18px;
   padding: 0 20px;
-  height: 46px;
+  height: 60px;
   flex: 0 0 auto;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
@@ -288,17 +288,13 @@ button[disabled] {
 }
 .shell-header nav {
   display: flex;
-  align-self: stretch;
+  /* No longer stretched to the header's full height -- centred instead (inherited from
+     `.shell-header`'s own `align-items: center`), so the pill has visible breathing room
+     above and below it rather than touching the header's top edge and bottom border. */
   align-items: center;
   gap: 2px;
-  /*
-    Vertical padding is 0 so the nav's interior height matches 44px (header 46px minus
-    1px border top and bottom), which is exactly what the links need for a tap target.
-    The pill background and border-radius supply the visual grouping without adding
-    extra height.
-  */
   padding: 0 3px;
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--well);
   border: 1px solid var(--line);
 }
@@ -313,7 +309,7 @@ button[disabled] {
   display: flex;
   align-items: center;
   padding: 0 14px;
-  border-radius: 999px;
+  border-radius: 4px;
   font-size: 12.5px;
   color: var(--ink-2);
   text-decoration: none;
@@ -399,6 +395,70 @@ button[disabled] {
 .chat .from-copilot {
   color: var(--ink-2);
   max-width: 94%;
+}
+
+/*
+  The collapsible Copilot rail. Additive only -- `.app`'s and `.chat`'s own rules
+  above are untouched; these just say what changes when `collapsed` is true.
+
+  `.chat-body` is a new wrapper around what used to be `.chat`'s direct flex
+  children (the tabs, the log, the ask row) -- it needs `.chat`'s own flex behaviour
+  reproduced on it so wrapping them changes nothing about how they lay out.
+*/
+.chat-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.app.app-chat-collapsed {
+  grid-template-columns: 44px minmax(0, 1fr);
+}
+.app {
+  transition: grid-template-columns 0.18s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .app {
+    transition: none;
+  }
+}
+.chat-collapsed .chat-body {
+  display: none;
+}
+.chat-collapsed .hd {
+  padding: 15px 4px;
+  justify-content: center;
+}
+.chat-collapsed .hd .who,
+.chat-collapsed .hd .lbl {
+  display: none;
+}
+.chat-collapse-btn {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1;
+}
+.chat-collapse-btn:focus-visible {
+  outline: 2px solid var(--hue);
+  outline-offset: 2px;
+}
+.chat-collapsed-label {
+  writing-mode: vertical-rl;
+  color: var(--ink-2);
+  letter-spacing: 0.08em;
+  font-size: 11px;
+  text-align: center;
+  margin: 0 auto;
+  padding-top: 6px;
 }
 /* ================= right: money ================= */
 /* ================= the ticker rail ================= */
@@ -1765,6 +1825,24 @@ button[disabled] {
   }
 }
 
+/*
+  A 44px rail makes no sense on a phone -- the mobile layout above already stacks
+  `.chat` above `.rig` at full width, so collapsing just hides the panel outright.
+*/
+@media (max-width: 900px) {
+  .app.app-chat-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .chat-collapsed .chat-body {
+    display: flex;
+    flex-direction: column;
+  }
+  .chat-collapse-btn,
+  .chat-collapsed-label {
+    display: none;
+  }
+}
+
 /* The payoff plot's foot: where the range ends, and what the two lines mean. */
 .strip .axis {
   display: flex;
@@ -2269,17 +2347,21 @@ button[disabled] {
   color: var(--crit);
 }
 
-/* The Risk Profile picker and the Suggestion it drives, merged into one card
-   (SuggestionCard.tsx) so the two read as one thought instead of two boxes that both
-   happen to say "Balanced". Sits between the log and the ask-row, borrowing the same
-   margin rhythm as .ask-row below.
+/* The Suggestion, as one message inside the Insights log (SuggestionMessage.tsx) --
+   split out of the old pinned footer that sat between the log and the ask-row and
+   changed height every time a Suggestion loaded. It keeps the same look (SuggestionMessage
+   reuses this class) but now needs side margins matching the log's other lines instead
+   of the footer's own rhythm, since it scrolls with everything else.
 
    `.chat`'s own background is --surface, so a card in that colour would be
    invisible against it -- --surface-2 is the token that actually differs from the
    panel, and `--lift`'s shadow (the same token cards on the Deck use to read as
    raised) does the rest of the work of separating the card from the page. */
 .suggestion-card {
-  margin: 6px 18px 0;
+  /* `.log`'s own flex `gap` (13px) already spaces it from its neighbours -- no margin
+     needed, unlike the old pinned-footer version which sat outside that flex flow. */
+  margin: 0;
+  max-width: 94%;
   padding: 12px;
   background: var(--surface-2);
   border: 1px solid var(--line);
@@ -2337,6 +2419,11 @@ button[disabled] {
   font-size: 12.5px;
   font-weight: 500;
   text-align: center;
+  /* A narrow column still has to hold "Conservative" -- wrap to a second line
+     instead of clipping it, rather than relying on the sheet always being wide
+     enough. */
+  white-space: normal;
+  overflow-wrap: break-word;
   transition: border-color 0.14s, color 0.14s, background 0.14s;
 }
 .suggestion-card-profile-row button:hover {
@@ -2460,10 +2547,73 @@ button[disabled] {
   margin-top: 2px;
 }
 
+/* The Risk Profile picker's compact form (RiskProfileChip.tsx) -- a chip on its own row
+   above the ask-row, with a small popover sheet above it. Used to share the ask-row with
+   the question input, but a fixed-width chip alongside a full sentence of placeholder
+   text and an "Ask" button left the input too narrow to read its own placeholder in the
+   Insights column's width -- its own row gives the input the whole row back. */
+.profile-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: 6px 18px 6px;
+}
+.profile-chip-wrap {
+  position: relative;
+  flex: none;
+}
+.profile-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 10px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: border-color 0.14s, color 0.14s;
+}
+.profile-chip:hover:not(:disabled) {
+  border-color: var(--ink-2);
+  color: var(--ink);
+}
+.profile-chip:focus-visible {
+  outline: 2px solid var(--hue);
+  outline-offset: 1px;
+}
+.profile-chip:disabled {
+  opacity: 0.6;
+}
+/* Opens upward: the composer sits at the bottom of the column, so a sheet dropping
+   down would spill under the fold or off the panel entirely. */
+.profile-sheet {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  /* The chip now sits at the row's right edge (.profile-row), so the sheet anchors to
+     the chip's right edge too and grows leftward -- anchoring left here would instead
+     grow the sheet off the right side of the panel. */
+  right: 0;
+  z-index: 5;
+  /* Wide enough that "Conservative" (the longest of the three choices) fits its own
+     column without the flex row clipping it -- 240px left "Conservative" truncated to
+     "Conservativ" at this font size. */
+  width: max(320px, 100%);
+  max-width: calc(100vw - 24px);
+  padding: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--lift);
+}
+
 .ask-row {
   display: flex;
   gap: 8px;
-  margin: 6px 18px 18px;
+  /* No top margin: .profile-row directly above already carries its own bottom margin. */
+  margin: 0 18px 18px;
 }
 .ask-row input {
   flex: 1;

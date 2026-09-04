@@ -88,6 +88,7 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 | `GET /account` | no | the signed-in account's saved settings and linked wallet, if any (ADR-0014) |
 | `POST /account/settings` | no | save a partial Risk Budget / default-asset / default-direction update |
 | `GET /account/activity` | no | a page of the account's own activity log |
+| `GET /history` | no | the account's own settled Fills. Needs a signed-in account |
 | `POST /rfq` | no | opens a sealed-bid request: a strike/tenor/size the book does not offer (`kind: "TRADER"`) or a Loan to cover (`kind: "COVER"`, an address and nothing else). Holds the Reserve Price against the Risk Budget and returns the one unsigned transaction the requester's own **proven** wallet must send. A `COVER` request for an uncoverable Loan answers with that Loan's own refusal instead |
 | `POST /rfq/confirm` | no | looks up the opening transaction's real receipt, reads the quotation id the chain assigned, and releases the reservation if it never opened (ADR-0012) |
 | `GET /rfq/:requestId` | no | the wait: which phase, how many makers have answered, and the premium once one has. Never a maker's identity, and never a premium before an Offer exists |
@@ -98,6 +99,11 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 | `GET /forecast/news` | no | simulated-headline sentiment for `?symbol=&horizon=`. Opinion, quarantined from the trade flow (ADR-0005) |
 | `GET /forecast/price` | no | a price prediction grounded in real market data. Opinion, never a trade input |
 | `GET /forecast/risk-benefit` | no | the risk/benefit reading, with a runtime guardrail against Max Loss phrasing |
+| `GET /forecast/indicators` | no | indicators for one coin, from the Python agents service. The odd one out: arithmetic over public candles rather than opinion, so no AI call, no horizon and no disclaimer. Needs `npm run agents` |
+| `POST /forecast/ask` | no | a free-text question answered per coin, with conversation history. Token-gated and rate-limited — one question can trigger several real AI calls |
+| `GET /news` \| `GET /news/crypto` \| `GET /news/macro` | no | raw news feeds: crypto (CryptoPanic → RSS → CryptoCompare) and macro (GNews → NewsAPI → the same chain), or both at once. Real external reads rather than a billed AI call, so ungated like `/book` and `/deck` |
+| `GET /health` | no | liveness: that this process is up, and whether it has a signer. Touches no dependency, so it stays free to poll |
+| `GET /health/ready` | no | readiness: makes real upstream calls and names the dependency that is down. 503 when degraded. Rate-limited — meant to be polled slowly |
 | `GET /risk-profile` | no | the caller's saved Risk Profile, or `null` if none is set yet. Needs a signed-in account |
 | `PUT /risk-profile` | no | saves conservative/balanced/aggressive for the caller. Needs a signed-in account |
 | `GET /suggestion` | no | an ETH Suggestion from the Strategy Agent for the caller's saved profile. Needs a signed-in account; `null` fields if no profile is saved yet |
@@ -152,7 +158,7 @@ Card does. No maker address, nonce or signature ever reaches the browser.
 switches a money route into a non-money route fails open under a typo or a merge. Its module
 imports nothing that can sign, and a test walks the import graph to keep it that way.
 
-The three `/forecast/*` routes are the opinion surface ADR-0005 anticipated, and the
+The `/forecast/*` routes are the opinion surface ADR-0005 anticipated, and the
 quarantine is structural rather than intentional. Nothing in `apps/api/src/forecast/`
 imports `propose.ts` or `execute.ts`, or is imported by them. Every response carries a fixed
 disclaimer and a per-field `source`, so nothing downstream can render it as anything but

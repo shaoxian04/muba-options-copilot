@@ -221,7 +221,7 @@ it here with a one-line lesson.
 - **`apps/api/src/insurance/CONTEXT.md`** — Borrower, Loan, Cover, Liquidation Price, Lapse.
   **Read before any Liquidation Cover work.**
 - **`docs/adr/`** — the decisions and why they went that way. 0001, 0004, and 0013 are
-  superseded; 0006–0012 and 0014–0019 are current — 0009 is why the surface may look
+  superseded; 0002, 0003, 0005, 0006–0012 and 0014–0021 are current — 0009 is why the surface may look
   like a game but never celebrates a Fill, 0010 is why an Underlying is keyed by price
   feed and not by token, 0011 is why a Trader's own wallet signs a fill instead of the
   backend, 0012 is why a session must prove wallet ownership and the chain alone

@@ -25,6 +25,7 @@
  * Every number rendered is a `display` string. There is no arithmetic in this file, and
  * `tests/support/no-arithmetic.test.ts` fails if any appears.
  */
+import { useEffect, useRef } from "react";
 import type { Card, Deck } from "@copilot/shared";
 import { countdown, countdownWords } from "../lib/clock";
 import { depthBarWidths } from "../lib/geometry";
@@ -42,6 +43,7 @@ function CardTile({
   now,
   onPick,
   disabled,
+  innerRef,
 }: {
   card: Card;
   direction: Deck["direction"];
@@ -53,6 +55,8 @@ function CardTile({
   now: number;
   onPick: () => void;
   disabled: boolean;
+  /** Set on the dealt Card only, so DeckRow can scroll it into view. */
+  innerRef?: (el: HTMLButtonElement | null) => void;
 }) {
   // From the Deck's own direction. Reading it off `payoutAsset` would work only while
   // puts settle in USDC and inverse calls in WETH -- a coincidence of today's book, not
@@ -83,6 +87,7 @@ function CardTile({
   return (
     <li>
       <button
+        ref={innerRef}
         type="button"
         className={`card${dealt ? " dealt" : ""}`}
         aria-pressed={selected}
@@ -216,6 +221,29 @@ export function DeckRow({
   // geometry.ts`, so this file stays free of the `Math.max` that finding "deepest" needs.
   const depthWidths = depthBarWidths(deck.cards.map((c) => c.depthUsdc.value));
 
+  /*
+    A dealt Card can sit several rows down, where the tag above the Deck points at
+    something off screen. Bring it into view once -- `block: "nearest"` so a Card that
+    is already visible does not move the page at all.
+
+    `deck` is a dependency because the Card usually arrives a render AFTER the ref does:
+    accepting a Suggestion sets `dealtRef` and reloads the Deck at the proposal's own
+    expiry, so the element does not exist yet on the first run. `scrolledTo` is what
+    keeps that from re-scrolling on every six-second poll tick.
+  */
+  const dealtEl = useRef<HTMLButtonElement | null>(null);
+  const scrolledTo = useRef<string | null>(null);
+  useEffect(() => {
+    if (!dealtRef) {
+      scrolledTo.current = null;
+      return;
+    }
+    if (scrolledTo.current === dealtRef || !dealtEl.current) return;
+    scrolledTo.current = dealtRef;
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    dealtEl.current.scrollIntoView({ block: "nearest", behavior: still ? "auto" : "smooth" });
+  }, [dealtRef, deck]);
+
   return (
     <div className="well">
       {deck.gradientLegible ? null : (
@@ -242,6 +270,7 @@ export function DeckRow({
             now={now}
             disabled={busy}
             onPick={() => onPick(card.cardRef)}
+            innerRef={card.cardRef === dealtRef ? (el) => { dealtEl.current = el; } : undefined}
           />
         ))}
       </ul>

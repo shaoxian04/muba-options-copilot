@@ -20,7 +20,7 @@ import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
 import { ProposeRequest, UnderlyingSymbol, MAX_HORIZON_DAYS, MAX_RISK_BUDGET_USDC, type ProposeResult, RiskProfileName, DecisionRequest } from "@copilot/shared";
 import { canSign, walletAddress, chain } from "./thetanuts/client.js";
-import { buyableOrders, daysToExpiry, orderIdentity, PUT, UpstreamShapeChanged } from "./thetanuts/orders.js";
+import { buyableOrders, daysToExpiry, orderIdentity, wholeDaysToExpiry, PUT, UpstreamShapeChanged } from "./thetanuts/orders.js";
 import { impliedMovePct } from "./thetanuts/implied-move.js";
 import { spotPrice, spotPrices } from "./thetanuts/market.js";
 import { UnknownUnderlying } from "./thetanuts/underlyings.js";
@@ -689,6 +689,9 @@ export async function buildApp(): Promise<FastifyInstance> {
         // Idempotent: the ref is derived from the Order's identity, so re-minting one
         // the Deck already dealt hands back the same string.
         cardRef: rememberCard(s, result.order, orderIdentity(result.order)),
+        // The bucket the Deck files this Order under, which is not always the horizon
+        // that was asked for -- selectOrder takes the nearest live expiry.
+        horizonDays: wholeDaysToExpiry(result.order),
         proposal: result.proposal,
         remainingUsdc: remaining,
       };

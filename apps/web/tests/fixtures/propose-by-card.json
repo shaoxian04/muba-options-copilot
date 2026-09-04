@@ -3,6 +3,7 @@
     "kind": "PROPOSAL",
     "proposalId": "proposal-id",
     "cardRef": "card-0",
+    "horizonDays": 1,
     "proposal": {
       "intent": {
         "underlying": "ETH",
@@ -905,6 +906,7 @@
     "kind": "PROPOSAL",
     "proposalId": "proposal-id",
     "cardRef": "card-1",
+    "horizonDays": 1,
     "proposal": {
       "intent": {
         "underlying": "ETH",
@@ -1807,6 +1809,7 @@
     "kind": "PROPOSAL",
     "proposalId": "proposal-id",
     "cardRef": "card-2",
+    "horizonDays": 1,
     "proposal": {
       "intent": {
         "underlying": "ETH",

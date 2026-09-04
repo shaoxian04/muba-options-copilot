@@ -467,6 +467,13 @@ test.describe("size: presets, the stepper, and the cap", () => {
     // test is actually about survives that -- Max lands on the budget rather than on
     // Maker Depth, which is the branch the "deep-budget" test below takes the other way.
     await page.getByTestId("size-max").click();
+    // Wait for the resize to actually reach the wire before reading the traffic log. The
+    // click only schedules a re-price; reading `.at(-1)` straight after it races that
+    // request and, when the machine is loaded, sees the OPENING proposal instead -- the
+    // size at the default, not at the cap. The same poll every other sizing test uses.
+    await expect
+      .poll(() => traffic.all.filter((r) => new URL(r.url()).pathname === "/propose").length)
+      .toBeGreaterThanOrEqual(2);
     const last = traffic.all.filter((r) => new URL(r.url()).pathname === "/propose").at(-1)!;
     expect(last.postDataJSON()).toMatchObject({ sizeUsdc: budget });
     await expect(page.getByTestId("max-loss")).toHaveText(fixtures.session.figures.riskBudgetUsdc.display);
@@ -484,6 +491,10 @@ test.describe("size: presets, the stepper, and the cap", () => {
     await expect(page.getByTestId("size-preset-10")).toBeEnabled();
 
     await page.getByTestId("size-max").click();
+    // Same race as the Risk Budget branch above: poll until the re-price has been sent.
+    await expect
+      .poll(() => traffic.all.filter((r) => new URL(r.url()).pathname === "/propose").length)
+      .toBeGreaterThanOrEqual(2);
     const last = traffic.all.filter((r) => new URL(r.url()).pathname === "/propose").at(-1)!;
     expect(last.postDataJSON()).toMatchObject({ sizeUsdc: 500 });
     await expect(page.getByTestId("max-loss")).toHaveText("$500.00");

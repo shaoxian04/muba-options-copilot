@@ -446,6 +446,7 @@ export async function rfqRoutes(app: FastifyInstance): Promise<void> {
         explorerTxUrlBase: explorerTxUrlBase(),
         remainingUsdc: remainingBudget(s),
       };
+      // nosemgrep: javascript.express.security.audit.xss.direct-response-write.direct-response-write -- Fastify JSON route, reply.send() serializes as application/json and never renders HTML
       return reply.send(body);
     } catch (e) {
       if (e instanceof UnsafeRfq) return reply.code(403).send({ error: e.message });

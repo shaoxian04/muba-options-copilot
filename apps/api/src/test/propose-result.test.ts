@@ -75,6 +75,37 @@ describe("PROPOSAL", () => {
     expect(body.kind).toBe("PROPOSAL");
     expect(body.proposal.chosenBy).toBe("TRADER");
   });
+
+  // /propose takes the nearest live expiry, /deck filters on the exact one. The answer
+  // has to name the bucket the Order is really in, or the surface renders a Deck the
+  // dealt cardRef is not in and nothing highlights.
+  it("names the expiry bucket the Order is really in, not the one asked for", async () => {
+    // Nothing in the book is a 3-day put; the nearest is the 2-day $2,380.
+    const body = (await propose({ ...INTENT, horizonDays: 3 })).json();
+
+    expect(body.kind).toBe("PROPOSAL");
+    expect(body.proposal.strike).toBe(2380);
+    expect(body.horizonDays).toBe(2);
+  });
+
+  it("names the horizon asked for when the book has an Order on that day", async () => {
+    const body = (await propose()).json();
+    expect(body.horizonDays).toBe(1);
+  });
+
+  it("names the bucket for a Card the Trader chose too", async () => {
+    const session = freshSession();
+    const { cards } = (
+      await app.inject({
+        method: "GET",
+        url: "/deck?asset=ETH&direction=DOWN&horizonDays=2&sizeUsdc=2",
+        headers: { "x-session-id": session },
+      })
+    ).json();
+
+    const body = (await propose({ ...INTENT, horizonDays: 2, cardRef: cards[0].cardRef }, session)).json();
+    expect(body.horizonDays).toBe(2);
+  });
 });
 
 describe("NO_ORDER", () => {
