@@ -21,7 +21,7 @@ import {
 import { callAgentForJson, type AgentCreateFn } from "./agent.js";
 import { buildScenario } from "./scenario.js";
 import { fetchMarketData, type MarketDataDeps } from "./marketData.js";
-import { analyzeNews } from "./news.js";
+import { analyzeNews, type NewsFetchDeps } from "./news.js";
 import { predictPrice } from "./price.js";
 import { assessRiskBenefit } from "./riskBenefit.js";
 import { fetchIndicators } from "./indicators.js";
@@ -116,7 +116,7 @@ export type FetchIndicatorsFn = (symbol: string) => Promise<Indicators>;
 
 async function gatherCoinData(
   request: ChatQueryRequest,
-  deps?: { create?: AgentCreateFn; marketData?: MarketDataDeps; indicators?: FetchIndicatorsFn }
+  deps?: { create?: AgentCreateFn; marketData?: MarketDataDeps; newsFetch?: NewsFetchDeps; indicators?: FetchIndicatorsFn }
 ): Promise<GatheredCoin> {
   const needsScenario =
     request.analyses.includes("news") || request.analyses.includes("price") || request.analyses.includes("risk-benefit");
@@ -124,7 +124,7 @@ async function gatherCoinData(
   let marketData: MarketData;
   let scenario: MarketScenario | undefined;
   if (needsScenario) {
-    scenario = await buildScenario(request.coin, request.horizon, { marketData: deps?.marketData, agentCreate: deps?.create });
+    scenario = await buildScenario(request.coin, request.horizon, { marketData: deps?.marketData, newsFetch: deps?.newsFetch });
     marketData = scenario.marketData;
   } else {
     marketData = await fetchMarketData(request.coin, deps?.marketData);
@@ -157,6 +157,7 @@ export async function answerQuestion(
   deps?: {
     create?: AgentCreateFn;
     marketData?: MarketDataDeps;
+    newsFetch?: NewsFetchDeps;
     history?: ConversationTurn[];
     indicators?: FetchIndicatorsFn;
   }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { extractChatQuery, answerQuestion, IncompleteQuestion } from "./ask.js";
 import type { AgentCreateFn } from "./agent.js";
 import type { MarketDataDeps, CoinGeckoMarket } from "./marketData.js";
+import type { NewsFetchDeps } from "./news.js";
 import { FORECAST_DISCLAIMER, type Indicators } from "@copilot/shared";
 
 function jsonCreate(payload: unknown): AgentCreateFn {
@@ -123,9 +124,31 @@ const workingMarketDataDeps: MarketDataDeps = {
   },
 };
 
+const workingNewsFetchDeps: NewsFetchDeps = {
+  fetchCryptoNews: async () => ({
+    items: [
+      {
+        id: "cp_1",
+        title: "ETH steady",
+        source: "cryptopanic",
+        url: "https://cryptopanic.com/news/1",
+        published_at: new Date().toISOString(),
+        fetched_at: new Date().toISOString(),
+        lag_seconds: 0,
+        lag_display: "just now",
+        coins: ["ETH"],
+        sentiment_hint: "neutral",
+        category: "crypto",
+      },
+    ],
+    count: 1,
+    source: "cryptopanic",
+    fetched_at: new Date().toISOString(),
+  }),
+};
+
 test("answerQuestion runs only the requested analysis, plus the answer synthesis, and skips the rest", async () => {
   let sawExtraction = false;
-  let sawHeadlineCall = false;
   let sawNewsAnalysis = false;
   let sawAnswerSynthesis = false;
   let sawPriceOrRiskBenefit = false;
@@ -136,14 +159,6 @@ test("answerQuestion runs only the requested analysis, plus the answer synthesis
       return {
         content: [
           { type: "text", text: JSON.stringify({ requests: [{ coin: "ETH", horizon: "7d", analyses: ["news"] }], isComparison: false }) },
-        ],
-      };
-    }
-    if (params.system.includes("invent plausible")) {
-      sawHeadlineCall = true;
-      return {
-        content: [
-          { type: "text", text: JSON.stringify({ headlines: [{ text: "ETH steady", sentiment: "neutral", source: "simulated" }] }) },
         ],
       };
     }
@@ -162,10 +177,10 @@ test("answerQuestion runs only the requested analysis, plus the answer synthesis
   const results = await answerQuestion("what's the news on ETH over the next week?", {
     create,
     marketData: workingMarketDataDeps,
+    newsFetch: workingNewsFetchDeps,
   });
 
   assert.ok(sawExtraction);
-  assert.ok(sawHeadlineCall);
   assert.ok(sawNewsAnalysis);
   assert.ok(sawAnswerSynthesis);
   assert.equal(sawPriceOrRiskBenefit, false);
@@ -232,12 +247,6 @@ test("answerQuestion returns partial success when one of several coins fails", a
           },
         ],
       };
-    if (params.system.includes("invent plausible"))
-      return {
-        content: [
-          { type: "text", text: JSON.stringify({ headlines: [{ text: "steady", sentiment: "neutral", source: "simulated" }] }) },
-        ],
-      };
     if (params.system.includes("sentiment read"))
       return { content: [{ type: "text", text: JSON.stringify({ overallSentiment: "neutral", summary: "Steady." }) }] };
     return { content: [{ type: "text", text: JSON.stringify({ answer: "ETH news is steady." }) }] };
@@ -249,7 +258,7 @@ test("answerQuestion returns partial success when one of several coins fails", a
     resolveViaCoinGeckoSearch: async (query) => (query === "NOTACOIN" ? undefined : { id: "ethereum", symbol: "eth" }),
   };
 
-  const results = await answerQuestion("how are ETH and NOTACOIN doing this week?", { create, marketData });
+  const results = await answerQuestion("how are ETH and NOTACOIN doing this week?", { create, marketData, newsFetch: workingNewsFetchDeps });
 
   assert.equal(Object.keys(results).length, 2);
   assert.ok(results.ETH.news, "ETH should have succeeded");
@@ -323,12 +332,6 @@ test("answerQuestion runs price and risk-benefit together, attaches market data 
           },
         ],
       };
-    if (params.system.includes("invent plausible"))
-      return {
-        content: [
-          { type: "text", text: JSON.stringify({ headlines: [{ text: "ETH steady", sentiment: "neutral", source: "simulated" }] }) },
-        ],
-      };
     if (params.system.includes("speculative price prediction"))
       return {
         content: [
@@ -358,7 +361,11 @@ test("answerQuestion runs price and risk-benefit together, attaches market data 
     return { content: [{ type: "text", text: JSON.stringify({ answer: "ETH looks modestly bullish with a two-sided risk picture." }) }] };
   };
 
-  const results = await answerQuestion("will ETH go up, and what's the risk?", { create, marketData: workingMarketDataDeps });
+  const results = await answerQuestion("will ETH go up, and what's the risk?", {
+    create,
+    marketData: workingMarketDataDeps,
+    newsFetch: workingNewsFetchDeps,
+  });
 
   assert.equal(results.ETH.market?.price, 2451);
   assert.ok(results.ETH.price);
@@ -388,13 +395,6 @@ test("answerQuestion runs different analyses per coin when the question asks for
         ],
       };
     }
-    if (params.system.includes("invent plausible")) {
-      return {
-        content: [
-          { type: "text", text: JSON.stringify({ headlines: [{ text: "ETH steady", sentiment: "neutral", source: "simulated" }] }) },
-        ],
-      };
-    }
     if (params.system.includes("sentiment read")) {
       sawNewsCall = true;
       return { content: [{ type: "text", text: JSON.stringify({ overallSentiment: "neutral", summary: "Steady." }) }] };
@@ -412,7 +412,11 @@ test("answerQuestion runs different analyses per coin when the question asks for
     resolveViaCoinGeckoSearch: async (query) => (query === "PEPE" ? { id: "pepecoin", symbol: "pepe" } : undefined),
   };
 
-  const results = await answerQuestion("what's the news on ETH, and what's PEPE's price right now?", { create, marketData });
+  const results = await answerQuestion("what's the news on ETH, and what's PEPE's price right now?", {
+    create,
+    marketData,
+    newsFetch: workingNewsFetchDeps,
+  });
 
   assert.ok(sawNewsCall, "ETH's news analysis should have run");
   assert.equal(sawUnexpectedOpinionCall, false);
@@ -528,12 +532,6 @@ test("comparison context passed to other coins includes each coin's own gathered
         ],
       };
     }
-    if (params.system.includes("invent plausible"))
-      return {
-        content: [
-          { type: "text", text: JSON.stringify({ headlines: [{ text: "ETH steady", sentiment: "neutral", source: "simulated" }] }) },
-        ],
-      };
     if (params.system.includes("speculative price prediction"))
       return {
         content: [
@@ -568,6 +566,7 @@ test("comparison context passed to other coins includes each coin's own gathered
   const results = await answerQuestion("compare ETH and PEPE", {
     create,
     marketData,
+    newsFetch: workingNewsFetchDeps,
     indicators: async () => {
       throw new Error("agents service not running in tests");
     },
@@ -687,12 +686,6 @@ test("indicators alongside an opinion analysis still carries the disclaimer", as
           },
         ],
       };
-    if (params.system.includes("invent plausible"))
-      return {
-        content: [
-          { type: "text", text: JSON.stringify({ headlines: [{ text: "steady", sentiment: "neutral", source: "simulated" }] }) },
-        ],
-      };
     if (params.system.includes("sentiment read"))
       return { content: [{ type: "text", text: JSON.stringify({ overallSentiment: "neutral", summary: "Steady." }) }] };
     return { content: [{ type: "text", text: JSON.stringify({ answer: "Oversold, and the news is quiet." }) }] };
@@ -701,6 +694,7 @@ test("indicators alongside an opinion analysis still carries the disclaimer", as
   const results = await answerQuestion("is ETH oversold, and what's the news?", {
     create,
     marketData: workingMarketDataDeps,
+    newsFetch: workingNewsFetchDeps,
     indicators: async () => stubIndicators,
   });
 
@@ -755,12 +749,6 @@ test("a price question gathers indicators and hands them to predictPrice", async
           },
         ],
       };
-    if (params.system.includes("invent plausible"))
-      return {
-        content: [
-          { type: "text", text: JSON.stringify({ headlines: [{ text: "steady", sentiment: "neutral", source: "simulated" }] }) },
-        ],
-      };
     if (params.system.includes("speculative price prediction")) {
       sawIndicatorsInPricePrompt = /RSI\(14\): 28\.4/.test(params.messages[0].content);
       return {
@@ -783,6 +771,7 @@ test("a price question gathers indicators and hands them to predictPrice", async
   const results = await answerQuestion("will ETH go up over 7d?", {
     create,
     marketData: workingMarketDataDeps,
+    newsFetch: workingNewsFetchDeps,
     indicators: async () => stubIndicators,
   });
 
@@ -801,12 +790,6 @@ test("a price question still predicts when the agents service is down", async ()
             type: "text",
             text: JSON.stringify({ requests: [{ coin: "ETH", horizon: "7d", analyses: ["price"] }], isComparison: false }),
           },
-        ],
-      };
-    if (params.system.includes("invent plausible"))
-      return {
-        content: [
-          { type: "text", text: JSON.stringify({ headlines: [{ text: "steady", sentiment: "neutral", source: "simulated" }] }) },
         ],
       };
     if (params.system.includes("speculative price prediction")) {
@@ -831,6 +814,7 @@ test("a price question still predicts when the agents service is down", async ()
   const results = await answerQuestion("will ETH go up over 7d?", {
     create,
     marketData: workingMarketDataDeps,
+    newsFetch: workingNewsFetchDeps,
     indicators: async () => {
       throw new Error("Agents service unreachable: fetch failed");
     },
