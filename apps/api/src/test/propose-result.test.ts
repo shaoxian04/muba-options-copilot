@@ -231,7 +231,8 @@ describe("a Review Agent pass skips no check", () => {
     await app.inject({
       method: "POST",
       url: "/session/budget",
-      headers: { "x-session-id": session },
+      // Account-gated since audit B4: a session id alone can no longer move a ceiling.
+      headers: { "x-session-id": session, "x-account-token": ACCOUNT_TOKEN },
       payload: { riskBudgetUsdc: 1 },
     });
 

@@ -42,6 +42,33 @@ export function requireRpc(): string {
   return rpc;
 }
 
+/**
+ * A second Base RPC endpoint, used only when the first stops answering.
+ *
+ * Optional, and unset is the normal local posture. In a deployment it matters more than
+ * it looks: every read this backend does -- the book, spot, open interest, a fill receipt
+ * -- goes through one provider, and a dead RPC produces an EMPTY BOOK rather than an
+ * error, which the surface renders as the perfectly ordinary "No maker is quoting this
+ * right now". A single endpoint is therefore not just a reliability risk but an
+ * invisible one.
+ */
+export const fallbackRpc = (): string | undefined => {
+  const url = process.env.THETANUTS_RPC_URL_FALLBACK;
+  return url && !url.includes("YOUR_KEY") ? url : undefined;
+};
+
+/**
+ * How long any single RPC request may take before it is abandoned.
+ *
+ * Nothing on the trading path had a timeout: only `forecast/marketData.ts` retried or
+ * bounded anything, and it covers the Forecast routes alone. A hung `fetchOrders` held a
+ * Fastify connection open indefinitely, and the frontend's own abort did nothing about
+ * the server-side work still running.
+ *
+ * 15s is well past a healthy Base read and well short of a Trader's patience.
+ */
+export const rpcTimeoutMs = (): number => Number(process.env.THETANUTS_RPC_TIMEOUT_MS ?? 15_000);
+
 export const privateKey = () => process.env.THETANUTS_PRIVATE_KEY;
 export const maxFillUsdc = () => Number(process.env.MAX_FILL_USDC ?? 2);
 
@@ -73,3 +100,4 @@ export function anthropicApiKey(): string {
   }
   return key;
 }
+

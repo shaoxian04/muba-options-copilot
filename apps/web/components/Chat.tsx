@@ -335,13 +335,14 @@ function TradeEngine({
     if (el) el.scrollTop = el.scrollHeight;
   }, [log]);
 
+
   return (
     <>
       <div className="log" ref={logRef} role="log" aria-live="polite" aria-label="Conversation" tabIndex={0}>
         {log.length === 0 ? (
           <p className="from-copilot">
             The Deck is on the right — every option you could buy right now, cheapest long shots first. Have a
-            poke. Nothing is bought until you press a button.
+            poke or type what you want to do. Nothing is bought until you press confirm.
           </p>
         ) : (
           log.map((line, i) => (

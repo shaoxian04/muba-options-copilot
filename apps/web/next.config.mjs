@@ -1,6 +1,16 @@
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+import dotenv from "dotenv";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const root = resolve(here, "../../");
+dotenv.config({ path: resolve(root, ".env") });
+
 /** @type {import('next').NextConfig} */
 export default {
+  outputFileTracingRoot: root,
   // `@copilot/shared` ships raw TypeScript on purpose -- the frontend consumes the
+
   // exact same zod schemas the API validates against, so a contract change is a
   // compile error here rather than a runtime surprise.
   transpilePackages: ["@copilot/shared"],

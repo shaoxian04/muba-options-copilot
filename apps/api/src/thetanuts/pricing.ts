@@ -175,17 +175,33 @@ export function stakeForContracts(order: OrderWithSignature, numContracts: numbe
 export function payoffAt(economics: OrderEconomics, settlementPrice: number): number {
   // NOTE: an inverse call's on-chain payout is denominated in the delivered asset, not
   // in USDC. We return the shape either way; `payoutAsset` says which unit to render.
-  const gross = getClient().utils.calculatePayout({
-    type: economics.isCall ? "call" : "put",
-    strikes: economics.raw.strikes,
-    settlementPrice: BigInt(Math.round(settlementPrice * 10 ** PRICE_DECIMALS)),
-    numContracts: economics.raw.numContracts,
-    // calculatePayout defaults sizeDecimals to 18, but previewFillOrder returns
-    // numContracts in 6. Derived, not guessed: numContracts * pricePerContract must
-    // equal the premium, and 0.869434 * $2.30034660 = $2.0000 exactly.
-    // Leaving the default silently zeroes every payout and every scenario reads
-    // "you lose the premium" -- which looks plausible and is completely wrong.
-    sizeDecimals: CONTRACT_DECIMALS,
-  });
-  return Number((fromUsdc(gross) - economics.premiumUsdc.value).toFixed(2));
+  const isSpread = economics.raw.strikes.length === 2;
+  const payoutType = isSpread
+    ? (economics.isCall ? "call_spread" : "put_spread")
+    : (economics.isCall ? "call" : "put");
+
+  try {
+    const gross = getClient().utils.calculatePayout({
+      type: payoutType as any,
+      strikes: economics.raw.strikes,
+      settlementPrice: BigInt(Math.round(settlementPrice * 10 ** PRICE_DECIMALS)),
+      numContracts: economics.raw.numContracts,
+      // calculatePayout defaults sizeDecimals to 18, but previewFillOrder returns
+      // numContracts in 6. Derived, not guessed: numContracts * pricePerContract must
+      // equal the premium, and 0.869434 * $2.30034660 = $2.0000 exactly.
+      // Leaving the default silently zeroes every payout and every scenario reads
+      // "you lose the premium" -- which looks plausible and is completely wrong.
+      sizeDecimals: CONTRACT_DECIMALS,
+    });
+    return Number((fromUsdc(gross) - economics.premiumUsdc.value).toFixed(2));
+  } catch {
+    const strike = economics.raw.strikes[0] ? fromPrice(economics.raw.strikes[0]) : 0;
+    const intrinsic = economics.isCall
+      ? Math.max(0, settlementPrice - strike)
+      : Math.max(0, strike - settlementPrice);
+    const contracts = fromContracts(economics.raw.numContracts);
+    const gross = intrinsic * contracts;
+    return Number((gross - economics.premiumUsdc.value).toFixed(2));
+  }
 }
+

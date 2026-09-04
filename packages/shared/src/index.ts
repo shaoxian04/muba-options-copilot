@@ -17,6 +17,10 @@ export * from "./primitives.js";
  */
 export const MAX_HORIZON_DAYS = 90;
 
+// Both bounds live in their own leaf module -- `account.ts` needs them for its schema
+// and this barrel re-exports `account.ts`, so defining them here created an import cycle.
+export { DEFAULT_RISK_BUDGET_USDC, MAX_RISK_BUDGET_USDC } from "./limits.js";
+
 /**
  * The wall described in ADR-0001.
  *

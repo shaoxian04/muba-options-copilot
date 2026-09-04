@@ -15,6 +15,7 @@ import { getAddress, Interface, Wallet } from "ethers";
 import type { FastifyInstance } from "fastify";
 import { getChainConfigById, type OrderWithSignature, type RFQRequest } from "@thetanuts-finance/thetanuts-client";
 import { DEFAULT_BOOK, PRICES, previewFillOrder, calculatePayout } from "./fixtures.js";
+import { __resetUpstreamCache } from "../thetanuts/upstream.js";
 
 export const CHAIN_ID = 8453 as const;
 
@@ -118,20 +119,53 @@ export interface StubQuotation {
   record?: Record<string, unknown>;
 }
 
+/**
+ * Backing fields for the upstream facts `upstream.ts` shares between callers.
+ *
+ * They sit behind accessors because a test that rewrites the fake chain mid-test -- and
+ * several legitimately do, looping over six Underlyings and swapping the book each time --
+ * must also invalidate whatever cached the previous answer. Doing it here rather than in
+ * each test means a new test cannot forget.
+ */
+let _book: OrderWithSignature[] = [...DEFAULT_BOOK];
+let _prices: Record<string, number> = { ...PRICES };
+let _bookPositions: Record<string, unknown> = {};
+
 /** What the fake chain currently looks like. Reset between tests. */
 export const state: StubState = {
-  book: [...DEFAULT_BOOK],
-  prices: { ...PRICES },
+  get book() {
+    return _book;
+  },
+  set book(v: OrderWithSignature[]) {
+    _book = v;
+    __resetUpstreamCache();
+  },
+  get prices() {
+    return _prices;
+  },
+  set prices(v: Record<string, number>) {
+    _prices = v;
+    __resetUpstreamCache();
+  },
+  get bookPositions() {
+    return _bookPositions;
+  },
+  set bookPositions(v: Record<string, unknown>) {
+    _bookPositions = v;
+    __resetUpstreamCache();
+  },
   get spot() {
     return this.prices.ETH ?? null;
   },
   set spot(v: number | null) {
     if (v === null) delete this.prices.ETH;
     else this.prices.ETH = v;
+    // A price written through the alias must invalidate too -- the setter above is
+    // bypassed when a property of the existing object is mutated.
+    __resetUpstreamCache();
   },
   canSign: false,
   positions: [] as unknown[],
-  bookPositions: {},
   /** The wallet's current on-chain USDC allowance to the OptionBook, in 6 decimals. */
   allowance: 0n as bigint,
   /** What the stubbed provider says a transaction's receipt is. null = "not found yet". */
@@ -272,6 +306,10 @@ export const spies = {
 };
 
 export function resetStub(): void {
+  // Resetting the fake upstream without clearing what cached its answers would hand the
+  // next test the previous test's book. `upstream.ts` shares reads across callers by
+  // design (audit D1/D2), and module state outlives a single `it`.
+  __resetUpstreamCache();
   state.book = [...DEFAULT_BOOK];
   state.prices = { ...PRICES };
   state.canSign = false;
