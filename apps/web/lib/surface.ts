@@ -66,9 +66,9 @@ import {
 } from "./wallet";
 import { clampSizeUsdc, rfqSizeCapUsdc } from "./geometry";
 import { supabase } from "./supabaseClient";
+import { STAKE_USDC } from "./constants";
 
-/** Trades of 1-2 USDC are normal and expected for this product. */
-export const STAKE_USDC = 2;
+export { STAKE_USDC };
 
 /**
  * The confirmation's size presets (issue #30) -- fixed USDC amounts a Trader reaches a
@@ -1475,6 +1475,12 @@ export function useSurface(): Surface {
         setAssetState(askingAsset);
         setDirectionState(askingDirection);
         setHorizonState(askingHorizon);
+        // A Card the agent dealt on the OLD selection is not the agent's pick on this
+        // new one -- `deal()` clears the same flag on a switch, for the same reason.
+        // Harmless either way (cardRefs are per-session HMACs, so a stale ref cannot
+        // collide with anything in the new Deck), but leaving it set would still be an
+        // unexplained divergence from that sibling path.
+        setDealtRef(null);
       }
 
       setSizeUsdcState(STAKE_USDC);

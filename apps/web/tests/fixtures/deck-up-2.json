@@ -1,0 +1,91 @@
+{
+  "asset": "ETH",
+  "assetName": "Ethereum",
+  "direction": "UP",
+  "horizonDays": 2,
+  "sizeUsdc": 2,
+  "spotUsd": {
+    "value": 2445.49,
+    "display": "$2,445.49"
+  },
+  "expiries": [
+    {
+      "horizonDays": 1,
+      "label": "1d",
+      "cards": 3,
+      "live": true
+    },
+    {
+      "horizonDays": 2,
+      "label": "2d",
+      "cards": 1,
+      "live": true
+    }
+  ],
+  "expiry": {
+    "value": 1768636800000,
+    "display": "17 Jan, 08:00 UTC"
+  },
+  "cards": [
+    {
+      "cardRef": "card-3",
+      "strike": {
+        "value": 2600,
+        "display": "$2,600.00"
+      },
+      "distance": {
+        "needed": {
+          "value": 0.06319457232016369,
+          "display": "6.3%"
+        },
+        "alreadyPast": false,
+        "sentence": "must rise 6.3%"
+      },
+      "perContractUsd": {
+        "value": 1.42,
+        "display": "$1.42"
+      },
+      "contracts": {
+        "value": 1.408451,
+        "display": "1.408451"
+      },
+      "premiumUsdc": {
+        "value": 2.000001,
+        "display": "$2.00"
+      },
+      "maxLossUsdc": {
+        "value": 2.000001,
+        "display": "$2.00"
+      },
+      "breakevenPrice": {
+        "value": 2601.42,
+        "display": "$2,601.42"
+      },
+      "impliedChance": {
+        "value": 0.017384227184738274,
+        "display": "2%"
+      },
+      "chanceLabel": "a long shot",
+      "chanceBand": 0,
+      "availableUsdc": {
+        "value": 500,
+        "display": "$500.00"
+      },
+      "depthUsdc": {
+        "value": 500,
+        "display": "$500"
+      },
+      "depthOrders": {
+        "value": 1,
+        "display": "1"
+      },
+      "heldCount": null,
+      "expiry": {
+        "value": 1768636800000,
+        "display": "17 Jan, 08:00 UTC"
+      },
+      "payoutAsset": "WETH"
+    }
+  ],
+  "gradientLegible": true
+}
