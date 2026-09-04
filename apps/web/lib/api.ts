@@ -16,6 +16,7 @@ import type {
   DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding,
   MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, RiskProfileName,
   RiskProfileResponse, SuggestionResponse, UnderlyingSymbol,
+  PreparedRfq, PreparedRfqCancel, PreparedRfqSettle, RfqAsk, RfqPhase, RfqStatus,
 } from "@copilot/shared";
 import { supabase } from "./supabaseClient";
 
@@ -25,6 +26,7 @@ export type {
   DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding,
   MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, RiskProfileName,
   RiskProfileResponse, SuggestionResponse, UnderlyingSymbol,
+  PreparedRfq, PreparedRfqCancel, PreparedRfqSettle, RfqAsk, RfqPhase, RfqStatus,
 };
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:3001";
@@ -278,18 +280,20 @@ export const practice = (proposalId: string): Promise<{ holding: Holding }> =>
   call<{ holding: Holding }>("/practice", { method: "POST", body: JSON.stringify({ proposalId }) });
 
 /**
- * Name a strike the book does not offer (issue #31).
+ * Open a sealed-bid request for a strike the book does not carry (issue #31, ADR-0017).
  *
- * This always throws `ApiRefusal(501, ...)` -- the sealed-bid RFQ backend is out of
- * scope, and this route exists to refuse honestly rather than pretend a maker is
- * pricing anything. `strikeOffsetPct` is the slider's own raw number, never resolved
- * to a dollar strike in this file or anywhere else in the browser: only the server,
- * which alone holds live spot, may turn it into one, and it does that only inside the
- * refusal's own echoed sentence.
+ * Returns the request already built and the ONE transaction the Trader's own wallet must
+ * send to open it. Nothing has been signed at this point and no USDC has moved -- but the
+ * Reserve Price is already held against the Risk Budget, because it becomes a real
+ * commitment the instant that transaction lands.
+ *
+ * `strikeOffsetPct` is the slider's own raw number and is never resolved to a dollar
+ * strike in this file or anywhere else in the browser: only the server, which alone holds
+ * live spot, may turn it into one. The strike comes back inside `ask` already formatted.
  *
  * `kind: "TRADER"` is injected here so the call site in `surface.ts` needs no change --
- * the union discriminant is an implementation detail of the wire shape, not something
- * a caller thinking about a trade needs to name.
+ * the union discriminant is an implementation detail of the wire shape, not something a
+ * caller thinking about a trade needs to name.
  */
 export const requestRfq = (body: {
   underlying: UnderlyingSymbol;
@@ -297,28 +301,91 @@ export const requestRfq = (body: {
   strikeOffsetPct: number;
   horizonDays: RfqTenorDays;
   sizeUsdc: number;
-}): Promise<never> =>
-  call<never>("/rfq", { method: "POST", body: JSON.stringify({ kind: "TRADER", ...body }), headers: authHeaders() });
+  walletAddress: string;
+}): Promise<PreparedRfq> =>
+  call<PreparedRfq>("/rfq", {
+    method: "POST",
+    body: JSON.stringify({ kind: "TRADER", ...body }),
+    headers: authHeaders(),
+  });
 
 /**
- * The Cover door's RFQ request (issue #43): a selector, not figures. The server
- * re-reads the Loan off Aave and re-derives strike, size and cap itself -- a stale
- * or tampered browser cannot change what is actually requested.
+ * The Cover door's request: a selector, not figures.
  *
- * A coverable Loan throws `ApiRefusal(501, ...)` (the sealed-bid backend is not built).
- * An uncoverable Loan returns `{ status: "REFUSED", refusal }` as a normal 200 -- the
- * same shape `getCoverQuote` uses, so a later surface can treat both identically.
- * (The return type below says so -- `Promise<never>` would claim this call can only
- * ever throw, which is exactly the half of the contract the REFUSED path is for.)
+ * The body carries an address and nothing else. The server re-reads the Loan off Aave and
+ * re-derives the strike, the size and the cap itself, so a stale or tampered browser
+ * cannot change what is actually requested (ADR-0006, issue #43).
+ *
+ * Two shapes come back, and the caller has to look at `status` to tell them apart. A Loan
+ * that cannot be covered answers a normal 200 carrying its own refusal -- the same shape
+ * `getCoverQuote` uses -- because "this Loan holds two assets" is an answer and not a
+ * failure. A coverable Loan answers with the prepared request.
  */
 export const requestCoverRfq = (body: {
   address: string;
-}): Promise<{ status: "REFUSED"; refusal: CoverRefusal }> =>
-  call<{ status: "REFUSED"; refusal: CoverRefusal }>("/rfq", {
+}): Promise<PreparedRfq | { status: "REFUSED"; refusal: CoverRefusal }> =>
+  call<PreparedRfq | { status: "REFUSED"; refusal: CoverRefusal }>("/rfq", {
     method: "POST",
     body: JSON.stringify({ kind: "COVER", ...body }),
     headers: authHeaders(),
   });
+
+/** True when the Cover door answered with a refusal rather than a prepared request. */
+export const isCoverRefusal = (
+  r: PreparedRfq | { status: "REFUSED"; refusal: CoverRefusal }
+): r is { status: "REFUSED"; refusal: CoverRefusal } => "status" in r && r.status === "REFUSED";
+
+/**
+ * Report what the wallet did with the opening transaction.
+ *
+ * A hash means the backend goes and reads the real receipt, and the chain decides whether
+ * a request was opened and what id it was given (ADR-0012). No hash means the wallet
+ * declined, and the Risk Budget reservation is released.
+ */
+export const confirmRfq = (
+  requestId: string,
+  txHash?: string
+): Promise<{ opened: boolean; remainingUsdc: number; status?: RfqStatus }> =>
+  call("/rfq/confirm", { method: "POST", body: JSON.stringify({ requestId, txHash }), headers: authHeaders() });
+
+/** Where the wait has got to. Polled while the offer window runs. Signs and spends nothing. */
+export const getRfqStatus = (requestId: string, signal?: AbortSignal): Promise<RfqStatus> =>
+  call<RfqStatus>(`/rfq/${encodeURIComponent(requestId)}`, { headers: authHeaders(), signal });
+
+/**
+ * The second human confirmation, prepared.
+ *
+ * The premium that comes back is a maker's own answer, not an estimate and not the
+ * Reserve Price -- which is the whole reason there are two signatures rather than one.
+ */
+export const prepareRfqSettle = (requestId: string): Promise<PreparedRfqSettle> =>
+  call<PreparedRfqSettle>("/rfq/settle/prepare", {
+    method: "POST",
+    body: JSON.stringify({ requestId }),
+    headers: authHeaders(),
+  });
+
+/** Report what the wallet did with the settlement. The chain decides again. */
+export const settleRfq = (
+  requestId: string,
+  txHash?: string
+): Promise<{ settled: boolean; remainingUsdc: number; status: RfqStatus }> =>
+  call("/rfq/settle", { method: "POST", body: JSON.stringify({ requestId, txHash }), headers: authHeaders() });
+
+/** The transaction that withdraws a request nobody answered. */
+export const prepareRfqCancel = (requestId: string): Promise<PreparedRfqCancel> =>
+  call<PreparedRfqCancel>("/rfq/cancel/prepare", {
+    method: "POST",
+    body: JSON.stringify({ requestId }),
+    headers: authHeaders(),
+  });
+
+/** Report the withdrawal. Only a request the chain agrees is closed frees its reservation. */
+export const cancelRfq = (
+  requestId: string,
+  txHash?: string
+): Promise<{ cancelled: boolean; remainingUsdc: number }> =>
+  call("/rfq/cancel", { method: "POST", body: JSON.stringify({ requestId, txHash }), headers: authHeaders() });
 
 /**
  * A Borrower's Loan, and the Cover it would need. Read-only: it requests nothing from a

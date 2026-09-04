@@ -88,7 +88,12 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 | `GET /account` | no | the signed-in account's saved settings and linked wallet, if any (ADR-0014) |
 | `POST /account/settings` | no | save a partial Risk Budget / default-asset / default-direction update |
 | `GET /account/activity` | no | a page of the account's own activity log |
-| `POST /rfq` | no | names a strike/tenor/size the book does not offer (`kind: "TRADER"`) or asks to cover a Loan (`kind: "COVER"`, an address and nothing else). Always the honest 501 -- the sealed-bid backend is not built -- except a `COVER` request for an uncoverable Loan, which answers with that Loan's own refusal instead |
+| `POST /rfq` | no | opens a sealed-bid request: a strike/tenor/size the book does not offer (`kind: "TRADER"`) or a Loan to cover (`kind: "COVER"`, an address and nothing else). Holds the Reserve Price against the Risk Budget and returns the one unsigned transaction the requester's own **proven** wallet must send. A `COVER` request for an uncoverable Loan answers with that Loan's own refusal instead |
+| `POST /rfq/confirm` | no | looks up the opening transaction's real receipt, reads the quotation id the chain assigned, and releases the reservation if it never opened (ADR-0012) |
+| `GET /rfq/:requestId` | no | the wait: which phase, how many makers have answered, and the premium once one has. Never a maker's identity, and never a premium before an Offer exists |
+| `POST /rfq/settle/prepare` | no | the second human confirmation: a maker's own decrypted price, and the unsigned approve + settle transactions that pay exactly it |
+| `POST /rfq/settle` | no | looks up the settlement on-chain, records the option it minted, and drops the Risk Budget hold from the Reserve Price to the premium actually charged |
+| `POST /rfq/cancel/prepare` / `POST /rfq/cancel` | no | withdraw a request nobody answered, taking the commitment to pay back off the chain |
 | `GET /cover/quote` | no | a Borrower's Aave V3 Loan on Base, and the put that would protect it: Liquidation Price, Target Strike, the full hedge. `?address=0x...`. Reads any address, requests nothing from a maker, signs nothing. Refuses -- with the reason in words -- for multi-collateral Loans, unsupported collateral, no debt, or a price its two sources disagree on |
 | `GET /forecast/news` | no | simulated-headline sentiment for `?symbol=&horizon=`. Opinion, quarantined from the trade flow (ADR-0005) |
 | `GET /forecast/price` | no | a price prediction grounded in real market data. Opinion, never a trade input |
@@ -116,6 +121,15 @@ Run need neither an account nor a wallet. A successful `/auth/verify` call, when
 also links that wallet to the account (one wallet per account, overwritten on relink); the
 Risk Budget ceiling, Practice Run history, and an activity log persist per account through
 `GET /account`, `POST /account/settings`, and `GET /account/activity`.
+
+The `/rfq` routes are the other money path, and they are a different shape (ADR-0017). A
+Fill is one act against a price that already exists; an RFQ opens a sealed-bid auction,
+waits out a window the protocol sets, and settles against a price discovered inside it —
+**two signatures with a real wait between them**. What the requester commits to before the
+first one is the Reserve Price: a ceiling, enforced on-chain by the OptionFactory, held
+against the Risk Budget from the moment the request is built. No premium exists, or is
+shown, until a maker answers. Both doors — the trading surface's and Cover's — go through
+the same seven routes; they differ only in how the Ask is derived.
 
 Every number a Trader reads crosses the wire as `{ value, display }` -- formatted once, on
 the server. The frontend renders `display` verbatim and never formats or recomputes; if it
@@ -187,14 +201,14 @@ token left those four routes forgeable by any page the operator's browser happen
 The Risk Profile / Suggestion / Decision routes are gated by `$COPILOT_API_TOKEN` when set,
 and then again by the account that signed in. They key their data on the id
 `requireAccount` resolves an `x-account-token` to -- read off a verified Supabase session,
-never off a header (ADR-0017, supersedes ADR-0013). Without a signed-in account all five
+never off a header (ADR-0018, supersedes ADR-0013). Without a signed-in account all five
 answer 401; there is no fallback identity, because a fallback is reachable by simply not
 signing in.
 
 This closes a real hole, twice over. These routes originally keyed on `x-copilot-owner`, a
 client-supplied header nothing verified, so any holder of the shared token could name a
 different owner and read or overwrite that owner's Risk Profile or Decisions. ADR-0013
-closed that by keying on the wallet a session cryptographically proved instead; ADR-0017
+closed that by keying on the wallet a session cryptographically proved instead; ADR-0018
 re-keys on the account for consistency with the rest of the account system (Risk Budget,
 linked wallet, Practice history) without reopening the hole -- an account id is only ever
 handed back after Supabase itself verifies the bearer token, exactly as unforgeable as the
@@ -233,9 +247,12 @@ The reasoning behind this project is written down, not assumed:
   - [0008](./docs/adr/0008-cover-is-bought-by-rfq-for-single-collateral-loans-only.md) — Cover is RFQ-only, single-collateral Loans only
   - [0011](./docs/adr/0011-non-custodial-fill-for-multi-tenant-wallets.md) — each Trader signs their own fill; the backend prepares, never signs
   - [0012](./docs/adr/0012-wallet-proof-sessions-and-chain-verified-settle.md) — sessions prove wallet ownership before a fill; the chain decides whether a fill succeeded
-  - [0013](./docs/adr/0013-a-risk-profile-belongs-to-a-wallet.md) — a Risk Profile is keyed on the proven wallet, not a browser-minted id (superseded by 0017)
+  - [0013](./docs/adr/0013-a-risk-profile-belongs-to-a-wallet.md) — a Risk Profile is keyed on the proven wallet, not a browser-minted id (superseded by 0018)
   - [0014](./docs/adr/0014-sign-in-required-before-wallet-connect.md) — a real account is required before wallet-connect or Confirm; Deck browsing and Practice Run stay open
-  - [0017](./docs/adr/0017-a-risk-profile-belongs-to-an-account.md) — a Risk Profile is keyed on the signed-in account, not the wallet (supersedes 0013)
+  - [0015](./docs/adr/0015-the-liquidation-price-is-aaves-and-disagreeing-sources-refuse.md) — the Liquidation Price is Aave's, and two disagreeing price sources refuse rather than pick
+  - [0016](./docs/adr/0016-cover-is-partial-and-says-by-how-much.md) — a Cover says how much of the Loan it actually covers
+  - [0017](./docs/adr/0017-the-rfq-money-path-is-two-signatures-with-a-wait-between-them.md) — an RFQ is two signatures with a wait between them, and no price until a maker answers
+  - [0018](./docs/adr/0018-a-risk-profile-belongs-to-an-account.md) — a Risk Profile is keyed on the signed-in account, not the wallet (supersedes 0013)
 
 ## Layout
 
@@ -314,12 +331,16 @@ docs/superpowers/     the Forecast spec and its implementation plan
 - [ ] Trade Intent extraction — the surface asks through seed prompts, not free text
 - [ ] The three agents as their own Python service (ADR-0007). Only Review exists, stubbed
       as always-agreeing, and its silence has never been treated as consent
-- [ ] RFQ fallback when the book is empty. The halt state offers it without pretending it
-      is wired
-- [ ] Liquidation Cover — it has a glossary and ADR-0008, and no code
+- [x] RFQ for strikes the book does not carry — the full sealed-bid path, both doors:
+      request, wait, a maker's real price, and a second signature to pay it (ADR-0017)
+- [x] Liquidation Cover, end to end — reads an Aave Loan, derives the hedge, and buys it
+      through the same RFQ path
+- [ ] **First real mainnet Cover.** The path is built and exercised against live Base data;
+      this ticks when a maker has actually answered one
 
 ## Next steps
 
-Sign the first fill. RFQ for custom strikes and expiries. Trade Intent extraction, so the
-left column takes a sentence rather than a seed prompt. Auto-claim at expiry. A Python quant
-service for volatility modelling. Multi-asset beyond ETH.
+Sign the first fill, and get a maker to answer the first Cover Request. Trade Intent
+extraction, so the left column takes a sentence rather than a seed prompt. A renewal prompt
+before a Lapse — the first thing ADR-0008 asks for if there is time. Auto-claim at expiry. A
+Python quant service for volatility modelling.

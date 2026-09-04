@@ -61,9 +61,16 @@ test.describe("the ticker rail", () => {
     await stubApi(page);
     await page.goto("/");
 
+    // Wait for the row to actually carry its market before measuring anything on it.
+    // `evaluateAll` does not retry: on an unpopulated rail it answers `[]` rather than
+    // waiting, and the assertions below then read `undefined` and fail for a reason that
+    // has nothing to do with what this test is about. Only visible under parallel load,
+    // which is exactly when it is least obvious.
+    const row = page.getByTestId("rail-XRP");
+    await expect(row.locator(".sp i")).toHaveCount(2);
+
     // XRP quotes calls and nothing else on the fixture book. That is what the bar is for.
-    const widths = await page
-      .getByTestId("rail-XRP")
+    const widths = await row
       .locator(".sp i")
       .evaluateAll((els) => els.map((el) => (el as HTMLElement).getBoundingClientRect().width));
 

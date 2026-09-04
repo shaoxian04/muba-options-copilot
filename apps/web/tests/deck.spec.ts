@@ -32,6 +32,12 @@ test.describe("the Deck as dealt", () => {
   test("puts the longest shot leftmost, in both directions", async ({ page }) => {
     await page.goto("/");
 
+    // Wait for the Deck to be dealt before measuring it. `evaluateAll` does not retry:
+    // on an undealt Deck it answers `[]` rather than waiting, and the comparison below
+    // then fails for a reason that has nothing to do with card order. Only visible under
+    // parallel load, which is exactly when it is least obvious.
+    await expect(page.getByTestId("card")).toHaveCount(cards.length);
+
     const chances = await page.getByTestId("card").evaluateAll((els) =>
       els.map((el) => el.getAttribute("data-chance"))
     );

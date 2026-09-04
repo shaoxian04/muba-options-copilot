@@ -20,20 +20,12 @@ import { usd, contracts, percent, movePercent, ratio, days, moment } from "../fo
 import { readLoan } from "./loan.js";
 import { assess, PREMIUM_CAP_USDC, TENOR_DAYS } from "./liquidation.js";
 import { safeErrorResponse } from "../errors.js";
+// The Lapse is the same moment `POST /rfq` will actually ask a maker for, so it is
+// computed in one place rather than twice. A quote that promises a different expiry from
+// the one the request carries is a lie nobody would notice.
+import { expiryAt } from "../expiry.js";
 
 const Query = z.object({ address: z.string().trim().min(1, "An address is required") });
-
-/**
- * The Lapse, as a moment rather than a duration.
- *
- * Computed here rather than carried in as a constant because it is the one figure that
- * depends on when the question was asked. Midnight UTC on the day 14 days out: options
- * expire at a fixed moment, and a Borrower who reads "in 14 days" cannot diarise it.
- */
-function lapseAt(now: number, tenorDays: number): string {
-  const d = new Date(now + tenorDays * 86_400_000);
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 8, 0, 0)).toISOString();
-}
 
 /**
  * A token balance, as its own formatter rather than borrowed from `contracts()`.
@@ -100,7 +92,7 @@ export async function coverRoutes(app: FastifyInstance): Promise<void> {
           strikeDistanceFromSpot: movePercent(a.strikeDistanceFromSpot),
           requiredContracts: contracts(a.requiredContracts),
           tenorDays: days(TENOR_DAYS),
-          expiry: moment(lapseAt(read.readAt, TENOR_DAYS)),
+          expiry: moment(expiryAt(read.readAt, TENOR_DAYS)),
           premiumCapUsdc: usd(PREMIUM_CAP_USDC),
         },
         warnings: a.warnings,

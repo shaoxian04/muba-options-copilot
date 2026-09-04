@@ -1,38 +1,10 @@
 import { z } from "zod";
-import { UnderlyingSymbol } from "./underlying.js";
+import { WalletAddress } from "./fill.js";
+import { Figure, PayoutAsset, UNDERLYING_SYMBOLS, UnderlyingSymbol } from "./primitives.js";
 
-export { UNDERLYING_SYMBOLS, UnderlyingSymbol } from "./underlying.js";
-
-/**
- * A number a Trader reads, together with the string they read it as.
- *
- * ADR-0006 says a model may name an Order but may never originate a number. The rule
- * has a quieter cousin: the frontend may never originate one either. A value that is
- * re-derived in React -- rounded, truncated, re-formatted -- is a number the server
- * never vouched for, and it is the least visible place in the codebase for that to
- * happen.
- *
- * So every figure crosses the wire pre-formatted. The pairing is deliberate: React
- * cannot render `{card.premium}` at all, which turns "don't format on the client"
- * from a convention into something that fails immediately and loudly.
- */
-export const Figure = z.object({
-  value: z.number(),
-  display: z.string(),
-});
-export type Figure = z.infer<typeof Figure>;
-
-/**
- * What a contract delivers if it finishes in the money.
- *
- * A property of the UNDERLYING, never of whether it is a call. An ETH call settles in
- * WETH, a BTC call in WBTC, and a call on any of the four cash-settled Underlyings in
- * USDC because there is no such token on Base to deliver. Puts always settle in USDC.
- * See `apps/api/src/thetanuts/underlyings.ts` -- the registry is the only thing that may
- * answer this.
- */
-export const PayoutAsset = z.enum(["USDC", "WETH", "WBTC"]);
-export type PayoutAsset = z.infer<typeof PayoutAsset>;
+// Re-exported so `@copilot/shared` stays one import for every consumer -- the split
+// below it is about module load order, not about the vocabulary.
+export * from "./primitives.js";
 
 /**
  * The longest expiry a Trader may ask for.
@@ -200,6 +172,13 @@ export const RfqTraderRequest = z.object({
   horizonDays: RfqTenorDays,
   /** The reserve price a future Offer would have to respect -- not a premium, because none exists yet. */
   sizeUsdc: z.number().positive().max(1000),
+  /**
+   * The wallet that will open this request and, later, pay for it (ADR-0017). Required
+   * because the OptionFactory records the requester on-chain and pays the option to
+   * them: a request opened for someone else's wallet buys protection for someone else.
+   * The session must already have proven ownership of it (ADR-0012).
+   */
+  walletAddress: WalletAddress,
 });
 export type RfqTraderRequest = z.infer<typeof RfqTraderRequest>;
 
@@ -220,6 +199,14 @@ export const RfqCoverRequest = z.object({
   kind: z.literal("COVER"),
   address: z.string().trim().min(1),
 });
+/**
+ * A COVER request still carries only an address, and now that address does double duty:
+ * it names the Loan AND it is the wallet that must open and pay for the Cover. Those
+ * cannot be two different wallets. A put pays whoever holds it, so a Cover bought by
+ * Alice against Bob's Loan protects Alice and leaves Bob exactly as exposed as before --
+ * a Cover in name only. `POST /rfq` refuses unless the session has proven ownership of
+ * this very address (ADR-0012, ADR-0017).
+ */
 export type RfqCoverRequest = z.infer<typeof RfqCoverRequest>;
 
 /**
@@ -722,5 +709,6 @@ export type SuggestionResponse = z.infer<typeof SuggestionResponse>;
 export type DecisionRequest = z.infer<typeof DecisionRequest>;
 
 export * from "./fill.js";
+export * from "./rfq.js";
 export * from "./auth.js";
 export * from "./account.js";

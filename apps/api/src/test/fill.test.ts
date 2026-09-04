@@ -17,6 +17,7 @@ import { resetStub, spies, state, chain, TRADER_ADDRESS, TRADER_WALLET, proveWal
 import { resetSupabaseStub, registerUser, state as supabaseState } from "./stub-supabase.js";
 import { prepareFillTx, UnsafeOrder } from "../thetanuts/prepareFill.js";
 import { NOW } from "./fixtures.js";
+import { DEFAULT_BUDGET } from "../sessions.js";
 
 vi.useFakeTimers({ toFake: ["Date"] });
 vi.setSystemTime(NOW);
@@ -213,7 +214,7 @@ describe("POST /fill/prepare", () => {
     const body = res.json();
     expect(body.fillTx.to).toBeTruthy();
     expect(body.fillTx.data).toBeTruthy();
-    expect(body.remainingUsdc).toBeCloseTo(3, 2); // default $5 budget, minus the ~$2 reservation
+    expect(body.remainingUsdc).toBeCloseTo(DEFAULT_BUDGET - 2, 2); // the default budget, minus the ~$2 reservation
 
     const s = await sessionState(session);
     expect(s.spentUsdc).toBeCloseTo(2, 2);
@@ -332,7 +333,7 @@ describe("POST /fill/settle", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json().confirmed).toBe(true);
-    expect(res.json().remainingUsdc).toBeCloseTo(3, 2);
+    expect(res.json().remainingUsdc).toBeCloseTo(DEFAULT_BUDGET - 2, 2);
     const s = await sessionState(session);
     expect(s.spentUsdc).toBeCloseTo(2, 2);
   });
@@ -348,7 +349,7 @@ describe("POST /fill/settle", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json().confirmed).toBe(false);
-    expect(res.json().remainingUsdc).toBe(5);
+    expect(res.json().remainingUsdc).toBe(DEFAULT_BUDGET);
     const s = await sessionState(session);
     expect(s.spentUsdc).toBe(0);
   });
@@ -378,7 +379,7 @@ describe("POST /fill/settle", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json().confirmed).toBe(false);
-    expect(res.json().remainingUsdc).toBe(5);
+    expect(res.json().remainingUsdc).toBe(DEFAULT_BUDGET);
     expect(spies.getTransactionReceipt).not.toHaveBeenCalled();
   });
 

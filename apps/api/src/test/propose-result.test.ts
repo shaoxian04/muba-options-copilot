@@ -20,6 +20,7 @@ import { executeFill, UnsafeOrder } from "../thetanuts/execute.js";
 import { resetStub, spies, state, TRADER_ADDRESS, proveWallet } from "./stub-client.js";
 import { resetSupabaseStub, registerUser } from "./stub-supabase.js";
 import { NOW, DEFAULT_BOOK, makeOrder } from "./fixtures.js";
+import { DEFAULT_BUDGET } from "../sessions.js";
 
 const ACCOUNT_TOKEN = "acct-token-1";
 
@@ -57,7 +58,7 @@ describe("PROPOSAL", () => {
     expect(body.proposalId).toMatch(/^[0-9a-f-]{36}$/);
     expect(body.proposal.strike).toBe(2360);
     expect(body.proposal.chosenBy).toBe("AGENT");
-    expect(body.remainingUsdc).toBe(5);
+    expect(body.remainingUsdc).toBe(DEFAULT_BUDGET);
   });
 
   it("is the shape a Card override produces too", async () => {

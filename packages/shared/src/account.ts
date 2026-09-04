@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { UnderlyingSymbol } from "./underlying.js";
+import { UnderlyingSymbol } from "./primitives.js";
 import { WalletAddress } from "./fill.js";
 
 /** What POST /account/settings accepts -- every field optional, a partial update. */
