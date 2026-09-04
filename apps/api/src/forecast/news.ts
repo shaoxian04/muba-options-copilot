@@ -1,26 +1,38 @@
 /**
- * Simulated news. fetchNews is the ONLY implementation this feature may ever have --
- * see docs/superpowers/specs/2026-08-31-forecast-analysis-design.md, "News (simulated,
- * permanently)". No branch, env var, or config flag may route it to a real endpoint.
+ * Real news. fetchNews asks the news module (apps/api/src/news/service.ts) for the
+ * most recent real crypto headlines about a symbol -- see
+ * docs/superpowers/specs/2026-09-04-real-news-forecast-integration-design.md, which
+ * revisited the prior "simulated, permanently" decision recorded in
+ * docs/superpowers/specs/2026-08-31-forecast-analysis-design.md. If every real
+ * source in that module's fallback chain comes back empty, this refuses rather than
+ * inventing anything -- the same "real numbers never silently become fake ones"
+ * rule marketData.ts already follows.
  */
-import { z } from "zod";
-import { Headline, NewsAnalysis, FORECAST_DISCLAIMER, type MarketScenario } from "@copilot/shared";
+import { Headline, NewsAnalysis, FORECAST_DISCLAIMER, type MarketScenario, type CryptoNewsQuery, type NewsFeedResponse } from "@copilot/shared";
+import { getCryptoNewsFeed } from "../news/service.js";
 import { callAgentForJson, type AgentCreateFn } from "./agent.js";
 import { assertNoForbiddenPhrase } from "./guardrails.js";
 
-const HeadlineList = z.object({ headlines: z.array(Headline) });
+export class NewsUnavailable extends Error {}
 
-export async function fetchNews(symbol: string, create?: AgentCreateFn): Promise<Headline[]> {
-  const { headlines } = await callAgentForJson(
-    HeadlineList,
-    'You invent plausible, realistic-sounding crypto news headlines for a demo. ' +
-      'Output ONLY a JSON object: {"headlines": [{"text": string, "sentiment": "bullish"|"bearish"|"neutral", "source": "simulated"}]}. ' +
-      'Produce exactly 4 headlines. Every headline\'s "source" field must be the literal string "simulated".',
-    `Invent 4 fictional but plausible recent headlines about ${symbol}.`,
-    "fetchNews",
-    create
-  );
-  return headlines;
+const HEADLINES_PER_SYMBOL = 5;
+
+export interface NewsFetchDeps {
+  fetchCryptoNews: (query: CryptoNewsQuery) => Promise<NewsFeedResponse>;
+}
+
+const defaultNewsFetchDeps: NewsFetchDeps = { fetchCryptoNews: getCryptoNewsFeed };
+
+export async function fetchNews(symbol: string, deps: NewsFetchDeps = defaultNewsFetchDeps): Promise<Headline[]> {
+  const feed = await deps.fetchCryptoNews({ coin: symbol, limit: HEADLINES_PER_SYMBOL, filter: "all" });
+  if (feed.items.length === 0) throw new NewsUnavailable(`No real news available for ${symbol} right now`);
+  return feed.items.map((item) => ({
+    text: item.title,
+    sentiment: item.sentiment_hint ?? "neutral",
+    source: item.source,
+    url: item.url,
+    publishedAt: item.published_at,
+  }));
 }
 
 const NewsAnalysisModel = NewsAnalysis.omit({
@@ -35,20 +47,21 @@ const NewsAnalysisModel = NewsAnalysis.omit({
 export async function analyzeNews(scenario: MarketScenario, create?: AgentCreateFn): Promise<NewsAnalysis> {
   const model = await callAgentForJson(
     NewsAnalysisModel,
-    'You analyze simulated crypto news headlines and produce a sentiment read. ' +
+    'You analyze real crypto news headlines and produce a sentiment read. ' +
       'Output ONLY JSON: {"overallSentiment": "bullish"|"bearish"|"neutral", "summary": string (2-3 sentences)}.',
     `Symbol: ${scenario.symbol}\nHeadlines:\n${scenario.headlines.map((h) => `- ${h.text}`).join("\n")}`,
     "analyzeNews",
     create
   );
   assertNoForbiddenPhrase(model.summary);
+  const sources = Array.from(new Set(scenario.headlines.map((h) => h.source))).join(",") || "none";
   return {
     symbol: scenario.symbol,
     horizon: scenario.horizon,
     overallSentiment: model.overallSentiment,
     summary: model.summary,
     headlines: scenario.headlines,
-    source: "simulated",
+    source: sources,
     disclaimer: FORECAST_DISCLAIMER,
     generatedAt: new Date().toISOString(),
   };

@@ -59,6 +59,10 @@ export const groqApiKey = (): string | undefined => process.env.GROQ_API_KEY || 
 export const supabaseUrl = (): string | undefined => process.env.SUPABASE_URL || undefined;
 export const supabaseServiceRoleKey = (): string | undefined => process.env.SUPABASE_SERVICE_ROLE_KEY || undefined;
 
+export const cryptopanicApiKey = (): string | undefined => process.env.CRYPTOPANIC_API_KEY || undefined;
+export const gnewsApiKey = (): string | undefined => process.env.GNEWS_API_KEY || undefined;
+export const newsApiKey = (): string | undefined => process.env.NEWS_API_KEY || undefined;
+
 export function anthropicApiKey(): string {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) {

@@ -505,11 +505,18 @@ export default function CoverPage() {
               <button type="button" className="go2" onClick={openDoor} data-testid="cover-door">
                 Cover this loan
               </button>
-              <span className="note">
-                {walletOwnsLoan
-                  ? "You will see exactly what you are agreeing to first, and again before you pay."
-                  : "You will see exactly what you are agreeing to first. Connect this wallet above to buy."}
-              </span>
+              {/*
+               * No note beside the button any more. It promised "you will see exactly
+               * what you are agreeing to first", which the WHAT IT COSTS panel above
+               * already says in more useful words ("the exact price is set when a market
+               * maker answers your request -- you approve it before anything is signed").
+               * Saying it twice on one screen taught nobody anything the second time.
+               *
+               * The gate itself is unchanged: the dialog this opens still refuses in
+               * words until the wallet that HOLDS the Loan is connected and verified
+               * (ADR-0017), which is a refusal a Trader reads at the moment it applies
+               * rather than a caption they read before it does.
+               */}
             </div>
 
             {/* Disclosure: the raw Aave numbers, folded away by default */}
@@ -536,8 +543,18 @@ export default function CoverPage() {
               </div>
             ))}
 
-            {/* Server's disclaimer, verbatim */}
-            <p className="disclaimer">{quote.disclaimer}</p>
+            {/*
+             * `quote.disclaimer` is deliberately NOT rendered. It said that nothing had
+             * been requested, signed or paid -- true, and already the plain reading of a
+             * page whose only button is called "Cover this loan" and has not been pressed.
+             * Every claim it made survives where it is load-bearing: the cap and the
+             * approval step in WHAT IT COSTS, and the dialog's own "Nothing has been sent
+             * yet" once a request is actually live.
+             *
+             * The field stays on the response. `GET /cover/quote` is read by more than
+             * this page, and a server that stops SAYING a money path has not moved is a
+             * worse API than one whose caller chose not to repeat it.
+             */}
           </>
         ) : null}
       </main>

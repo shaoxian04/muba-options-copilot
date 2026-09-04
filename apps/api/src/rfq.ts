@@ -53,6 +53,8 @@ import { prepareCancelTx, prepareSettleTx, UnsafeSettle } from "./thetanuts/rfq/
 import { verifyRfqOpened, verifyRfqSettled } from "./thetanuts/rfq/verify.js";
 import { getClient, chain } from "./thetanuts/client.js";
 import { requireToken } from "./gate.js";
+import { optionalAccountId } from "./account.js";
+import { recordFill } from "./supabase/fills.js";
 import { safeErrorResponse } from "./errors.js";
 import {
   recallRfq,
@@ -619,6 +621,25 @@ export async function rfqRoutes(app: FastifyInstance): Promise<void> {
       // it over-holds Risk Budget rather than under-holding it.
       const paidUsdc = record.pendingPremiumUsdc ?? record.reservedUsdc;
       settleRfq(s, record, paidUsdc, verification.optionAddress);
+
+      // This path persisted nothing before -- a Cover buy would otherwise never appear
+      // in a History Trader has never had. Only recorded once the chain itself confirms
+      // success (ADR-0012), and only for a signed-in account (ADR-0018).
+      const userId = await optionalAccountId(req);
+      if (userId) {
+        void recordFill(userId, {
+          walletAddress: record.walletAddress,
+          kind: "RFQ",
+          underlying: record.ask.underlying,
+          isCall: record.ask.optionType === "CALL",
+          strike: record.ask.strike.value,
+          contracts: record.ask.contracts.value,
+          premiumUsdc: paidUsdc,
+          expiryIso: new Date(record.ask.expiry.value).toISOString(),
+          optionAddress: verification.optionAddress,
+          txHash: parsed.data.txHash,
+        });
+      }
 
       return { settled: true, remainingUsdc: remainingBudget(s), status: quietStatus(record) };
     } catch (e) {

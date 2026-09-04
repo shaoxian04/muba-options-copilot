@@ -27,6 +27,7 @@ import { Rail } from "../components/Rail";
 import { RfqModal } from "../components/RfqModal";
 import { Tape } from "../components/Tape";
 import { WalletPicker } from "../components/WalletPicker";
+import { YoursPanel } from "../components/YoursPanel";
 import { agentGate, useNow, useSurface } from "../lib/surface";
 
 export default function Page() {
@@ -224,7 +225,12 @@ export default function Page() {
               */}
               <section className="sect" aria-label="What you hold">
                 <span className="lbl">Yours</span>
-                <Board holdings={s.board?.holdings ?? []} now={now} loading={s.boardLoading} />
+                <YoursPanel
+                  holdings={s.board?.holdings ?? []}
+                  now={now}
+                  loading={s.boardLoading}
+                  signedIn={!!s.account}
+                />
               </section>
             </div>
 
@@ -241,11 +247,13 @@ export default function Page() {
               sizeUsdc={s.sizeUsdc}
               busy={s.busy}
               quoteMoved={s.quoteMoved}
+              quoteRefreshed={s.quoteRefreshed}
               refusal={s.refusal}
               receipt={s.receipt}
               practiceDone={s.practiceDone}
               gates={agentGate(s.result)}
               onResize={(usdc) => void s.setSize(usdc)}
+              onResizeContracts={(count) => void s.setContracts(count)}
               onConfirm={() => void s.confirm()}
               onPractice={() => void s.runPractice()}
               onClose={s.closeConfirm}

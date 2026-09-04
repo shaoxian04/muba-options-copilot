@@ -1,5 +1,6 @@
 import { HORIZON_MAX_LENGTH, ConversationTurn, CONVERSATION_HISTORY_MAX_TURNS } from "@copilot/shared";
 import { UnknownSymbol, MarketDataUnavailable, MarketDataDivergence } from "./marketData.js";
+import { NewsUnavailable } from "./news.js";
 import { ForecastGenerationFailed } from "./agent.js";
 import { ForbiddenPhraseUsed } from "./guardrails.js";
 import { IncompleteQuestion } from "./ask.js";
@@ -42,6 +43,7 @@ export function forecastErrorStatus(e: unknown): { status: number; error: string
   if (e instanceof UnknownSymbol) return { status: 404, error: e.message };
   if (e instanceof MarketDataDivergence) return { status: 502, error: e.message };
   if (e instanceof MarketDataUnavailable) return { status: 502, error: e.message };
+  if (e instanceof NewsUnavailable) return { status: 502, error: e.message };
   if (e instanceof ForecastGenerationFailed) return { status: 502, error: e.message };
   if (e instanceof ForbiddenPhraseUsed)
     return { status: 502, error: "Forecast generation refused a policy-violating response." };

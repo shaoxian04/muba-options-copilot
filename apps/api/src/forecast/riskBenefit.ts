@@ -27,7 +27,7 @@ export async function assessRiskBenefit(scenario: MarketScenario, create?: Agent
   const model = await callAgentForJson(
     RiskBenefitModel,
     'You write a qualitative risk/benefit view of a crypto asset given real market data and ' +
-      'simulated news. This is illustrative opinion, never a guarantee. ' +
+      'real news. This is illustrative opinion, never a guarantee. ' +
       'You must NEVER use the phrase "max loss" or present any number as a guaranteed outcome -- ' +
       'frame everything as "could", "might", "a scenario like X". ' +
       'Output ONLY JSON: {"upside": string (2-3 sentences), "downside": string (2-3 sentences)}.',

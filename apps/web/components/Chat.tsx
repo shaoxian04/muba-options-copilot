@@ -367,6 +367,17 @@ function InsightsEngine({
     if (el) el.scrollTop = el.scrollHeight;
   }, [log, busy]);
 
+  /**
+   * Only the most recent card-drop gets a closest-order search. Every past drop
+   * restored from `sessionStorage` would otherwise re-run its own multi-expiry `/deck`
+   * fan-out on every mount -- a long session's history is exactly the case where that
+   * cost compounds, for searches nobody is looking at any more.
+   */
+  const lastCardDropIndex = log.reduce(
+    (acc, l, idx) => (l.who === "copilot" && l.cardContext ? idx : acc),
+    -1
+  );
+
   return (
     <>
       <div className="log" ref={logRef} role="log" aria-live="polite" aria-label="Insights conversation" tabIndex={0}>
@@ -385,8 +396,16 @@ function InsightsEngine({
             ) : line.results ? (
               <div key={i} className="from-copilot">
                 {Object.entries(line.results).map(([symbol, r]) => {
+                  // `typeof ... === "number"` also guards a log restored from
+                  // sessionStorage before this field existed -- an old entry falls back
+                  // to no cardContext at all rather than a search with no expiry to
+                  // start from.
                   const cardContext =
-                    line.cardContext && line.cardContext.underlying === symbol ? line.cardContext : null;
+                    line.cardContext &&
+                    line.cardContext.underlying === symbol &&
+                    typeof line.cardContext.horizonDays === "number"
+                      ? line.cardContext
+                      : null;
                   const outlook = cardContext ? compareStrikeToRange(cardContext.strikeValue, r.price?.predictedRange) : null;
 
                   return (
@@ -446,13 +465,14 @@ function InsightsEngine({
                         </div>
                       ) : null}
 
-                      {cardContext && cardContext.underlying === symbol && r.price ? (
+                      {cardContext && r.price && i === lastCardDropIndex ? (
                         <NearestOrderPreview
                           underlying={cardContext.underlying}
                           predictedDirection={r.price.direction}
                           predictedRange={r.price.predictedRange}
                           probeHorizonDays={cardContext.horizonDays}
                           pick={pick}
+                          busy={busy}
                           onAccepted={onAccepted}
                         />
                       ) : null}

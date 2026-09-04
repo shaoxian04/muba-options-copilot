@@ -24,6 +24,7 @@ import { impliedMovePct } from "./thetanuts/implied-move.js";
 import { spotPrice, spotPrices } from "./thetanuts/market.js";
 import { UnknownUnderlying } from "./thetanuts/underlyings.js";
 import { proposeTrade, proposeChosenOrder, NoSuitableOrder, QuoteMoved } from "./thetanuts/propose.js";
+import { stakeForContracts } from "./thetanuts/pricing.js";
 import { buildDeck } from "./thetanuts/deck.js";
 import { buildDepth } from "./thetanuts/depth-view.js";
 import { marketOverview } from "./thetanuts/markets.js";
@@ -31,6 +32,8 @@ import { reviewIntent } from "./agents/review.js";
 import { extractTradeIntent } from "./agents/trade.js";
 import { practiceRoutes, practiceHoldings, type PracticePosition } from "./practice.js";
 import { rfqRoutes } from "./rfq.js";
+import { historyRoutes } from "./history.js";
+import { recordFill } from "./supabase/fills.js";
 import { requireToken, apiToken } from "./gate.js";
 import { coverRoutes } from "./insurance/http.js";
 import { safeErrorResponse } from "./errors.js";
@@ -48,7 +51,7 @@ import { usd } from "./format.js";
 import {
   sessionFor, remainingBudget, setRiskBudget,
   rememberProposal, recallProposal, rememberCard, recallCard,
-  reservePendingFill, confirmPendingFill, releasePendingFill,
+  reservePendingFill, peekPendingFill, confirmPendingFill, releasePendingFill,
   beginAuthChallenge, takeAuthChallenge, markWalletVerified,
   type Session,
 } from "./sessions.js";
@@ -65,6 +68,8 @@ import { answerQuestion } from "./forecast/ask.js";
 import { CryptoNewsQuery, MacroNewsQuery, AllNewsQuery } from "@copilot/shared";
 import { getCryptoNewsFeed, getMacroNewsFeed, getAllNewsFeed } from "./news/service.js";
 import { fetchIndicators, IndicatorsUnavailable } from "./forecast/indicators.js";
+import { CryptoNewsQuery, MacroNewsQuery, AllNewsQuery } from "@copilot/shared";
+import { getCryptoNewsFeed, getMacroNewsFeed, getAllNewsFeed } from "./news/service.js";
 import { fetchSuggestion, SuggestionUnavailable } from "./strategy/suggest.js";
 import { getRiskProfile, setRiskProfile } from "./supabase/riskProfiles.js";
 import { recordDecision, decisionStats } from "./supabase/decisions.js";
@@ -413,8 +418,32 @@ export async function buildApp(): Promise<FastifyInstance> {
       return;
     }
 
-    const { cardRef, ...intent } = parsed.data;
+    const { cardRef, contracts, ...intent } = parsed.data;
     const s = sessionFor(req.headers);
+
+    /*
+     * A size asked for in contracts becomes a stake here, before anything else reads it.
+     *
+     * It has to happen against the named Order -- a contract count means nothing until
+     * you know whose price you are counting -- so the Card is resolved first and handed
+     * to `proposeChosenOrder` below rather than resolved twice. Everything downstream
+     * (the Risk Budget, the Review Agent, the pricing itself) then runs on a plain
+     * `sizeUsdc` and cannot tell which unit the Trader typed, which is the point.
+     */
+    let chosen: ReturnType<typeof resolveCard> | undefined;
+    if (contracts !== undefined) {
+      if (!cardRef) {
+        reply.code(400).send({ error: "A size in contracts needs a cardRef -- it names the Order being counted." });
+        return;
+      }
+      chosen = resolveCard(s, cardRef);
+      intent.sizeUsdc = stakeForContracts(chosen, contracts);
+      if (intent.sizeUsdc <= 0) {
+        reply.code(400).send({ error: "That many contracts rounds to nothing at this Order's price." });
+        return;
+      }
+    }
+
     const remaining = remainingBudget(s);
     if (intent.sizeUsdc > remaining) {
       reply.code(400).send({
@@ -439,7 +468,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       // A cardRef selects; it never supplies values. Either way the Order is re-fetched
       // and every number re-derived server-side.
       const result = cardRef
-        ? await proposeChosenOrder(intent, resolveCard(s, cardRef))
+        ? await proposeChosenOrder(intent, chosen ?? resolveCard(s, cardRef))
         : await proposeTrade(intent);
       return {
         kind: "PROPOSAL",
@@ -609,7 +638,15 @@ export async function buildApp(): Promise<FastifyInstance> {
     // reasoning the old single-call /fill handler documented: nothing can interleave
     // between this check and this mutation, which is what makes it atomic.
     s.proposals.delete(proposalId);
-    reservePendingFill(s, proposalId, found.proposal.maxLossUsdc);
+    reservePendingFill(s, proposalId, found.proposal.maxLossUsdc, {
+      walletAddress: trader,
+      underlying: found.proposal.intent.underlying,
+      isCall: found.proposal.instrument !== "PUT",
+      strike: found.proposal.strike,
+      contracts: found.proposal.figures.contracts.value,
+      premiumUsdc: found.proposal.premiumUsdc,
+      expiryIso: found.proposal.expiry,
+    });
 
     try {
       const prepared = await prepareFillTx(found.proposal, found.order, trader);
@@ -658,6 +695,9 @@ export async function buildApp(): Promise<FastifyInstance> {
         reply.code(425).send({ error: "That transaction is not visible yet. Try settling again shortly." });
         return;
       }
+      // Peeked before confirmPendingFill deletes the reservation below -- the terms
+      // captured at /fill/prepare are otherwise lost the instant this call succeeds.
+      const pendingTerms = peekPendingFill(s, proposalId);
       const existed = verification.succeeded ? confirmPendingFill(s, proposalId) : releasePendingFill(s, proposalId);
       if (!existed) {
         reply.code(410).send({ error: "No prepared fill found for that proposal." });
@@ -665,6 +705,20 @@ export async function buildApp(): Promise<FastifyInstance> {
       }
       const userId = await optionalAccountId(req);
       if (userId) void logActivity(userId, "fill_settled", { proposalId, txHash, confirmed: verification.succeeded });
+      if (userId && verification.succeeded && pendingTerms) {
+        void recordFill(userId, {
+          walletAddress: pendingTerms.walletAddress,
+          kind: "DECK",
+          underlying: pendingTerms.underlying,
+          isCall: pendingTerms.isCall,
+          strike: pendingTerms.strike,
+          contracts: pendingTerms.contracts,
+          premiumUsdc: pendingTerms.premiumUsdc,
+          expiryIso: pendingTerms.expiryIso,
+          optionAddress: null,
+          txHash,
+        });
+      }
       return { remainingUsdc: remainingBudget(s), confirmed: verification.succeeded };
     } catch (e) {
       reply.code(502).send(safeErrorResponse(req.log, e, "Could not verify that transaction. Try again."));
@@ -786,30 +840,26 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   /**
-   * Live news feeds for crypto, macro, and combined analysis.
-   * Read-only and structured for downstream AI consumption.
+   * Raw news feeds -- crypto (CryptoPanic, falling back to live RSS then
+   * CryptoCompare) and macro (GNews, falling back to NewsAPI then the same RSS/
+   * CryptoCompare chain). Read-only, ungated like /book and /deck: real external
+   * reads, not a billed AI call, so this does not use requireForecastToken.
    */
   app.get("/news/crypto", async (req, reply) => {
     const parsed = CryptoNewsQuery.safeParse(req.query);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
-    }
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
     return getCryptoNewsFeed(parsed.data);
   });
 
   app.get("/news/macro", async (req, reply) => {
     const parsed = MacroNewsQuery.safeParse(req.query);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
-    }
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
     return getMacroNewsFeed(parsed.data);
   });
 
   app.get("/news", async (req, reply) => {
     const parsed = AllNewsQuery.safeParse(req.query);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
-    }
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
     return getAllNewsFeed(parsed.data);
   });
 
@@ -943,6 +993,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
   await app.register(rfqRoutes);
   await app.register(coverRoutes);
+  await app.register(historyRoutes);
 
   /**
    * The signed-in account's saved settings and linked wallet, if any -- what

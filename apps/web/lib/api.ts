@@ -13,7 +13,7 @@
 import type {
   AccountActivityResponse, AccountResponse, AccountSettingsRequest,
   Card, ConversationTurn, CoinAskResult, CoverQuote, CoverQuoteResult, CoverRefusal,
-  DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding,
+  DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding, HistoryItem, HistoryResponse,
   MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, RiskProfileName,
   RiskProfileResponse, SuggestionResponse, UnderlyingSymbol, TradeIntent,
   PreparedRfq, PreparedRfqCancel, PreparedRfqSettle, RfqAsk, RfqPhase, RfqStatus,
@@ -23,7 +23,7 @@ import { supabase } from "./supabaseClient";
 export type {
   AccountActivityResponse, AccountResponse, AccountSettingsRequest,
   Card, ConversationTurn, CoinAskResult, CoverQuote, CoverQuoteResult, CoverRefusal,
-  DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding,
+  DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding, HistoryItem, HistoryResponse,
   MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, RiskProfileName,
   RiskProfileResponse, SuggestionResponse, UnderlyingSymbol,
   PreparedRfq, PreparedRfqCancel, PreparedRfqSettle, RfqAsk, RfqPhase, RfqStatus,
@@ -217,6 +217,13 @@ export const propose = (body: {
   horizonDays: number;
   sizeUsdc: number;
   cardRef?: string;
+  /**
+   * The size asked for in contracts rather than dollars. The confirmation offers both,
+   * and the server converts -- `sizeUsdc` is still sent (it is what the Trader last had)
+   * but is ignored when this is present. Needs `cardRef`: a contract count means nothing
+   * until an Order is named.
+   */
+  contracts?: number;
 }): Promise<ProposeResult> =>
   call<ProposeResult>("/propose", {
     method: "POST",
@@ -474,3 +481,7 @@ export const saveAccountSettings = (
 
 export const getAccountActivity = (): Promise<AccountActivityResponse> =>
   call<AccountActivityResponse>("/account/activity");
+
+/** The History tab: every real Fill this account made, newest first (ADR-0018). */
+export const getHistory = (): Promise<HistoryResponse> =>
+  call<HistoryResponse>("/history", { headers: authHeaders() });

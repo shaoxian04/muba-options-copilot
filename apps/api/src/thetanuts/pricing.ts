@@ -125,6 +125,43 @@ export function priceOrder(order: OrderWithSignature, sizeUsdc: number): OrderEc
 }
 
 /**
+ * The stake that buys a given number of contracts of ONE Order.
+ *
+ * The confirmation lets a Trader say what they want in either unit -- "spend $5" or "buy
+ * 1.2 contracts" -- and the two have to agree. Rather than let the browser convert
+ * between them (ADR-0006: a figure is never derived in React, and a stake derived there
+ * is economics wearing a different hat), the browser sends whichever unit the Trader
+ * typed and the server answers in both.
+ *
+ * The inversion is exact rather than a fit. Every Order here is a fixed-price limit
+ * order: `previewFillOrder` reports the same `pricePerContract` whatever size it is
+ * asked about, so contracts and stake are related by one multiplication and no search.
+ * The probe below exists only to read that price off the Order -- its size is arbitrary
+ * and never spends anything, because nothing here signs.
+ *
+ * Rounded UP to USDC's own six decimals, and the direction is the point. Contracts are
+ * bought by integer division on chain, so a stake rounded DOWN lands a millionth of a
+ * contract short and the Trader who typed "0.963855" is answered "0.963854" -- a field
+ * that visibly refuses to hold the number just typed into it. Rounding up costs at most
+ * one micro-USDC and makes the count asked for actually reachable.
+ *
+ * The caller still re-prices the Order with this stake and returns THOSE contracts. This
+ * function chooses a stake; it never gets to say what that stake bought.
+ */
+export function stakeForContracts(order: OrderWithSignature, numContracts: number): number {
+  if (!underlyingOf(order)) throw new UnpricedUnderlying(order);
+
+  const probe = getClient().optionBook.previewFillOrder(order, toUsdc(1));
+  if (!probe) throw new StakeTooSmall(0);
+
+  const perContract = fromPrice(probe.pricePerContract);
+  // `toFixed(3)` first so binary float noise cannot round a stake up a whole micro-USDC
+  // on its own -- 4.0000000000001 micro-dollars is not a reason to charge another one.
+  const micros = Math.ceil(Number((numContracts * perContract * 1e6).toFixed(3)));
+  return micros / 1e6;
+}
+
+/**
  * What the Trader ends up with, net of the premium, if the Underlying settles here.
  *
  * The single derivation of the payoff, and it lives here for the same reason

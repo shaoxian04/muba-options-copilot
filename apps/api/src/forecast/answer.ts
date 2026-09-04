@@ -71,7 +71,7 @@ function describeCoinData(data: {
   if (data.indicators) parts.push(describeIndicators(data.indicators));
   if (data.news) {
     parts.push(
-      `News sentiment analysis (simulated headlines): overall ${data.news.overallSentiment} -- ${data.news.summary}\n` +
+      `News sentiment analysis (real headlines): overall ${data.news.overallSentiment} -- ${data.news.summary}\n` +
         `Headlines:\n${data.news.headlines.map((h) => `- ${h.text}`).join("\n")}`
     );
   }
