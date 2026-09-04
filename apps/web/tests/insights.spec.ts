@@ -27,7 +27,11 @@ const openInsights = async (page: Page) => {
 
 const pickBalanced = async (page: Page) => {
   await page.getByRole("radio", { name: /Balanced/ }).click();
-  await expect(page.getByRole("radio", { name: /Balanced/ })).toHaveAttribute("aria-checked", "true");
+  // Choosing a profile closes the sheet (RiskProfileChip's `choose()` runs `close()` in its
+  // `finally`), so the radio has already unmounted by the time this resolves -- the pick is
+  // verified through the closed chip's own label instead.
+  await expect(page.getByRole("radio", { name: /Balanced/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Balanced" })).toBeVisible();
 };
 
 test.describe("not signed in", () => {
@@ -36,7 +40,10 @@ test.describe("not signed in", () => {
     await page.goto("/");
     await page.getByRole("tab", { name: "Insights" }).click();
 
-    await expect(page.getByText("Sign in to save a Risk Profile.")).toBeVisible();
+    // The chip itself is disabled when signed out, so its sheet -- and the fuller
+    // "Sign in to save a Risk Profile." sentence inside it -- can never open; the
+    // chip's own collapsed label is the whole prompt a signed-out Trader ever sees.
+    await expect(page.getByRole("button", { name: "Sign in for a Risk Profile" })).toBeVisible();
     await expect(page.getByRole("radiogroup", { name: "Choose a Risk Profile" })).toHaveCount(0);
     expect(traffic.paths()).not.toContain("/risk-profile");
   });
@@ -64,7 +71,7 @@ test.describe("the Risk Profile picker", () => {
     expect(puts.at(-1)!.postDataJSON()).toEqual({ profile: "balanced" });
 
     // The pick survives -- not just an optimistic click that reverts.
-    await expect(page.getByRole("radio", { name: /Balanced/ })).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByRole("button", { name: "Balanced" })).toBeVisible();
     await expect.poll(() => traffic.paths().filter((p) => p === "/suggestion").length).toBeGreaterThanOrEqual(1);
   });
 });
@@ -176,8 +183,9 @@ test.describe("a Suggestion", () => {
 
     await expect(page.getByText("Could not deal that Suggestion", { exact: false })).toBeVisible();
     // Still on Insights, where they pressed -- not switched to a Trade tab holding
-    // nothing.
-    await expect(page.getByRole("radiogroup", { name: "Choose a Risk Profile" })).toBeVisible();
+    // nothing. The radiogroup itself is a poor proxy for this: picking a profile
+    // already closed its sheet, same as every other pick in this file.
+    await expect(page.getByRole("tab", { name: "Insights" })).toHaveAttribute("aria-selected", "true");
     expect(traffic.all.filter((r) => new URL(r.url()).pathname === "/decisions")).toEqual([]);
   });
 });
