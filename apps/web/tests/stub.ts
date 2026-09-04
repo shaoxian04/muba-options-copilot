@@ -602,6 +602,32 @@ function resizeProposal(answer: any, sizeUsdc: number): any {
 }
 
 /**
+ * The same reprice `reprice()` above applies to the Deck, applied to a `/propose`
+ * answer too -- the real `/propose` and `/deck` both derive from the one live
+ * `priceOrder`, so they can never actually disagree (issue #1's "one pricing path").
+ * This stub's `/propose` used to ignore `moveTheQuote()` entirely, which was fine while
+ * nothing ever re-priced after a move -- now that the surface auto-refreshes a moved
+ * quote by asking `/propose` again for the same `cardRef`, that route has to agree with
+ * what `/deck` already reprices to, or the surface would see its own refreshed number
+ * disagree with the very next Deck poll and never stop "moving". Mirrors `reprice()`'s
+ * own scope exactly: only the strings a Trader reads change, never a raw value.
+ */
+function repriceProposal(answer: any): any {
+  if (!answer || answer.kind !== "PROPOSAL") return answer;
+  return {
+    ...answer,
+    proposal: {
+      ...answer.proposal,
+      figures: {
+        ...answer.proposal.figures,
+        premiumUsdc: { ...answer.proposal.figures.premiumUsdc, display: "$2.15" },
+        maxLossUsdc: { ...answer.proposal.figures.maxLossUsdc, display: "$2.15" },
+      },
+    },
+  };
+}
+
+/**
  * Install the stub.
  *
  * Returns the traffic log. Nothing is faked beyond the six routes the surface uses --
@@ -757,7 +783,11 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         if (!answer) return route.fulfill({ status: 410, contentType: "application/json", body: '{"error":"gone"}' });
         // Issue #30: a resize is a fresh round trip against the same `cardRef` at a
         // different `sizeUsdc`. Standing in for what `priceOrder` would re-derive.
-        return json(route, resizeProposal(answer, body.sizeUsdc ?? answer.proposal.intent.sizeUsdc), traffic);
+        const resized = resizeProposal(answer, body.sizeUsdc ?? answer.proposal.intent.sizeUsdc);
+        // Applied last, after any resize, so a moved quote's price always wins on
+        // display regardless of stake -- see repriceProposal's own comment for why
+        // this route has to agree with what /deck already reprices to.
+        return json(route, moved ? repriceProposal(resized) : resized, traffic);
       }
 
       case "/practice":

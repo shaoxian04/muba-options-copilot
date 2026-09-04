@@ -1525,6 +1525,17 @@ button[disabled] {
   align-items: flex-start;
   gap: 7px;
 }
+/* The confirmation auto-refreshed to a fresh price for the same Order (surface.ts) --
+   same shape as .refusal but never --crit: this is information, not a blocker, and
+   clears on its own a few seconds after it appears. */
+.quote-refreshed {
+  flex-basis: 100%;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
 
 /* ---- halt states ---- */
 .halt {

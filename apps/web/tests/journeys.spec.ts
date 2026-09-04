@@ -725,7 +725,9 @@ test.describe("finishing, for real and for practice", () => {
     expect(await request.headerValue("authorization")).toBe(`Bearer ${TEST_API_TOKEN}`);
   });
 
-  test("surfaces a moved quote before the Trader confirms, not after", async ({ page }) => {
+  test("auto-refreshes a moved quote instead of a dead end, and is never fillable while it does", async ({
+    page,
+  }) => {
     const traffic = await stubApi(page);
     await installFakeWallet(page);
     await page.goto("/");
@@ -733,18 +735,29 @@ test.describe("finishing, for real and for practice", () => {
     await openConfirm(page, agentCard);
     await expect(page.getByTestId("confirm")).toBeEnabled();
 
-    // The book reprices under them while the proposal is on screen.
+    // The book reprices under them while the proposal is on screen. Held open so the
+    // refresh itself -- not just its before/after -- can be asserted on.
     traffic.moveTheQuote();
+    const release = traffic.hold("/propose");
     await page.clock.runFor(7000);
 
     await expect(page.getByTestId("quote-moved")).toBeVisible();
     await expect(page.getByTestId("confirm")).toBeDisabled();
     await expect(page.getByTestId("practice")).toBeDisabled();
-    // Story 30: never filled at a price they did not see.
+    // Story 30: never filled at a price they did not see -- true whether the price is
+    // moved or the refresh chasing it is still in flight.
+    expect(traffic.paths()).not.toContain("/fill/prepare");
+
+    release();
+    await expect(page.getByTestId("quote-refreshed")).toBeVisible();
+    await expect(page.getByTestId("quote-moved")).toHaveCount(0);
+    await expect(page.getByTestId("confirm")).toBeEnabled();
     expect(traffic.paths()).not.toContain("/fill/prepare");
   });
 
-  test("issue #32: a moved quote does not follow the Trader when they close and reopen for a different Card", async ({ page }) => {
+  test("issue #32: a moved quote (and its refresh) does not follow the Trader when they close and reopen for a different Card", async ({
+    page,
+  }) => {
     const traffic = await stubApi(page);
     await installFakeWallet(page);
     await page.goto("/");
@@ -752,16 +765,22 @@ test.describe("finishing, for real and for practice", () => {
     await openConfirm(page, agentCard);
 
     traffic.moveTheQuote();
+    const release = traffic.hold("/propose");
     await page.clock.runFor(7000);
     await expect(page.getByTestId("quote-moved")).toBeVisible();
 
+    // Closed mid-refresh -- the still-in-flight re-price must not leak its answer into
+    // whatever gets picked next.
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("confirm-modal")).toHaveCount(0);
+    release();
 
-    // A different Card, freshly priced -- `quoteMoved` is about the ONE proposal a
-    // Trader was shown going stale, not a flag that sticks to the confirmation itself.
+    // A different Card, freshly priced -- `quoteMoved` (and the refresh chasing it) is
+    // about the ONE proposal a Trader was shown going stale, not a flag that sticks to
+    // the confirmation itself.
     await openConfirm(page, overrideCard.cardRef);
     await expect(page.getByTestId("quote-moved")).toHaveCount(0);
+    await expect(page.getByTestId("quote-refreshed")).toHaveCount(0);
     await expect(page.getByTestId("confirm")).toBeEnabled();
   });
 });
