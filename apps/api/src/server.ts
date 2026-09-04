@@ -8,6 +8,7 @@
 import { buildApp, allowedOrigins, COST_ROUTE_MAX_PER_MINUTE } from "./app.js";
 import { backendEndpoint } from "./env.js";
 import { canSign } from "./thetanuts/client.js";
+import { warmOpenInterest } from "./thetanuts/open-interest.js";
 
 const app = await buildApp();
 
@@ -47,6 +48,14 @@ await app.listen({ port, host });
 app.log.info(`endpoint: ${backendEndpoint()}`);
 app.log.info(`cors: ${allowedOrigins().join(", ")}`);
 app.log.info(`signer ${canSign() ? "attached" : "ABSENT -- /propose works, /fill will refuse"}`);
+
+/*
+  Open interest is the one read that has to block when nothing is cached yet, and it can
+  take 19 seconds in a bad patch upstream. Start it here, after the port is open and
+  without awaiting it, so the first Trader through the door is not the one who pays.
+  Failure is swallowed inside -- the next request just reads it the slow way, as before.
+*/
+warmOpenInterest();
 
 if (host !== "127.0.0.1" && host !== "localhost" && canSign() && !process.env.COPILOT_API_TOKEN)
   app.log.error(
