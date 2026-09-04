@@ -23,7 +23,7 @@ async function readHealthyLoan(page: Page) {
   await page.goto("/cover");
   await page.fill("#addr", COVER_ADDRESSES.healthy);
   await page.click('button[type="submit"]');
-  await page.waitForSelector(".disclaimer");
+  await page.waitForSelector(".cvr-disclosure");
 }
 
 /**
@@ -52,7 +52,7 @@ test.describe("the door on a quoted Loan", () => {
     await installFakeWallet(page, { address: COVER_ADDRESSES.healthy });
   });
 
-  test("appears with its note, and no request reaches /rfq on page load or on reading a Loan", async ({
+  test("appears unaccompanied, and no request reaches /rfq on page load or on reading a Loan", async ({
     page,
   }) => {
     const traffic = await stubApi(page);
@@ -60,7 +60,15 @@ test.describe("the door on a quoted Loan", () => {
 
     await expect(page.getByTestId("cover-door")).toBeVisible();
     await expect(page.getByTestId("cover-door")).toHaveText("Cover this loan");
-    await expect(page.locator(".cvr .cta .note")).toContainText("exactly what you are agreeing to");
+
+    // The caption beside it is gone on purpose: it promised the Trader would see what
+    // they were agreeing to first, which the WHAT IT COSTS panel above already says
+    // ("you approve it before anything is signed"). The promise itself is asserted
+    // there, and the gate it described is asserted in "who may buy" below -- so what is
+    // checked here is that the duplicate has not crept back in.
+    await expect(page.locator(".cvr .cta .note")).toHaveCount(0);
+    await expect(page.locator(".cvr")).toContainText("you approve it before anything is signed");
+
     expect(traffic.paths()).not.toContain("/rfq");
   });
 
@@ -182,7 +190,7 @@ test.describe("who may buy", () => {
     await readHealthyLoan(page);
 
     // The read worked without a wallet: the quote is on screen.
-    await expect(page.locator(".disclaimer")).toBeVisible();
+    await expect(page.locator(".cvr-disclosure")).toBeVisible();
 
     await page.getByTestId("cover-door").click();
     await expect(page.getByTestId("cover-submit")).toBeDisabled();
