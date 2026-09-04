@@ -1,10 +1,17 @@
 import { z } from "zod";
 import { UnderlyingSymbol } from "./primitives.js";
 import { WalletAddress } from "./fill.js";
+import { MAX_RISK_BUDGET_USDC } from "./index.js";
 
-/** What POST /account/settings accepts -- every field optional, a partial update. */
+/**
+ * What POST /account/settings accepts -- every field optional, a partial update.
+ *
+ * `riskBudgetUsdc` is bounded at BOTH ends. It used to be `positive()` alone, which made
+ * the guardrail unbounded above -- see `MAX_RISK_BUDGET_USDC`. The server re-checks it
+ * too: a schema is the good error message, never the enforcement.
+ */
 export const AccountSettingsRequest = z.object({
-  riskBudgetUsdc: z.number().positive().optional(),
+  riskBudgetUsdc: z.number().positive().max(MAX_RISK_BUDGET_USDC).optional(),
   defaultAsset: UnderlyingSymbol.optional(),
   defaultDirection: z.enum(["UP", "DOWN"]).optional(),
 });

@@ -487,7 +487,9 @@ describe("GET /account, POST /account/settings, GET /account/activity", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
-      settings: { riskBudgetUsdc: 5, defaultAsset: null, defaultDirection: null },
+      // DEFAULT_BUDGET, not a literal -- see the note in accountStore.test.ts about the
+      // two defaults that used to disagree.
+      settings: { riskBudgetUsdc: DEFAULT_BUDGET, defaultAsset: null, defaultDirection: null },
       linkedWallet: null,
     });
   });

@@ -8,12 +8,21 @@ import {
 } from "./accountStore.js";
 import { resetSupabaseStub, state } from "./test/stub-supabase.js";
 import { usd, moment } from "./format.js";
+import { DEFAULT_BUDGET } from "./sessions.js";
 
 beforeEach(() => resetSupabaseStub());
 
 describe("account settings", () => {
-  it("returns the default $5 budget and null preferences for a brand-new account", async () => {
-    expect(await getAccountSettings("user-1")).toEqual({ riskBudgetUsdc: 5, defaultAsset: null, defaultDirection: null });
+  // The default is DEFAULT_BUDGET, not a literal: this used to assert 5 while sessions.ts
+  // used 10, which is exactly how signing in came to halve a Trader's budget and refuse
+  // every Cover (whose Reserve Price caps at 8). Asserted against the constant so the two
+  // cannot drift apart again.
+  it("returns the shared default budget and null preferences for a brand-new account", async () => {
+    expect(await getAccountSettings("user-1")).toEqual({
+      riskBudgetUsdc: DEFAULT_BUDGET,
+      defaultAsset: null,
+      defaultDirection: null,
+    });
   });
 
   it("returns exactly what was saved", async () => {

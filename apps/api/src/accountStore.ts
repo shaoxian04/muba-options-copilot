@@ -11,8 +11,22 @@ import type { Holding } from "@copilot/shared";
 import { getSupabase } from "./supabase.js";
 import { intrinsicValue, type PracticePosition } from "./practice.js";
 import { usd, moment } from "./format.js";
+import { DEFAULT_BUDGET } from "./sessions.js";
 
-const DEFAULT_SETTINGS: AccountSettings = { riskBudgetUsdc: 5, defaultAsset: null, defaultDirection: null };
+/**
+ * What an account that has never saved a setting reads back as.
+ *
+ * `riskBudgetUsdc` is `DEFAULT_BUDGET` -- the same number a session with no account gets
+ * -- and NOT a literal of its own. It used to be 5 while `sessions.ts` used 10, and since
+ * `GET /session` seeds the in-memory ceiling from this, signing in halved the budget and
+ * refused every Cover (whose Reserve Price caps at 8). Exported so a test can hold the two
+ * to each other.
+ */
+export const DEFAULT_SETTINGS: AccountSettings = {
+  riskBudgetUsdc: DEFAULT_BUDGET,
+  defaultAsset: null,
+  defaultDirection: null,
+};
 
 export async function getAccountSettings(userId: string): Promise<AccountSettings> {
   const supabase = getSupabase();

@@ -17,6 +17,7 @@ import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import { z } from "zod";
 import type { OrderWithSignature, RFQKeyPair, RFQRequest } from "@thetanuts-finance/thetanuts-client";
 import type { RfqAsk, RfqKind, RfqPhase, TradeProposal } from "@copilot/shared";
+import { DEFAULT_RISK_BUDGET_USDC, MAX_RISK_BUDGET_USDC } from "@copilot/shared";
 // Type-only, so this does not become a runtime import cycle -- and so `practice.ts`
 // keeps an import graph with no signer in it.
 import type { PracticePosition } from "./practice.js";
@@ -105,16 +106,24 @@ export interface Session {
 
 const sessions = new Map<string, Session>();
 /**
- * The Risk Budget a session starts with.
+ * The Risk Budget a session starts with, and the most it may be set to.
  *
- * 10 rather than the 5 it was, and the reason is Cover. A Cover Request commits its
- * Reserve Price -- ADR-0008's premium cap of 8 USDC -- against this same ceiling, because
- * two independent ceilings on one wallet means neither is a ceiling (CONTEXT-MAP). At a
- * default of 5 the ceiling refused every Cover before the Borrower had done anything
- * wrong, which is a broken product rather than a working guardrail. 10 leaves room for one
- * Cover plus a small trade, and is still a number a Trader is expected to set deliberately.
+ * Both come from `@copilot/shared` rather than being written here. The default used to be
+ * a literal in this file and a DIFFERENT literal in `accountStore.ts`, and because
+ * `GET /session` seeds the in-memory ceiling from the account's saved settings, signing in
+ * silently halved a Trader's budget -- which reinstated the exact bug the 10 was chosen to
+ * fix, since a Cover's 8 USDC Reserve Price will not fit under 5. One home, so it cannot
+ * drift again.
+ *
+ * The env override stays: an operator may lower the default, but never past the ceiling.
  */
-export const DEFAULT_BUDGET = Number(process.env.DEFAULT_RISK_BUDGET_USDC ?? 10);
+export const DEFAULT_BUDGET = Math.min(
+  Number(process.env.DEFAULT_RISK_BUDGET_USDC ?? DEFAULT_RISK_BUDGET_USDC),
+  MAX_RISK_BUDGET_USDC
+);
+
+/** Re-exported so callers reach one name for the bound, wherever they sit. */
+export const MAX_BUDGET = MAX_RISK_BUDGET_USDC;
 
 /**
  * NOTE: session ids come from an unauthenticated `x-session-id` header, so a caller can
@@ -152,8 +161,18 @@ export const sessionFor = (headers: Record<string, unknown>): Session => {
 
 export const remainingBudget = (s: Session): number => Math.max(0, s.riskBudgetUsdc - s.spentUsdc);
 
+/**
+ * Set the ceiling, refusing anything outside the bounds.
+ *
+ * Enforced HERE rather than only in the request schema, because the schema is the good
+ * error message and this is the guarantee: `GET /session` also seeds the ceiling from
+ * stored account settings, and a row written before the bound existed (or by anything
+ * that ever bypasses the schema) must not be able to reinstate an unbounded budget.
+ */
 export function setRiskBudget(s: Session, usdc: number): void {
   if (usdc < s.spentUsdc) throw new Error(`Already spent $${s.spentUsdc.toFixed(2)} this session.`);
+  if (!(usdc > 0)) throw new Error("A Risk Budget must be more than $0.");
+  if (usdc > MAX_BUDGET) throw new Error(`A Risk Budget cannot exceed $${MAX_BUDGET.toFixed(2)}.`);
   s.riskBudgetUsdc = usdc;
 }
 

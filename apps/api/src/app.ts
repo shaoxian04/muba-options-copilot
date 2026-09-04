@@ -17,7 +17,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
-import { ProposeRequest, UnderlyingSymbol, MAX_HORIZON_DAYS, type ProposeResult, RiskProfileName, DecisionRequest } from "@copilot/shared";
+import { ProposeRequest, UnderlyingSymbol, MAX_HORIZON_DAYS, MAX_RISK_BUDGET_USDC, type ProposeResult, RiskProfileName, DecisionRequest } from "@copilot/shared";
 import { canSign, walletAddress, chain } from "./thetanuts/client.js";
 import { buyableOrders, daysToExpiry, orderIdentity, PUT } from "./thetanuts/orders.js";
 import { impliedMovePct } from "./thetanuts/implied-move.js";
@@ -149,6 +149,16 @@ const DeckQuery = z.object({
 const DepthQuery = z.object({
   asset: UnderlyingSymbol,
   horizonDays: z.coerce.number().int().min(1).max(MAX_HORIZON_DAYS).optional(),
+});
+
+/**
+ * What POST /session/budget accepts.
+ *
+ * Bounded above as well as below -- see `MAX_RISK_BUDGET_USDC`. `setRiskBudget` re-checks
+ * the same bound, because this schema is the readable refusal and that is the guarantee.
+ */
+const BudgetRequest = z.object({
+  riskBudgetUsdc: z.number().positive().max(MAX_RISK_BUDGET_USDC),
 });
 
 /**
@@ -306,9 +316,15 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.post("/session/budget", async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const { riskBudgetUsdc } = (req.body ?? {}) as { riskBudgetUsdc?: number };
-    if (typeof riskBudgetUsdc !== "number" || riskBudgetUsdc <= 0)
-      return reply.code(400).send({ error: "riskBudgetUsdc must be a positive number" });
+    // Bounded at both ends. This used to be a bare `> 0`, which left the Trader's own
+    // guardrail unbounded above -- and a single trade was already capped at 1000, so the
+    // ceiling over all trades could be set far past the cap on any one of them.
+    const parsedBudget = BudgetRequest.safeParse(req.body);
+    if (!parsedBudget.success)
+      return reply.code(400).send({
+        error: `riskBudgetUsdc must be a number between $0 and $${MAX_RISK_BUDGET_USDC.toFixed(2)}.`,
+      });
+    const { riskBudgetUsdc } = parsedBudget.data;
     const s = sessionFor(req.headers);
     try {
       setRiskBudget(s, riskBudgetUsdc);
