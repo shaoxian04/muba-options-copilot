@@ -66,7 +66,13 @@ A market-data fetch failure (network error, API down) also returns 502. There is
 fallback to fabricated price data — real numbers never silently become fake ones
 without saying so.
 
-### News (simulated, permanently)
+### News (simulated, permanently) — SUPERSEDED 2026-09-04
+
+**This section no longer reflects the code.** The "permanent" decision below was
+deliberately revisited — see
+`docs/superpowers/specs/2026-09-04-real-news-forecast-integration-design.md` for the
+new decision, the reasoning, and what replaced it. Left in place, unedited, as the
+record of what was decided on 2026-08-31 and why; do not follow it.
 
 News headlines are never fetched from a real source in this feature — this is a
 deliberate design choice, not a placeholder, and not a roadmap item.
