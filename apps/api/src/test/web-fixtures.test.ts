@@ -312,7 +312,9 @@ beforeAll(async () => {
 
   // --- the Trader's own ceiling refusing them -------------------------------
   resetStub();
-  await post("/session/budget", { riskBudgetUsdc: 1 }, "broke-session");
+  // Account-gated since audit B4 -- a session id alone can no longer move a ceiling, so
+  // setting one up for this fixture now needs a signed-in caller like a real Trader.
+  await post("/session/budget", { riskBudgetUsdc: 1 }, "broke-session", ACCOUNT_TOKEN);
   const refused = await post("/propose", intent, "broke-session");
   generated["refusal"] = { status: refused.statusCode, body: refused.json() };
 

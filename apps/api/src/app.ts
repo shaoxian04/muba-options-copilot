@@ -479,12 +479,40 @@ export async function buildApp(): Promise<FastifyInstance> {
       // not discarding one already made. Whatever casing the wallet originally signed
       // with, unchanged -- callers compare case-insensitively, same as any other wallet
       // address comparison in this file.
-      verifiedWallet: s.verifiedWallet,
+      //
+      // Withheld from a caller with no account, though (audit B4). The budget above is
+      // fine to read anonymously -- the surface draws the bar before sign-in, and ADR-0014
+      // keeps Deck browsing open to anyone. WHICH wallet a session has proven is a
+      // different class of fact, and a guessable `x-session-id` must not be enough to
+      // learn it. Anyone who legitimately needs it is signed in by definition: the
+      // verification that produced it required an account in the first place.
+      verifiedWallet: userId ? s.verifiedWallet : null,
     };
   });
 
+  /**
+   * Set the Risk Budget. Requires an account (audit B4).
+   *
+   * `x-session-id` is generated in the browser with `Math.random()` -- the exact scheme
+   * `sessions.ts` rejects for proposal ids as "neither unpredictable nor uniform" -- and
+   * any caller can name any session. While this route was gated by `requireToken` alone
+   * that made a stranger's ceiling writable: the token ships inside the public frontend
+   * bundle, and when it is unset `requireToken` admits everyone.
+   *
+   * What that defeats is the guardrail itself. The Risk Budget is the ceiling a Trader set
+   * while calm, and it is the product's central promise. It was never a route to their
+   * funds -- `/fill/prepare` still demands an account AND a wallet proven by signature --
+   * but "someone else can silently raise your limit" is its own kind of broken.
+   *
+   * Requiring an account costs nothing here, which is what makes this the right fix rather
+   * than a compromise: the surface has never called this route. It changes the budget
+   * through `POST /account/settings`, which was account-gated from the start. This is
+   * reached only by the CLI and by tests.
+   */
   app.post("/session/budget", async (req, reply) => {
     if (!requireToken(req, reply)) return;
+    const owner = await requireAccount(req, reply);
+    if (!owner) return;
     // Bounded at both ends. This used to be a bare `> 0`, which left the Trader's own
     // guardrail unbounded above -- and a single trade was already capped at 1000, so the
     // ceiling over all trades could be set far past the cap on any one of them.
@@ -501,11 +529,11 @@ export async function buildApp(): Promise<FastifyInstance> {
       return reply.code(400).send({ error: e.message });
     }
 
-    const userId = await optionalAccountId(req);
-    if (userId) {
-      void saveAccountSettings(userId, { riskBudgetUsdc });
-      void logActivity(userId, "budget_changed", { riskBudgetUsdc });
-    }
+    // `owner`, not a second lookup: an account is now required above, so the caller is
+    // known by the time we get here and asking again would be a second answer to a
+    // settled question.
+    void saveAccountSettings(owner, { riskBudgetUsdc });
+    void logActivity(owner, "budget_changed", { riskBudgetUsdc });
 
     return { riskBudgetUsdc: s.riskBudgetUsdc, remainingUsdc: remainingBudget(s) };
   });
