@@ -10,6 +10,7 @@
     "news": "tsx src/scripts/news.ts",
     "dev": "tsx watch src/server.ts",
     "wallet": "tsx src/scripts/wallet.ts",
+    "nlp": "tsx src/scripts/trade-nlp.ts",
     "test": "cross-env SUPABASE_URL= SUPABASE_SERVICE_ROLE_KEY= tsx --test src/forecast/*.test.ts src/strategy/*.test.ts src/supabase/*.test.ts",
     "start": "tsx src/server.ts"
   },

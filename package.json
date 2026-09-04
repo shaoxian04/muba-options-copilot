@@ -11,6 +11,7 @@
     "forecast": "npm run forecast -w @copilot/api",
     "ask": "npm run ask -w @copilot/api",
     "news": "npm run news -w @copilot/api",
+    "nlp": "npm run nlp -w @copilot/api --",
     "wallet": "npm run wallet -w @copilot/api",
     "dev": "npm run dev -w @copilot/api",
     "web": "npm run dev -w @copilot/web",

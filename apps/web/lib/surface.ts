@@ -30,6 +30,7 @@ import {
   practice,
   prepareFill,
   propose,
+  proposeChat,
   requestAuthChallenge,
   requestRfq,
   confirmRfq,
@@ -632,20 +633,6 @@ export function useSurface(): Surface {
   const say = useCallback((text: string) => setLog((l) => [...l, { who: "copilot", text }]), []);
   const heard = useCallback((text: string) => setLog((l) => [...l, { who: "trader", text }]), []);
 
-  /**
-   * The Trade tab's chat input. There is no free-text-to-trade backend yet (ADR-0007)
-   * -- the Trade Agent that would read this line has no HTTP surface -- so this only
-   * logs what was typed and answers with a fixed, honest reply. It never calls
-   * `propose`, never derives a number, and never opens a Card: picking one directly
-   * off the Deck is still the only way to price and buy something.
-   */
-  const submitTradeMessage = useCallback(
-    (text: string) => {
-      heard(text);
-      say("I can't read free text yet — pick straight off the Deck on the right.");
-    },
-    [heard, say]
-  );
 
   /**
    * The board, and the Risk Budget it sits beside, together -- but only the board has
@@ -1576,6 +1563,79 @@ export function useSurface(): Surface {
       }
     },
     [ask, busy, direction, say, asset, horizonDays]
+  );
+
+  /**
+   * Natural language trade entry point: sends user's free text to /propose/chat,
+   * updates active Deck/asset/direction/horizon/size, highlights the proposed Card,
+   * explains the trade in chat, and opens the confirmation modal for human review.
+   */
+  const submitTradeMessage = useCallback(
+    async (text: string) => {
+      const prompt = text.trim();
+      if (!prompt) return;
+      heard(prompt);
+      setBusy(true);
+      setRefusal(null);
+      setReceipt(null);
+      setPracticeDone(false);
+      try {
+        const answer = await proposeChat({ prompt });
+        setResult(answer);
+        setQuoteMoved(false);
+
+        if (answer.intent) {
+          const askingAsset = answer.intent.underlying ?? asset;
+          const asking = answer.intent.direction ?? direction;
+          const askingHorizon = answer.intent.horizonDays ?? horizonDays;
+          const askingSize = answer.intent.sizeUsdc ?? STAKE_USDC;
+
+          if (askingAsset !== asset || asking !== direction || askingHorizon !== horizonDays) {
+            clearSelection();
+            expiryChosen.current = true;
+            setAssetState(askingAsset);
+            setDirectionState(asking);
+            setHorizonState(askingHorizon);
+            await loadDeck(askingAsset, asking, askingHorizon, { spinner: true });
+          }
+          setSizeUsdcState(askingSize);
+        }
+
+        if (answer.kind === "PROPOSAL") {
+          setSelectedRef(answer.cardRef);
+          if (answer.proposal.chosenBy === "AGENT") setDealtRef(answer.cardRef);
+          shownQuote.current = { ref: answer.cardRef, perContract: answer.proposal.figures.perContractUsd.display };
+          const expl = answer.explanation || `I found the ${answer.proposal.figures.strike.display} option for you.`;
+          say(expl);
+          setConfirmOpen(true);
+        } else if (answer.kind === "NO_ORDER") {
+          shownQuote.current = { ref: null, perContract: null };
+          say(answer.message || "No suitable order found for that horizon and direction.");
+        } else if (answer.kind === "VETO") {
+          shownQuote.current = { ref: null, perContract: null };
+          say(answer.explanation || "Review agent vetoed this trade intent.");
+        }
+        return answer;
+      } catch (e) {
+        const message =
+          e instanceof ApiRefusal
+            ? e.message
+            : e instanceof Error && (e.message.includes("Failed to fetch") || e.message.includes("fetch"))
+            ? "Could not reach the backend API server. Make sure `npm run dev` is running on port 3001."
+            : e instanceof Error
+            ? e.message
+            : "Could not process that trade.";
+        setRefusal(message);
+        setResult(null);
+        shownQuote.current = { ref: null, perContract: null };
+        say(message);
+        return null;
+      } finally {
+
+        setBusy(false);
+      }
+    },
+    [asset, clearSelection, direction, heard, horizonDays, loadDeck, say]
   );
 
   /**

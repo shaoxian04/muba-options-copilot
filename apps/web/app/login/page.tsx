@@ -24,38 +24,57 @@ export default function LoginPage() {
     setBusy(true);
     setError(null);
     setMessage(null);
-    const { data, error: authError } =
-      mode === "signin"
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({ email, password });
-    setBusy(false);
-    if (authError) {
-      setError(authError.message);
-      return;
+    try {
+      const { data, error: authError } =
+        mode === "signin"
+          ? await supabase.auth.signInWithPassword({ email, password })
+          : await supabase.auth.signUp({ email, password });
+      setBusy(false);
+      if (authError) {
+        setError(authError.message);
+        return;
+      }
+      /*
+       * A sign-up with email confirmation required (this project's default) succeeds
+       * with no `authError` but also no active session -- Supabase is waiting on the
+       * confirmation link it just emailed. Redirecting to `/` here would silently land
+       * the Trader back on a signed-OUT surface with no explanation at all.
+       */
+      if (mode === "signup" && !data.session) {
+        setMessage("Check your email for a confirmation link, then sign in.");
+        setMode("signin");
+        return;
+      }
+      router.push("/");
+    } catch (err: any) {
+      setBusy(false);
+      const isFetchErr = err?.message?.includes("fetch") || err?.name === "TypeError";
+      setError(
+        isFetchErr
+          ? "Cannot reach Supabase Auth. Make sure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set in your .env file."
+          : err?.message ?? "Authentication failed."
+      );
     }
-    /*
-     * A sign-up with email confirmation required (this project's default) succeeds
-     * with no `authError` but also no active session -- Supabase is waiting on the
-     * confirmation link it just emailed. Redirecting to `/` here would silently land
-     * the Trader back on a signed-OUT surface with no explanation at all.
-     */
-    if (mode === "signup" && !data.session) {
-      setMessage("Check your email for a confirmation link, then sign in.");
-      setMode("signin");
-      return;
-    }
-    router.push("/");
   };
 
   const withGoogle = async () => {
     setError(null);
-    const { error: authError } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: `${window.location.origin}/` },
-    });
-    if (authError) setError(authError.message);
-    // On success the browser navigates away to Google -- nothing else to do here.
+    try {
+      const { error: authError } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: `${window.location.origin}/` },
+      });
+      if (authError) setError(authError.message);
+      // On success the browser navigates away to Google -- nothing else to do here.
+    } catch (err: any) {
+      setError(
+        err?.message?.includes("fetch")
+          ? "Cannot reach Supabase Auth. Check NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env."
+          : err?.message ?? "Google sign-in failed."
+      );
+    }
   };
+
 
   return (
     <main className="login">

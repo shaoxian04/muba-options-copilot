@@ -15,7 +15,7 @@ import type {
   Card, ConversationTurn, CoinAskResult, CoverQuote, CoverQuoteResult, CoverRefusal,
   DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding, HistoryItem, HistoryResponse,
   MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, RiskProfileName,
-  RiskProfileResponse, SuggestionResponse, UnderlyingSymbol,
+  RiskProfileResponse, SuggestionResponse, UnderlyingSymbol, TradeIntent,
   PreparedRfq, PreparedRfqCancel, PreparedRfqSettle, RfqAsk, RfqPhase, RfqStatus,
 } from "@copilot/shared";
 import { supabase } from "./supabaseClient";
@@ -28,6 +28,18 @@ export type {
   RiskProfileResponse, SuggestionResponse, UnderlyingSymbol,
   PreparedRfq, PreparedRfqCancel, PreparedRfqSettle, RfqAsk, RfqPhase, RfqStatus,
 };
+
+export function getApiBase(): string {
+  const configured = process.env.NEXT_PUBLIC_API_BASE;
+  if (configured && !configured.includes("127.0.0.1") && !configured.includes("localhost")) {
+    return configured;
+  }
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname || "localhost";
+    return `${window.location.protocol}//${host}:3001`;
+  }
+  return configured ?? "http://127.0.0.1:3001";
+}
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:3001";
 
@@ -131,7 +143,8 @@ async function accountHeaders(): Promise<Record<string, string>> {
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const base = getApiBase();
+  const res = await fetch(`${base}${path}`, {
     ...init,
     headers: {
       "content-type": "application/json",
@@ -217,6 +230,19 @@ export const propose = (body: {
     // No `underlying: "ETH"` default here any more. It used to be spread in ahead of the
     // caller's fields, which meant the surface could not have asked for anything else
     // even once the book opened -- an ETH-only assumption hidden in a spread.
+    body: JSON.stringify(body),
+    headers: authHeaders(),
+  });
+
+/**
+ * Natural language chat endpoint: transforms free text into a TradeProposal + explanation.
+ */
+export const proposeChat = (body: {
+  prompt: string;
+  cardRef?: string;
+}): Promise<ProposeResult & { intent?: TradeIntent; explanation?: string }> =>
+  call<ProposeResult & { intent?: TradeIntent; explanation?: string }>("/propose/chat", {
+    method: "POST",
     body: JSON.stringify(body),
     headers: authHeaders(),
   });
