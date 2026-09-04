@@ -620,7 +620,11 @@ button[disabled] {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  z-index: 5;
+  /* Above `.rig > .rail-top`'s sticky z-index (6) -- the Rail now pins to the top of the
+     scrolling right column, and without this the menu it drops down from is exactly
+     where the Rail sits once scrolled, so the Rail wins hit-testing and swallows every
+     click meant for a menu item underneath it. */
+  z-index: 10;
   min-width: 200px;
   display: flex;
   flex-direction: column;
