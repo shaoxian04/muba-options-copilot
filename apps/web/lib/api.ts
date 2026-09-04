@@ -177,6 +177,13 @@ export const propose = (body: {
   horizonDays: number;
   sizeUsdc: number;
   cardRef?: string;
+  /**
+   * The size asked for in contracts rather than dollars. The confirmation offers both,
+   * and the server converts -- `sizeUsdc` is still sent (it is what the Trader last had)
+   * but is ignored when this is present. Needs `cardRef`: a contract count means nothing
+   * until an Order is named.
+   */
+  contracts?: number;
 }): Promise<ProposeResult> =>
   call<ProposeResult>("/propose", {
     method: "POST",

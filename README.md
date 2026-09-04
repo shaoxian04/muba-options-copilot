@@ -73,7 +73,7 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 | `POST /session/budget` | no | set the Risk Budget |
 | `GET /deck` | no | every Order buyable right now on one Underlying, for one direction and one expiry, as Cards. `?asset=BTC\|ETH\|SOL\|BNB\|XRP\|AVAX&direction=DOWN\|UP&horizonDays=n&sizeUsdc=n`. **`asset` is required** -- a default is how an ETH-only assumption survives |
 | `GET /depth` | no | where makers will actually trade on one Underlying, every expiry and both directions at once. Not a Deck; prices nothing. `?asset=X&horizonDays=n` (the horizon labels one statistic) |
-| `POST /propose` | **no** | TradeIntent in, `PROPOSAL \| VETO \| NO_ORDER` out. Prices a real order, signs nothing. Takes an optional `cardRef`. |
+| `POST /propose` | **no** | TradeIntent in, `PROPOSAL \| VETO \| NO_ORDER` out. Prices a real order, signs nothing. Takes an optional `cardRef`, and an optional `contracts` (the size asked for in contracts instead of dollars — needs a `cardRef`, and the server converts it to a stake so the browser never does). |
 | `POST /practice` | **no** | opens a simulated Position from a `proposalId`. No token, no Risk Budget, no signer in reach. |
 | `POST /auth/challenge` | no | issues a one-time message for the Trader's wallet to sign, proving ownership (ADR-0012) |
 | `POST /auth/verify` | no | verifies that signature and marks the session's wallet proven |

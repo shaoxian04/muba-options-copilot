@@ -928,9 +928,14 @@ button[disabled] {
   background: var(--warn);
 }
 
+/*
+ * No longer its own scroller -- `.rig` above owns the scroll now, so that the Maker
+ * Depth chart scrolls away instead of standing over the Deck. `flex: 0 0 auto` rather
+ * than `flex: 1`: inside a scrolling column this must size to its content, and `flex: 1`
+ * against an `auto`-height parent would let it collapse.
+ */
 .body {
-  flex: 1;
-  overflow-y: auto;
+  flex: 0 0 auto;
   overflow-x: hidden;
   padding: 16px 20px 20px;
   display: flex;

@@ -321,6 +321,8 @@ export interface Surface {
    * in the browser.
    */
   setSize: (usdc: number) => Promise<void>;
+  /** The same size asked in contracts. Server-converted -- see `setContracts`. */
+  setContracts: (count: number) => Promise<void>;
   confirm: () => Promise<void>;
   runPractice: () => Promise<void>;
   /** Escape, the backdrop, or the close button. Clears the flow; does not reload the Deck. */
@@ -1045,7 +1047,7 @@ export function useSurface(): Surface {
       cardRef: string | undefined,
       asking: Direction,
       size: number,
-      on: { underlying?: UnderlyingSymbol; horizonDays?: number } = {}
+      on: { underlying?: UnderlyingSymbol; horizonDays?: number; contracts?: number } = {}
     ) => {
       setBusy(true);
       setRefusal(null);
@@ -1058,6 +1060,9 @@ export function useSurface(): Surface {
           horizonDays: on.horizonDays ?? horizonDays,
           sizeUsdc: size,
           cardRef,
+          // Present only when the Trader typed a contract count. The server converts it
+          // against this Order and answers in both units; nothing here does that sum.
+          ...(on.contracts !== undefined ? { contracts: on.contracts } : {}),
         });
         setResult(answer);
         setQuoteMoved(false);
@@ -1194,6 +1199,29 @@ export function useSurface(): Surface {
   );
 
   /**
+   * The same control asked in the other unit: the SAME Order, a stake expressed as a
+   * number of contracts.
+   *
+   * The two fields in the confirmation are one quantity, and this is why they can stay
+   * in step without either of them doing the conversion. The count goes to the server,
+   * the server prices the Order at that many contracts, and the dollar field is set from
+   * `intent.sizeUsdc` on the answer -- the stake the server actually used, not one this
+   * file worked out. So "type 1.2 contracts" and "type $5" are the same round trip in
+   * opposite directions, and neither number on screen was derived in the browser.
+   *
+   * `sizeUsdc` is still passed along because `/propose` requires a stake to parse; the
+   * server ignores it whenever `contracts` is present.
+   */
+  const setContracts = useCallback(
+    async (count: number) => {
+      if (!selectedRef || busy) return;
+      const answer = await ask(selectedRef, direction, sizeUsdc, { contracts: count });
+      if (answer?.kind === "PROPOSAL") setSizeUsdcState(answer.proposal.intent.sizeUsdc);
+    },
+    [ask, selectedRef, direction, busy, sizeUsdc]
+  );
+
+  /**
    * Spends real USDC, signed by the Trader's own connected AND verified wallet
    * (ADR-0011, ADR-0012). Reached only from the Trader's own press, inside the
    * confirmation. The proposal stays on screen after this succeeds -- issue #30 wants
@@ -1322,6 +1350,7 @@ export function useSurface(): Surface {
     deal,
     pick,
     setSize,
+    setContracts,
     confirm,
     runPractice,
     closeConfirm,

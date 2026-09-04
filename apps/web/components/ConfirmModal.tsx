@@ -19,13 +19,21 @@
  *     Card already does. The one number this file originates is the SIZE ITSELF -- a
  *     request parameter, not a figure anyone reads, the same way `STAKE_USDC` already
  *     travelled to `/propose` before this ticket existed.
+ *
+ *     The size is now editable in EITHER unit -- dollars or contracts -- and that does
+ *     not weaken the rule, because this file still converts neither into the other. Each
+ *     field sends the unit it was typed in and both re-read the answer, so the contract
+ *     count on screen is always `figures.contracts.display` off the wire and the stake
+ *     is always the one the server priced. The conversion lives in `stakeForContracts`,
+ *     in the process that owns pricing. A `contracts * perContract` anywhere in here
+ *     would be option economics derived in React and then paid.
  *   - Celebrate a Fill. Implied Chance across the live book runs roughly 1% to 62%, so
  *     most Cards expire worthless -- no confetti, no streak, no leaderboard, ever.
  *   - Let Confirm out-compete Practice Run. Practice is the solid, prominent button;
  *     Confirm is the quiet, outlined one, so trying the flow is always the path of
  *     least resistance and spending real USDC never is.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Card, Figure, TradeProposal, UnderlyingSymbol } from "@copilot/shared";
 import { countdown } from "../lib/clock";
 import { clampSizeUsdc, expectedMoveIndex, riskBudgetBar, sizeCapUsdc } from "../lib/geometry";
@@ -59,6 +67,7 @@ export function ConfirmModal({
   walletVerifying,
   walletError,
   onResize,
+  onResizeContracts,
   onConfirm,
   onPractice,
   onClose,
@@ -91,6 +100,8 @@ export function ConfirmModal({
   walletVerifying: boolean;
   walletError: string | null;
   onResize: (usdc: number) => void;
+  /** The same size asked in contracts. The server converts -- see `setContracts`. */
+  onResizeContracts: (count: number) => void;
   onConfirm: () => void;
   onPractice: () => void;
   onClose: () => void;
@@ -98,6 +109,18 @@ export function ConfirmModal({
   onVerifyWallet: () => void;
 }) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
+
+  /*
+   * What the Trader is part-way through typing, per field, or null when they are not.
+   *
+   * Deliberately NOT the value of the control. The value is always the server's last
+   * answer; a draft only overlays it while a field has focus and unfinished text in it.
+   * That is what lets "$5" and "1.007822 contracts" stay two views of one quantity
+   * without this file ever converting between them -- each commit is a round trip, and
+   * both fields re-read whatever comes back.
+   */
+  const [payDraft, setPayDraft] = useState<string | null>(null);
+  const [contractsDraft, setContractsDraft] = useState<string | null>(null);
 
   /*
    * On open, move focus into the dialog.
@@ -154,6 +177,72 @@ export function ConfirmModal({
 
   const cap = sizeCapUsdc(session?.remainingUsdc ?? 0, card?.depthUsdc.value ?? 0);
   const resize = (v: number) => onResize(clampSizeUsdc(v, SIZE_MIN_USDC, cap));
+
+  /*
+   * The two size fields lock differently from the buttons around them, and it matters.
+   *
+   * `busy` makes them READ-ONLY, never disabled. A browser blurs a focused element the
+   * instant it goes disabled -- the same fact `pick()` in `lib/surface.ts` already works
+   * around for the Card that opens this dialog -- so disabling on every round trip would
+   * throw a Trader out of the field they were typing in, on their own keystroke. Arrow
+   * keys stepping the value would be unusable: each press would fire a request and then
+   * eject them. Read-only refuses input without moving focus, which is what was meant.
+   *
+   * A finished or invalidated flow is a different thing and still disables outright:
+   * there is nothing left to price, so there is nothing to keep a caret in.
+   *
+   * Re-entrancy is already handled where it belongs -- `setSize` and `setContracts` both
+   * return early while `busy` -- so a held-down arrow key cannot queue a second call.
+   */
+  const fieldsLocked = !proposal || quoteMoved || done;
+
+  /*
+   * Committing a typed field.
+   *
+   * `draft` is null whenever the Trader is not mid-edit, and the field then renders the
+   * server's own answer -- which is what keeps the two fields in step without either of
+   * them converting: dollars in, the server answers, the contracts field re-reads it,
+   * and the same in reverse. A draft is only ever a string the Trader is still typing.
+   *
+   * Nothing is sent while they type. A keystroke would be a real Thetanuts pricing call
+   * per character, so the request goes on Enter or on leaving the field, and the draft
+   * is dropped so the field falls back to whatever the server said.
+   */
+  const commit = (raw: string | null, send: (n: number) => void, clear: () => void) => {
+    clear();
+    if (raw === null) return;
+    const n = Number(raw.trim());
+    if (!raw.trim() || !Number.isFinite(n) || n <= 0) return;
+    send(n);
+  };
+
+  const fieldKeys = (e: React.KeyboardEvent<HTMLInputElement>, onEnter: () => void, step?: (by: number) => void) => {
+    // Tab must keep reaching the trap in `onKeyDown`; Enter and Escape are this field's.
+    if (step && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      // The stepper's buttons, from the keyboard, without leaving the field -- what an
+      // arrow key does in every other number input. It steps from the SERVER's size, not
+      // from a half-typed draft, and drops the draft so the field re-reads the answer.
+      e.preventDefault();
+      setPayDraft(null);
+      step(e.key === "ArrowUp" ? SIZE_STEP_USDC : -SIZE_STEP_USDC);
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      onEnter();
+      // Focus deliberately stays in the field, and the field is deliberately NOT blurred
+      // here. Blurring would fire `onBlur` in the same tick, while `setDraft(null)` was
+      // still queued -- so the handler would read the draft it had just committed and
+      // send a second, identical pricing call. Leaving focus put means the next blur
+      // sees a null draft and does nothing, which is the correct no-op.
+    } else if (e.key === "Escape") {
+      // Abandon the edit without closing the dialog -- the field returns to the server's
+      // number, which is the only value that was ever true.
+      e.stopPropagation();
+      setPayDraft(null);
+      setContractsDraft(null);
+    }
+  };
 
   const directionWord = direction === "DOWN" ? "below" : "above";
   const offerWord = card && card.depthOrders.value === 1 ? "offer" : "offers";
@@ -221,7 +310,31 @@ export function ConfirmModal({
                   >
                     −
                   </button>
-                  <b data-testid="size-value">{proposal.figures.premiumUsdc.display}</b>
+                  {/*
+                    Typeable, not just steppable. The value is the STAKE the Trader is
+                    spending -- the number they chose -- so what they type is what comes
+                    back, rather than a premium that lands a hair under it. What the
+                    Order actually costs is `Max Loss` below, off the wire as always.
+                  */}
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    className="sizefield"
+                    data-testid="size-value"
+                    aria-label="Amount to spend, in USDC"
+                    disabled={fieldsLocked}
+                    readOnly={busy}
+                    value={payDraft ?? sizeUsdc}
+                    onChange={(e) => setPayDraft(e.target.value)}
+                    onBlur={() => commit(payDraft, resize, () => setPayDraft(null))}
+                    onKeyDown={(e) =>
+                      fieldKeys(
+                        e,
+                        () => commit(payDraft, resize, () => setPayDraft(null)),
+                        (by) => resize(sizeUsdc + by)
+                      )
+                    }
+                  />
                   <button
                     type="button"
                     onClick={() => resize(sizeUsdc + SIZE_STEP_USDC)}
@@ -272,8 +385,34 @@ export function ConfirmModal({
               </div>
             </div>
 
+            {/*
+              The same size in the other unit, and equally editable.
+
+              A Trader who thinks in contracts should not have to solve for the stake
+              that buys them -- and neither should this file, which is why the count goes
+              to the server and the dollar field above is set from the answer. Two views
+              of one quantity, one derivation, in the process that owns pricing.
+            */}
             <p className="sub2" data-testid="contracts-readout">
-              {proposal.figures.contracts.display} contracts at {proposal.figures.perContractUsd.display} each
+              <label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  className="sizefield wide"
+                  data-testid="contracts-input"
+                  aria-label="Number of contracts"
+                  disabled={fieldsLocked}
+                  readOnly={busy}
+                  value={contractsDraft ?? proposal.figures.contracts.display}
+                  onChange={(e) => setContractsDraft(e.target.value)}
+                  onBlur={() => commit(contractsDraft, onResizeContracts, () => setContractsDraft(null))}
+                  onKeyDown={(e) =>
+                    fieldKeys(e, () => commit(contractsDraft, onResizeContracts, () => setContractsDraft(null)))
+                  }
+                />{" "}
+                contracts
+              </label>{" "}
+              at {proposal.figures.perContractUsd.display} each
             </p>
 
             <dl>
