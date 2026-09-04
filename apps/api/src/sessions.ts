@@ -202,8 +202,25 @@ export const sessionCount = (): number => sessions.size;
  * A1 and G1 describe, by a third route. So anything outstanding keeps the session alive,
  * and the inner sweeps are what eventually clear the way for it to go.
  */
+/**
+ * How often the sweep is allowed to actually walk the map.
+ *
+ * `sessionFor` runs on every request, and the sweep is O(total sessions), so calling it
+ * unthrottled made every request pay for every session that exists. Harmless at a hundred
+ * and wasteful at ten thousand -- and the whole point of this store is that it is now
+ * bounded, which is worth not undermining with a linear scan per request.
+ *
+ * A minute is far below the two-hour idle window, so nothing lingers meaningfully longer
+ * than before; eviction is housekeeping, not a deadline anything depends on.
+ */
+const SESSION_SWEEP_INTERVAL_MS = 60_000;
+let lastSweptAt = 0;
+
 export function sweepSessions(): void {
   const now = Date.now();
+  if (now - lastSweptAt < SESSION_SWEEP_INTERVAL_MS) return;
+  lastSweptAt = now;
+
   for (const [id, s] of [...sessions]) {
     if (now - s.lastSeenAt <= SESSION_IDLE_TTL_MS) continue;
     // Outstanding work outranks idleness, always.
@@ -212,9 +229,16 @@ export function sweepSessions(): void {
   }
 }
 
-/** Drop every session. Test-only -- the store is module state shared across a suite. */
+/**
+ * Drop every session. Test-only -- the store is module state shared across a suite.
+ *
+ * Resets the sweep clock too. Without that, a suite using fake timers can leave
+ * `lastSweptAt` set to a moment in the FUTURE relative to the next test's clock, which
+ * makes the throttle skip a sweep that was supposed to happen.
+ */
 export function __resetSessionsForTest(): void {
   sessions.clear();
+  lastSweptAt = 0;
 }
 
 export const remainingBudget = (s: Session): number => Math.max(0, s.riskBudgetUsdc - s.spentUsdc);
