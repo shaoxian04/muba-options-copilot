@@ -160,6 +160,22 @@ describe("deriveHistory", () => {
     expect(coin?.price).toBeUndefined();
   });
 
+  it("does not let a suggestion line landing between a question and its answer swallow that turn", () => {
+    // A suggestion line is appended out of band (Chat.tsx, whenever the Risk Profile
+    // resolves or changes) -- it can land between a trader question and the copilot's
+    // real answer to something else entirely. Pairing by raw index would silently
+    // drop that turn; it must be filtered out before pairing, not paired against.
+    const log: InsightsLine[] = [
+      { who: "trader", text: "what's ETH's price?" },
+      { who: "copilot", suggestionStatus: "loading" },
+      { who: "copilot", results: { ETH: { symbol: "ETH", answer: "ETH is at $2465.", market: market(2465) } } },
+    ];
+    const history = deriveHistory(log);
+    expect(history).toEqual([
+      { question: "what's ETH's price?", coins: [{ symbol: "ETH", answer: "ETH is at $2465.", price: 2465 }] },
+    ]);
+  });
+
   it("skips a turn whose trader line carries no usable question text", () => {
     const blank: InsightsLine[] = [
       { who: "trader" },

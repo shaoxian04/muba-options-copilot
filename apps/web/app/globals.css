@@ -2351,17 +2351,21 @@ button[disabled] {
   color: var(--crit);
 }
 
-/* The Risk Profile picker and the Suggestion it drives, merged into one card
-   (SuggestionCard.tsx) so the two read as one thought instead of two boxes that both
-   happen to say "Balanced". Sits between the log and the ask-row, borrowing the same
-   margin rhythm as .ask-row below.
+/* The Suggestion, as one message inside the Insights log (SuggestionMessage.tsx) --
+   split out of the old pinned footer that sat between the log and the ask-row and
+   changed height every time a Suggestion loaded. It keeps the same look (SuggestionMessage
+   reuses this class) but now needs side margins matching the log's other lines instead
+   of the footer's own rhythm, since it scrolls with everything else.
 
    `.chat`'s own background is --surface, so a card in that colour would be
    invisible against it -- --surface-2 is the token that actually differs from the
    panel, and `--lift`'s shadow (the same token cards on the Deck use to read as
    raised) does the rest of the work of separating the card from the page. */
 .suggestion-card {
-  margin: 6px 18px 0;
+  /* `.log`'s own flex `gap` (13px) already spaces it from its neighbours -- no margin
+     needed, unlike the old pinned-footer version which sat outside that flex flow. */
+  margin: 0;
+  max-width: 94%;
   padding: 12px;
   background: var(--surface-2);
   border: 1px solid var(--line);
@@ -2540,6 +2544,55 @@ button[disabled] {
   flex: none;
   align-self: flex-start;
   margin-top: 2px;
+}
+
+/* The Risk Profile picker's compact form (RiskProfileChip.tsx) -- a chip at the start
+   of the Insights composer row, with a small popover sheet above it. Kept as its own
+   wrapper so the sheet can position relative to the chip without disturbing .ask-row's
+   own flex layout. */
+.profile-chip-wrap {
+  position: relative;
+  flex: none;
+}
+.profile-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 10px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: border-color 0.14s, color 0.14s;
+}
+.profile-chip:hover:not(:disabled) {
+  border-color: var(--ink-2);
+  color: var(--ink);
+}
+.profile-chip:focus-visible {
+  outline: 2px solid var(--hue);
+  outline-offset: 1px;
+}
+.profile-chip:disabled {
+  opacity: 0.6;
+}
+/* Opens upward: the composer sits at the bottom of the column, so a sheet dropping
+   down would spill under the fold or off the panel entirely. */
+.profile-sheet {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 5;
+  width: max(240px, 100%);
+  padding: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--lift);
 }
 
 .ask-row {

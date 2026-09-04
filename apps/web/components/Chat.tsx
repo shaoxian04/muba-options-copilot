@@ -13,10 +13,11 @@
  * pretending to be read -- picking a Card off the Deck is still the only way to price
  * and buy something. "Insights" is the Forecast subsystem (ADR-0005): real market data,
  * news, price predictions, risk/benefit views, and comparisons across coins, answered
- * from a free-text question. It also carries the Risk Profile picker and the Suggestion
- * it drives (`SuggestionCard.tsx`), gated behind sign-in alone -- no wallet required
- * (ADR-0017) -- accepting one deals a Deck via `Surface.deal()` and switches back to
- * the Trade tab.
+ * from a free-text question. It also carries the Risk Profile picker (a chip in the
+ * composer row, `RiskProfileChip.tsx`) and the Suggestion it drives, which lands as a
+ * message in the log (`SuggestionMessage.tsx`) rather than a pinned footer -- both
+ * gated behind sign-in alone, no wallet required (ADR-0017). Accepting a Suggestion
+ * deals a Deck via `Surface.deal()` and switches back to the Trade tab.
  *
  * Dropping a Deck card (DeckRow.tsx is the drag source) anywhere on this panel is a
  * third way into Insights: it builds one precise, strike-anchored question from the
@@ -52,12 +53,13 @@ import { useCallback, useEffect, useRef, useState, type DragEvent } from "react"
 import { usePathname } from "next/navigation";
 import type { UnderlyingSymbol } from "@copilot/shared";
 import type { ChatLine, Direction, TradeIntent } from "../lib/surface";
-import type { ProposeResult } from "../lib/api";
-import { askForecast } from "../lib/api";
+import type { ProposeResult, RiskProfileName } from "../lib/api";
+import { ApiRefusal, askForecast, getSuggestion } from "../lib/api";
 import { deriveHistory, type InsightsLine } from "../lib/insightsHistory";
 import { buildCardQuestion, CARD_DRAG_MIME, type DroppedCard } from "../lib/cardQuestion";
 import { compareStrikeToRange } from "../lib/strikeOutlook";
-import { SuggestionCard } from "./SuggestionCard";
+import { RiskProfileChip } from "./RiskProfileChip";
+import { SuggestionMessage, type SuggestionStatus } from "./SuggestionMessage";
 import { NearestOrderPreview } from "./NearestOrderPreview";
 
 type Engine = "trade" | "insights";
@@ -195,6 +197,24 @@ export function Chat({
     [insightsBusy, insightsPending, insightsLog]
   );
 
+  // A suggestion line is appended/replaced by InsightsEngine's own profile-driven
+  // fetch effect below -- this just does the log-splicing, since insightsLog's setter
+  // lives here. Finding the *last* matching line (not the first) matters once a
+  // session has more than one: an old exchange must never get clobbered by a later
+  // Risk Profile change.
+  const setSuggestionLine = useCallback((line: InsightsLine) => {
+    setInsightsLog((prev) => {
+      const idx = prev.reduce(
+        (acc, l, i) => (l.suggestion !== undefined || l.suggestionStatus !== undefined ? i : acc),
+        -1
+      );
+      if (idx === -1) return [...prev, line];
+      const next = prev.slice();
+      next[idx] = line;
+      return next;
+    });
+  }, []);
+
   const handleCardDrop = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
       const raw = event.dataTransfer.getData(CARD_DRAG_MIME);
@@ -287,6 +307,7 @@ export function Chat({
             pick={pick}
             signedIn={signedIn}
             onAccepted={() => selectEngine("trade")}
+            onSuggestionLine={setSuggestionLine}
             disabled={!signedIn}
           />
         )}
@@ -371,6 +392,7 @@ function InsightsEngine({
   pick,
   signedIn,
   onAccepted,
+  onSuggestionLine,
   disabled,
 }: {
   log: InsightsLine[];
@@ -380,15 +402,52 @@ function InsightsEngine({
   pick: (cardRef: string, on?: { underlying: UnderlyingSymbol; direction: Direction; horizonDays: number }) => Promise<void>;
   signedIn: boolean;
   onAccepted: () => void;
+  /** Appends/replaces the log's suggestion line -- insightsLog's setter lives in Chat. */
+  onSuggestionLine: (line: InsightsLine) => void;
   disabled: boolean;
 }) {
   const [question, setQuestion] = useState("");
+  const [profile, setProfile] = useState<RiskProfileName | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = logRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [log, busy]);
+
+  // Refetches the Suggestion whenever the saved profile changes -- including the very
+  // first time it loads. A pick or a change sets `profile` (via RiskProfileChip's
+  // onProfileChange below), which is this effect's only dependency; the result lands
+  // in the log as one message rather than a pinned footer.
+  useEffect(() => {
+    if (!profile) return;
+    let cancelled = false;
+    onSuggestionLine({ who: "copilot", suggestionStatus: "loading" });
+    getSuggestion()
+      .then((res) => {
+        if (cancelled) return;
+        onSuggestionLine({ who: "copilot", suggestion: res, suggestionStatus: res.intent ? "ready" : "no-signal" });
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        if (e instanceof ApiRefusal) {
+          if (e.status === 401) onSuggestionLine({ who: "copilot", suggestionStatus: "unauthorized" });
+          else if (e.status === 404) onSuggestionLine({ who: "copilot", suggestionStatus: "unsupported" });
+          else if (e.status === 502 || e.status === 503) onSuggestionLine({ who: "copilot", suggestionStatus: "unavailable" });
+          else onSuggestionLine({ who: "copilot", suggestionStatus: "error", suggestionError: e.message });
+        } else {
+          onSuggestionLine({
+            who: "copilot",
+            suggestionStatus: "error",
+            suggestionError: e?.message ?? "Could not load a Suggestion.",
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile]);
 
   /**
    * Only the most recent card-drop gets a closest-order search. Every past drop
@@ -416,6 +475,15 @@ function InsightsEngine({
               <p key={i} className="from-trader">
                 {line.text}
               </p>
+            ) : line.suggestion !== undefined || line.suggestionStatus !== undefined ? (
+              <SuggestionMessage
+                key={i}
+                status={line.suggestionStatus ?? "loading"}
+                data={line.suggestion ?? null}
+                error={line.suggestionError ?? null}
+                deal={deal}
+                onAccepted={onAccepted}
+              />
             ) : line.results ? (
               <div key={i} className="from-copilot">
                 {Object.entries(line.results).map(([symbol, r]) => {
@@ -515,8 +583,6 @@ function InsightsEngine({
         {busy ? <p className="from-copilot">Asking…</p> : null}
       </div>
 
-      <SuggestionCard deal={deal} signedIn={signedIn} onAccepted={onAccepted} />
-
       <form
         className="ask-row"
         onSubmit={(e) => {
@@ -525,6 +591,7 @@ function InsightsEngine({
           setQuestion("");
         }}
       >
+        <RiskProfileChip signedIn={signedIn} onProfileChange={setProfile} />
         <input
           type="text"
           value={question}
