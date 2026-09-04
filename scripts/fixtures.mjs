@@ -6,7 +6,9 @@
  */
 import { spawnSync } from "node:child_process";
 
-const result = spawnSync("npx", ["vitest", "run", "apps/api/src/test/web-fixtures.test.ts"], {
+// Command and args are hardcoded (no attacker-reachable input); shell:true is required on
+// Windows so npx's .cmd shim resolves.
+const result = spawnSync("npx", ["vitest", "run", "apps/api/src/test/web-fixtures.test.ts"], { // nosemgrep: javascript.lang.security.audit.spawn-shell-true.spawn-shell-true
   stdio: "inherit",
   shell: true,
   env: { ...process.env, WRITE_FIXTURES: "1" },

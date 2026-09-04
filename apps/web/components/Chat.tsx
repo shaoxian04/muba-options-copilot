@@ -7,10 +7,24 @@
  * chatbox stays mounted and only which backend a submitted message reaches changes.
  *
  * "Trade" is the Copilot that proposes and explains -- it cannot spend, nothing in this
- * mode can reach `/fill` or `/practice`, and the only thing a seed does is ask the
- * server for a proposal, which signs nothing. "Insights" is the Forecast subsystem
- * (ADR-0005): real market data, news, price predictions, risk/benefit views, and
- * comparisons across coins, answered from a free-text question.
+ * mode can reach `/fill` or `/practice`. There is no free-text-to-trade backend yet (the
+ * Trade, Review and Strategy Agents are a separate Python service that has not been
+ * started, ADR-0007), so a typed message is logged and answered honestly rather than
+ * pretending to be read -- picking a Card off the Deck is still the only way to price
+ * and buy something. "Insights" is the Forecast subsystem (ADR-0005): real market data,
+ * news, price predictions, risk/benefit views, and comparisons across coins, answered
+ * from a free-text question. It also carries the Risk Profile picker and the Suggestion
+ * it drives (`SuggestionCard.tsx`), gated behind sign-in alone -- no wallet required
+ * (ADR-0017) -- accepting one deals a Deck via `Surface.deal()` and switches back to
+ * the Trade tab.
+ *
+ * Dropping a Deck card (DeckRow.tsx is the drag source) anywhere on this panel is a
+ * third way into Insights: it builds one precise, strike-anchored question from the
+ * card's own real fields (`buildCardQuestion`, apps/web/lib/cardQuestion.ts) and runs
+ * it through the exact same `askForecast()` call a typed question uses -- no new
+ * backend route, no new AI prompt. The question-running logic lives at this level (not
+ * inside the Insights tab's own input) so a drop reaching the panel while the Trade tab
+ * is showing can reach it too.
  *
  * The Insights conversation (and the question a "please specify..." reply is still
  * completing) lives here in `Chat`, not inside the Insights view itself -- that view
@@ -22,26 +36,29 @@
  * ADR-0005's actual requirement -- a Forecast must never render beside a Max Loss or
  * inside a confirmation -- still holds structurally here: this panel never renders
  * Deck/CommitBar content in either mode, and nothing an Insights answer produces ever
- * reaches the Confirm side of the app.
+ * reaches the Confirm side of the app. A dropped card only ever hands this panel its
+ * own already-shown strike, direction, and premium strings -- never a maker address,
+ * nonce, or anything ADR-0006's `cardRef` indirection already keeps out of the browser.
  *
  * Every figure the Trade engine narrates is a `display` string lifted out of a server
  * response -- the Copilot may say a number aloud; it may never be the reason a number
  * exists (ADR-0006). The Insights engine's numbers follow the same spirit without the
  * strict Figure-string pairing that convention uses elsewhere: Forecast data was never
- * part of a money decision, so a plain server-fetched number is enough.
+ * part of a money decision, so a plain server-fetched number is enough -- which is also
+ * why the strike-vs-predicted-range comparison below may compare two plain numbers
+ * directly, rather than needing a third `no-arithmetic.test.ts` exemption.
  */
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { usePathname } from "next/navigation";
-import type { ChatLine, TradeIntent } from "../lib/surface";
+import type { UnderlyingSymbol } from "@copilot/shared";
+import type { ChatLine, Direction, TradeIntent } from "../lib/surface";
 import type { ProposeResult } from "../lib/api";
 import { askForecast } from "../lib/api";
 import { deriveHistory, type InsightsLine } from "../lib/insightsHistory";
+import { buildCardQuestion, CARD_DRAG_MIME, type DroppedCard } from "../lib/cardQuestion";
+import { compareStrikeToRange } from "../lib/strikeOutlook";
 import { SuggestionCard } from "./SuggestionCard";
-
-export interface Seed {
-  said: string;
-  run: () => void;
-}
+import { NearestOrderPreview } from "./NearestOrderPreview";
 
 type Engine = "trade" | "insights";
 
@@ -69,18 +86,29 @@ function loadInsightsPending(): string | null {
 
 export function Chat({
   log,
-  seeds,
   busy,
+  submitTradeMessage,
   deal,
-  walletVerified,
+  pick,
+  signedIn,
 }: {
   log: ChatLine[];
-  seeds: Seed[];
   busy: boolean;
-  /** Same signature as `Surface.deal` -- threaded down to Suggestion for Accept (task 5). */
+  submitTradeMessage: (text: string) => void;
+  /** Same signature as `Surface.deal` -- threaded down to Suggestion for Accept. */
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
-  /** Whether the session has proven wallet ownership (ADR-0012) -- gates the Risk Profile. */
-  walletVerified: boolean;
+  /** Same signature as `Surface.pick` -- threaded down to NearestOrderPreview's "Place order". */
+  pick: (cardRef: string, on?: { underlying: UnderlyingSymbol; direction: Direction; horizonDays: number }) => Promise<void>;
+  /**
+   * Whether an account is signed in (ADR-0014). The gate this panel enforces is
+   * sign-in alone, not a connected wallet -- a signed-in Trader with no wallet yet still
+   * gets full chat access, matching how Connect wallet itself stays unreachable until
+   * signed in but needs no wallet to become reachable. Deck browsing and Practice Run
+   * stay open to anyone regardless (ADR-0014) -- this gate is scoped to the Copilot
+   * panel only. The Risk Profile card inside Insights uses this same flag, not a wallet
+   * check, to decide whether it fetches (ADR-0017).
+   */
+  signedIn: boolean;
 }) {
   // The route this page happened to load from decides the starting tab (so a direct
   // hit or refresh on /insights opens there) -- but switching tabs afterward never
@@ -89,14 +117,9 @@ export function Chat({
   const pathname = usePathname();
   const [engine, setEngine] = useState<Engine>(pathname === "/insights" ? "insights" : "trade");
 
-  // Starts empty on every render, server and client alike -- sessionStorage does not
-  // exist on the server at all, so seeding this from it in a useState initializer
-  // (the original version of this code did) makes the client's first render disagree
-  // with what the server sent down, which React treats as a hydration error and
-  // discards the whole tree to recover. Loading the real, saved conversation happens
-  // below, in an effect that only ever runs after hydration has already succeeded.
   const [insightsLog, setInsightsLog] = useState<InsightsLine[]>([]);
   const [insightsPending, setInsightsPending] = useState<string | null>(null);
+  const [insightsBusy, setInsightsBusy] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
   function selectEngine(next: Engine) {
@@ -121,10 +144,6 @@ export function Chat({
   }, []);
 
   useEffect(() => {
-    // Skip the write on the same pass that just loaded from storage -- otherwise this
-    // fires with the still-empty initial value before that load's setState has taken
-    // effect, and overwrites the real saved conversation with "[]" moments after
-    // reading it.
     if (!hydrated) return;
     try {
       window.sessionStorage.setItem(INSIGHTS_LOG_KEY, JSON.stringify(insightsLog));
@@ -144,8 +163,71 @@ export function Chat({
     }
   }, [insightsPending, hydrated]);
 
+  const runInsightsQuestion = useCallback(
+    async (question: string, cardContext?: InsightsLine["cardContext"], skipPending = false) => {
+      const fragment = question.trim();
+      if (!fragment || insightsBusy) return;
+      if (skipPending) setInsightsPending(null);
+      setInsightsLog((prev) => [...prev, { who: "trader", text: fragment }]);
+      setInsightsBusy(true);
+
+      const combined = !skipPending && insightsPending ? `${insightsPending} ${fragment}` : fragment;
+      const history = deriveHistory(insightsLog);
+
+      try {
+        const results = await askForecast(combined, history);
+        setInsightsLog((prev) => [...prev, { who: "copilot", results, cardContext }]);
+        setInsightsPending(null);
+      } catch (e: any) {
+        const message = e?.message ?? "Something went wrong.";
+        setInsightsLog((prev) => [...prev, { who: "copilot", text: message }]);
+        setInsightsPending(/^please specify/i.test(message) ? combined : null);
+      } finally {
+        setInsightsBusy(false);
+      }
+    },
+    [insightsBusy, insightsPending, insightsLog]
+  );
+
+  const handleCardDrop = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      const raw = event.dataTransfer.getData(CARD_DRAG_MIME);
+      if (!raw) return;
+      event.preventDefault();
+      // The sign-in gate applies here too -- otherwise dragging a card in would be a
+      // second, unlocked door into the same AI answer the disabled ask-input and
+      // seed buttons are refusing to give a signed-out visitor.
+      if (!signedIn) return;
+      let card: DroppedCard;
+      try {
+        card = JSON.parse(raw) as DroppedCard;
+      } catch {
+        return;
+      }
+      selectEngine("insights");
+      void runInsightsQuestion(
+        buildCardQuestion(card),
+        {
+          underlying: card.underlying,
+          strikeValue: card.strikeValue,
+          strikeDisplay: card.strikeDisplay,
+          direction: card.direction,
+          horizonDays: card.horizonDays,
+        },
+        true
+      );
+    },
+    [runInsightsQuestion, signedIn]
+  );
+
   return (
-    <div className="chat">
+    <div
+      className="chat"
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes(CARD_DRAG_MIME)) e.preventDefault();
+      }}
+      onDrop={handleCardDrop}
+    >
       <div className="hd">
         <span className="who">Copilot</span>
         <span className="lbl">{engine === "trade" ? "proposes · never spends" : "answers · never trades"}</span>
@@ -165,24 +247,42 @@ export function Chat({
         </button>
       </div>
 
+      {signedIn ? null : (
+        <a href="/login" className="chat-signin-gate" data-testid="chat-signin-gate">
+          Sign in to chat with the Copilot.
+        </a>
+      )}
+
       {engine === "trade" ? (
-        <TradeEngine log={log} seeds={seeds} busy={busy} />
+        <TradeEngine log={log} busy={busy} submitTradeMessage={submitTradeMessage} disabled={!signedIn} />
       ) : (
         <InsightsEngine
           log={insightsLog}
-          setLog={setInsightsLog}
-          pending={insightsPending}
-          setPending={setInsightsPending}
+          busy={insightsBusy}
+          onAsk={(q) => void runInsightsQuestion(q)}
           deal={deal}
-          walletVerified={walletVerified}
+          pick={pick}
+          signedIn={signedIn}
           onAccepted={() => selectEngine("trade")}
+          disabled={!signedIn}
         />
       )}
     </div>
   );
 }
 
-function TradeEngine({ log, seeds, busy }: { log: ChatLine[]; seeds: Seed[]; busy: boolean }) {
+function TradeEngine({
+  log,
+  busy,
+  submitTradeMessage,
+  disabled,
+}: {
+  log: ChatLine[];
+  busy: boolean;
+  submitTradeMessage: (text: string) => void;
+  disabled: boolean;
+}) {
+  const [message, setMessage] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -192,7 +292,7 @@ function TradeEngine({ log, seeds, busy }: { log: ChatLine[]; seeds: Seed[]; bus
 
   return (
     <>
-      <div className="log" ref={logRef} role="log" aria-live="polite" aria-label="Conversation">
+      <div className="log" ref={logRef} role="log" aria-live="polite" aria-label="Conversation" tabIndex={0}>
         {log.length === 0 ? (
           <p className="from-copilot">
             The Deck is on the right — every option you could buy right now, cheapest long shots first. Have a
@@ -207,43 +307,58 @@ function TradeEngine({ log, seeds, busy }: { log: ChatLine[]; seeds: Seed[]; bus
         )}
       </div>
 
-      <div className="seeds">
-        {seeds.map((seed) => (
-          <button key={seed.said} type="button" onClick={seed.run} disabled={busy}>
-            {seed.said}
-          </button>
-        ))}
-      </div>
-
       {/*
-        A text box would imply the language layer exists for trading. It does not yet --
-        the Trade, Review and Strategy Agents are a separate Python service that has not
-        been started (ADR-0007) -- and a dead input is a worse lie than an honest note.
+        There is no free-text-to-trade backend yet -- the Trade, Review and Strategy
+        Agents are a separate Python service that has not been started (ADR-0007) -- so
+        this logs what was typed and replies honestly rather than pretending to read it.
+        Picking a Card off the Deck is still the only way to price and buy something.
       */}
-      <p className="box">Typing arrives with the agents service. Until then the prompts above stand in for it.</p>
+      <form
+        className="ask-row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const text = message.trim();
+          if (!text || busy || disabled) return;
+          setMessage("");
+          submitTradeMessage(text);
+        }}
+      >
+        <input
+          type="text"
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          placeholder="Say something…"
+          disabled={busy || disabled}
+          aria-label="Say something to the Copilot"
+        />
+        <button type="submit" disabled={busy || disabled || !message.trim()}>
+          Send
+        </button>
+      </form>
     </>
   );
 }
 
 function InsightsEngine({
   log,
-  setLog,
-  pending,
-  setPending,
+  busy,
+  onAsk,
   deal,
-  walletVerified,
+  pick,
+  signedIn,
   onAccepted,
+  disabled,
 }: {
   log: InsightsLine[];
-  setLog: Dispatch<SetStateAction<InsightsLine[]>>;
-  pending: string | null;
-  setPending: Dispatch<SetStateAction<string | null>>;
+  busy: boolean;
+  onAsk: (question: string) => void;
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
-  walletVerified: boolean;
+  pick: (cardRef: string, on?: { underlying: UnderlyingSymbol; direction: Direction; horizonDays: number }) => Promise<void>;
+  signedIn: boolean;
   onAccepted: () => void;
+  disabled: boolean;
 }) {
   const [question, setQuestion] = useState("");
-  const [busy, setBusy] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -251,43 +366,14 @@ function InsightsEngine({
     if (el) el.scrollTop = el.scrollHeight;
   }, [log, busy]);
 
-  async function ask() {
-    const fragment = question.trim();
-    if (!fragment || busy) return;
-    setQuestion("");
-    setLog((prev) => [...prev, { who: "trader", text: fragment }]);
-    setBusy(true);
-
-    // `pending` handles only one thing -- completing a "please specify..."
-    // clarification, unchanged from before. `history` is separate: the last few
-    // successful exchanges, sent as lightweight memory so a genuine follow-up
-    // ("what about SOL too?") can be resolved without dragging the whole
-    // conversation along.
-    const combined = pending ? `${pending} ${fragment}` : fragment;
-    const history = deriveHistory(log);
-
-    try {
-      const results = await askForecast(combined, history);
-      setLog((prev) => [...prev, { who: "copilot", results }]);
-      setPending(null);
-    } catch (e: any) {
-      const message = e?.message ?? "Something went wrong.";
-      setLog((prev) => [...prev, { who: "copilot", text: message }]);
-      // Only a "please specify" clarification keeps the conversation open -- any other
-      // failure (an unrecognized symbol, a server error) is terminal for this question,
-      // so the next message starts fresh instead of dragging it along.
-      setPending(/^please specify/i.test(message) ? combined : null);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <>
-      <div className="log" ref={logRef} role="log" aria-live="polite" aria-label="Insights conversation">
+      <div className="log" ref={logRef} role="log" aria-live="polite" aria-label="Insights conversation" tabIndex={0}>
         {log.length === 0 ? (
           <p className="from-copilot">
-            Ask about any coin. Real data only; nothing here can reach a trade.
+            Ask about any coin — current price, news, a forward-looking view, risk/benefit, or compare a few
+            against each other. Drag a Deck card in here to ask about that strike specifically. Real data only;
+            nothing here can reach a trade.
           </p>
         ) : (
           log.map((line, i) =>
@@ -297,13 +383,83 @@ function InsightsEngine({
               </p>
             ) : line.results ? (
               <div key={i} className="from-copilot">
-                {Object.entries(line.results).map(([symbol, r]) => (
-                  <div key={symbol} className="coin-answer">
-                    <strong>{symbol}: </strong>
-                    {r.error ? <span className="err">{r.error}</span> : <span>{r.answer}</span>}
-                    {r.disclaimer ? <div className="disclaimer">{r.disclaimer}</div> : null}
-                  </div>
-                ))}
+                {Object.entries(line.results).map(([symbol, r]) => {
+                  const cardContext =
+                    line.cardContext && line.cardContext.underlying === symbol ? line.cardContext : null;
+                  const outlook = cardContext ? compareStrikeToRange(cardContext.strikeValue, r.price?.predictedRange) : null;
+
+                  return (
+                    <div key={symbol} className="coin-answer">
+                      <strong>{symbol}: </strong>
+                      {r.error ? <span className="err">{r.error}</span> : <span>{r.answer}</span>}
+
+                      {r.price ? (
+                        <div className="coin-detail">
+                          <span className="lbl">Price outlook</span>
+                          <span>
+                            {r.price.direction}, predicted {r.price.predictedRange.low}–{r.price.predictedRange.high},
+                            confidence {r.price.confidence}. {r.price.rationale}
+                          </span>
+                        </div>
+                      ) : null}
+
+                      {r.riskBenefit ? (
+                        <div className="coin-detail">
+                          <span className="lbl">Risk / benefit</span>
+                          <span>
+                            Upside: {r.riskBenefit.upside} Downside: {r.riskBenefit.downside}
+                          </span>
+                        </div>
+                      ) : null}
+
+                      {r.indicators ? (
+                        <div className="coin-detail">
+                          <span className="lbl">Indicators</span>
+                          <span>
+                            RSI(14) {r.indicators.rsi14 ?? "n/a"}, SMA(20) {r.indicators.sma20 ?? "n/a"}, EMA(20){" "}
+                            {r.indicators.ema20 ?? "n/a"}
+                          </span>
+                        </div>
+                      ) : null}
+
+                      {outlook && outlook.position !== "unavailable" && cardContext ? (
+                        <div className="coin-detail" data-testid="strike-outlook">
+                          {(() => {
+                            // Purely factual: restates the card's own payout condition from
+                            // `cardContext.direction` -- never an interpretive judgment about
+                            // whether the strike looks likely or unlikely to hit.
+                            const payoutCondition =
+                              cardContext.direction === "DOWN"
+                                ? `falls to or below that level`
+                                : `rises to or above that level`;
+
+                            if (outlook.position === "inside") {
+                              return `${cardContext.strikeDisplay} sits inside the AI's own predicted range for this horizon.`;
+                            }
+                            const rangeWord = outlook.position === "below-range" ? "below" : "above";
+                            return (
+                              `${cardContext.strikeDisplay} sits ${rangeWord} the AI's own predicted range for this ` +
+                              `horizon — this card pays if ${cardContext.underlying} ${payoutCondition}.`
+                            );
+                          })()}
+                        </div>
+                      ) : null}
+
+                      {cardContext && cardContext.underlying === symbol && r.price ? (
+                        <NearestOrderPreview
+                          underlying={cardContext.underlying}
+                          predictedDirection={r.price.direction}
+                          predictedRange={r.price.predictedRange}
+                          probeHorizonDays={cardContext.horizonDays}
+                          pick={pick}
+                          onAccepted={onAccepted}
+                        />
+                      ) : null}
+
+                      {r.disclaimer ? <div className="disclaimer">{r.disclaimer}</div> : null}
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <p key={i} className="from-copilot">
@@ -315,13 +471,14 @@ function InsightsEngine({
         {busy ? <p className="from-copilot">Asking…</p> : null}
       </div>
 
-      <SuggestionCard deal={deal} walletVerified={walletVerified} onAccepted={onAccepted} />
+      <SuggestionCard deal={deal} signedIn={signedIn} onAccepted={onAccepted} />
 
       <form
         className="ask-row"
         onSubmit={(e) => {
           e.preventDefault();
-          void ask();
+          if (question.trim()) onAsk(question);
+          setQuestion("");
         }}
       >
         <input
@@ -329,10 +486,10 @@ function InsightsEngine({
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           placeholder="Ask about any coin…"
-          disabled={busy}
+          disabled={busy || disabled}
           aria-label="Ask a question"
         />
-        <button type="submit" className="ask-submit" disabled={busy || !question.trim()}>
+        <button type="submit" className="ask-submit" disabled={busy || disabled || !question.trim()}>
           <span aria-hidden="true">→</span> Ask
         </button>
       </form>

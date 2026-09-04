@@ -24,11 +24,11 @@ Run, the board, and both halt states. The three agents (Trade, Review, Strategy)
 separate Python service (`apps/agents`, `npm run agents`) that serves the Strategy Agent's
 indicator and Suggestion halves over loopback HTTP (`GET /indicators`, `GET /suggest`); the
 Node backend fronts those with five routes over two Supabase tables (`GET|PUT /risk-profile`,
-`GET /suggestion`, `POST /decisions`, `GET /decisions/stats`), all five keyed on the wallet
-the session proved rather than a browser-minted id (ADR-0013) — the Trade Agent still has no
+`GET /suggestion`, `POST /decisions`, `GET /decisions/stats`), all five keyed on the
+signed-in account rather than a wallet (ADR-0018) — the Trade Agent still has no
 HTTP surface, and the Review Agent is stubbed as always-agreeing. The Insights tab now carries a
-Risk Profile picker and the Suggestion it drives (`SuggestionCard.tsx`), both gated behind a
-connected and verified wallet; accepting one deals a
+Risk Profile picker and the Suggestion it drives (`SuggestionCard.tsx`), both gated behind
+sign-in alone, no wallet required; accepting one deals a
 Deck, but the Trade tab's only way to ask for a proposal directly is still the seed prompts on
 the left.
 
@@ -163,15 +163,22 @@ These are needed on every task. Violating one silently breaks the product's cent
 - **The chain decides whether a fill succeeded, not the caller.** `POST /fill/settle`
   looks up the real transaction receipt itself (ADR-0012) whenever a `txHash` is given;
   a client's own claim of success or failure is never taken at face value.
+- **An account, not just a wallet, is required to reach Confirm.** `POST
+  /auth/challenge`, `POST /auth/verify`, and `POST /fill/prepare` all refuse without a
+  valid `x-account-token` (ADR-0014) -- enforced server-side, never only by the UI.
+  Deck browsing and Practice Run need neither an account nor a wallet.
 - **A cardRef selects; it never supplies a value.** The Order is re-fetched off the live book
   and every number re-derived, so an override passes every check an agent-chosen Card does.
 - **A Suggestion crosses the Strategy Agent boundary as a nested Trade Intent and nothing
   else** — no name, no reasoning, no confidence. Enforced by `extra="forbid"` in
-  `apps/agents/strategy/schema.py` (ADR-0005).
-- **A Risk Profile and a Decision belong to a wallet, never to a browser.** `owner_id` is
-  the address the session proved under ADR-0012, lowercased — read off the session, never
-  off a header. No client-supplied value may name an owner, and there is no fallback
-  identity for a caller with no proven wallet. (ADR-0013)
+  `apps/agents/strategy/schema.py` (ADR-0005). A second, separate channel — the drag-drop
+  closest-order search on the Insights tab — may use an AI's predicted price to select a
+  strike, but only ever as an existing, already-priced order's `cardRef`, confined to the
+  analysis surface. (ADR-0019)
+- **A Risk Profile and a Decision belong to an account, never to a browser.** `owner_id`
+  is the id `requireAccount` resolves an `x-account-token` to — read off a verified
+  Supabase session, never off a header. No client-supplied value may name an owner, and
+  there is no fallback identity for a caller who is not signed in. (ADR-0018)
 - **Practice can never spend.** `/practice` is a separate route, not a flag, and its module
   imports nothing that can sign. A test walks the import graph. (Issue #8)
 - **The book has one door.** Everything reaches Orders through the single buyable filter, where
@@ -208,16 +215,21 @@ it here with a one-line lesson.
   clash. **Read before touching anything in `apps/api/src/insurance/`.**
 - **`apps/api/src/insurance/CONTEXT.md`** — Borrower, Loan, Cover, Liquidation Price, Lapse.
   **Read before any Liquidation Cover work.**
-- **`docs/adr/`** — the decisions and why they went that way. 0001 and 0004 are superseded;
-  0006–0013 and 0015–0017 are current (0014 does not exist — a gap left by renumbering, not
-  a decision) — 0009 is why the surface may look like a game but never celebrates a Fill,
-  0010 is why an Underlying is keyed by price feed and not by token, 0011 is why a Trader's
-  own wallet signs a fill instead of the backend, 0012 is why a session must prove wallet
-  ownership and the chain alone decides whether a fill succeeded, 0013 is why a Risk Profile
-  and a Decision are keyed on the proven wallet, 0015 and 0016 are the two Cover decisions,
-  and 0017 is why an RFQ is two signatures with a wait between them and why no price appears
-  before a maker answers. **Read before changing architecture, or when code looks
-  deliberately odd and you're tempted to "fix" it.**
+- **`docs/adr/`** — the decisions and why they went that way. 0001, 0004, and 0013 are
+  superseded; 0006–0012 and 0014–0019 are current — 0009 is why the surface may look
+  like a game but never celebrates a Fill, 0010 is why an Underlying is keyed by price
+  feed and not by token, 0011 is why a Trader's own wallet signs a fill instead of the
+  backend, 0012 is why a session must prove wallet ownership and the chain alone
+  decides whether a fill succeeded, 0014 is why an account (Supabase Auth) is required
+  before wallet-connect or Confirm, though Deck browsing and Practice Run stay open to
+  anyone, 0015/0016 are why Cover's Liquidation Price is Aave's own and a Cover is
+  partial rather than all-or-nothing, 0017 is why an RFQ is two signatures with a wait
+  between them and why no price appears before a maker answers, 0018 is why a Risk
+  Profile and a Decision are keyed on the signed-in account rather than a wallet
+  (supersedes 0013), and 0019 is why the drag-drop closest-order search may let an
+  AI's predicted price choose a strike without breaking ADR-0005. **Read before
+  changing architecture, or when code looks deliberately odd and you're tempted to
+  "fix" it.**
 - **`README.md`** — API route table, repo layout, setup, security posture of the API process.
   **Read before running or wiring anything.**
 - **`apps/web/prototype-copilot.html`** — the settled design for the single-asset ETH Deck as

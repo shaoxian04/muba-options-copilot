@@ -18,6 +18,31 @@ const port = Number(process.env.PORT ?? 3001);
  */
 const host = process.env.HOST ?? "127.0.0.1";
 
+/**
+ * COPILOT_API_TOKEN is inlined into the public Next.js bundle (`NEXT_PUBLIC_COPILOT_API_TOKEN`,
+ * see apps/web/lib/api.ts) so the browser can send it, which means anyone who loads the
+ * frontend can read it back out of the built JS and replay it directly against this API from
+ * outside the browser -- bypassing CORS and the UI entirely. That makes it real protection
+ * against a stray cross-origin page (the CSRF case it's documented for), but NOT an
+ * access-control boundary a non-loopback deployment can lean on, whether or not it happens to
+ * be set. So a non-loopback bind is refused outright unless the operator has put some other,
+ * non-client-embedded authentication mechanism in front of this process (a reverse proxy that
+ * authenticates callers itself, mTLS, a private network with no public ingress, etc.) and says
+ * so explicitly -- COPILOT_API_TOKEN being set does not count, and is deliberately not checked
+ * here.
+ */
+if (host !== "127.0.0.1" && host !== "localhost" && process.env.EXTERNAL_AUTH_IN_FRONT !== "true") {
+  console.error(
+    `Refusing to bind to ${host}: this process would be reachable beyond loopback with no ` +
+      `proven authentication in front of it. Setting COPILOT_API_TOKEN does not make this ` +
+      `safe -- it ships inside the public frontend bundle and can be read out and replayed by ` +
+      `anyone who loads the site, from outside the browser and outside CORS. Bind to ` +
+      `127.0.0.1 instead, or if a real authentication mechanism is genuinely in front of this ` +
+      `process, set EXTERNAL_AUTH_IN_FRONT=true to acknowledge that and continue.`
+  );
+  process.exit(1);
+}
+
 await app.listen({ port, host });
 app.log.info(`endpoint: ${backendEndpoint()}`);
 app.log.info(`cors: ${allowedOrigins().join(", ")}`);

@@ -12,13 +12,17 @@
 import { describe, it, expect, beforeEach, afterEach, vi, afterAll } from "vitest";
 
 vi.mock("../thetanuts/client.js", async () => await import("./stub-client.js"));
+vi.mock("../supabase.js", async () => await import("./stub-supabase.js"));
 
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
 import { executeFill, UnsafeOrder } from "../thetanuts/execute.js";
 import { resetStub, spies, state, TRADER_ADDRESS, proveWallet } from "./stub-client.js";
+import { resetSupabaseStub, registerUser } from "./stub-supabase.js";
 import { NOW, DEFAULT_BOOK, makeOrder } from "./fixtures.js";
 import { DEFAULT_BUDGET } from "../sessions.js";
+
+const ACCOUNT_TOKEN = "acct-token-1";
 
 vi.useFakeTimers({ toFake: ["Date"] });
 vi.setSystemTime(NOW);
@@ -30,6 +34,8 @@ const freshSession = () => `result-${++sessionSeq}`;
 
 beforeEach(async () => {
   resetStub();
+  resetSupabaseStub();
+  registerUser(ACCOUNT_TOKEN, { id: "user-1", email: "trader@example.com" });
   delete process.env.COPILOT_REVIEW_FIXTURE;
   app = await buildApp();
 });
@@ -187,7 +193,7 @@ describe("a Review Agent pass skips no check", () => {
 
   it("does not skip the Risk Budget check at the moment of the Fill", async () => {
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     const { proposalId } = (await propose(INTENT, session)).json();
 
     // The budget is cut below the proposal's Max Loss after it was priced.
@@ -201,7 +207,7 @@ describe("a Review Agent pass skips no check", () => {
     const res = await app.inject({
       method: "POST",
       url: "/fill/prepare",
-      headers: { "x-session-id": session },
+      headers: { "x-session-id": session, "x-account-token": ACCOUNT_TOKEN },
       payload: { proposalId, walletAddress: TRADER_ADDRESS },
     });
 

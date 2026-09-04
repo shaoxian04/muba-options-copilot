@@ -11,14 +11,17 @@
  * same id.
  */
 import type {
+  AccountActivityResponse, AccountResponse, AccountSettingsRequest,
   Card, ConversationTurn, CoinAskResult, CoverQuote, CoverQuoteResult, CoverRefusal,
   DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding,
   MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, RiskProfileName,
   RiskProfileResponse, SuggestionResponse, UnderlyingSymbol,
   PreparedRfq, PreparedRfqCancel, PreparedRfqSettle, RfqAsk, RfqPhase, RfqStatus,
 } from "@copilot/shared";
+import { supabase } from "./supabaseClient";
 
 export type {
+  AccountActivityResponse, AccountResponse, AccountSettingsRequest,
   Card, ConversationTurn, CoinAskResult, CoverQuote, CoverQuoteResult, CoverRefusal,
   DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding,
   MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, RiskProfileName,
@@ -38,11 +41,17 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:30
  * `Authorization: Bearer ...`" -- and without this Confirm answers 401 for anyone who
  * followed the documented security posture.
  *
- * It is inlined into the bundle, which is the honest cost of a browser holding it. That
- * is acceptable for what the token actually defends against: a page on another origin
- * POSTing to loopback. Such a page cannot read this bundle (the CORS allowlist in
- * `app.ts` sees to that), so it cannot learn the token. It is NOT a secret from the
- * person sitting at the browser, and it was never meant to be -- the wallet is theirs.
+ * It is inlined into the bundle, which is the honest cost of a browser holding it. It IS
+ * a real defense against CSRF -- a page on another origin cannot read this bundle (the
+ * CORS allowlist in `app.ts` sees to that), so it cannot learn the token to attach to a
+ * forged cross-origin request. It is NOT a secret from the person sitting at the browser
+ * (the wallet is theirs), and CORS does nothing at all for a non-browser client: anyone
+ * who loads this bundle once can read the literal token out of it and replay it directly
+ * against the backend from curl/Postman, outside any browser and outside CORS entirely.
+ * That is not this token's job to prevent -- `apps/api/src/server.ts` refuses to bind
+ * beyond loopback in the first place unless a real, non-client-embedded authentication
+ * mechanism is confirmed in front of it (`EXTERNAL_AUTH_IN_FRONT`), which is what actually
+ * stands between this token and being replayed by anyone who ever loaded the page.
  */
 const API_TOKEN = process.env.NEXT_PUBLIC_COPILOT_API_TOKEN ?? "";
 
@@ -56,6 +65,9 @@ export interface SessionState {
   spentUsdc: number;
   remainingUsdc: number;
   figures: { riskBudgetUsdc: Figure; spentUsdc: Figure; remainingUsdc: Figure };
+  /** The wallet this session already proved (ADR-0012), or null. Whatever casing it was
+   * signed with -- compare case-insensitively against a connected address. */
+  verifiedWallet: string | null;
 }
 
 export interface Board {
@@ -85,7 +97,8 @@ export class ApiRefusal extends Error {
   }
 }
 
-const SESSION_KEY = "copilot-session-id";
+/** Exported so tests can simulate a new tab -- a fresh backend session -- by clearing it. */
+export const SESSION_KEY = "copilot-session-id";
 
 /**
  * A stable id for this tab.
@@ -104,12 +117,26 @@ export function sessionId(): string {
   return id;
 }
 
+/**
+ * Sent on every call, when a signed-in session exists (ADR-0014). Read fresh each
+ * time rather than cached: `supabase.auth.getSession()` auto-refreshes an expiring
+ * access token internally, so asking right before use -- never holding a stale copy
+ * in React state -- is what keeps a long-lived tab from silently sending an expired
+ * token.
+ */
+async function accountHeaders(): Promise<Record<string, string>> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  return token ? { "x-account-token": token } : {};
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
       "content-type": "application/json",
       "x-session-id": sessionId(),
+      ...(await accountHeaders()),
       ...(init?.headers ?? {}),
     },
   });
@@ -416,3 +443,15 @@ export const recordDecision = (body: DecisionRequest): Promise<unknown> =>
     body: JSON.stringify(body),
     headers: authHeaders(),
   });
+
+/** The signed-in account's saved settings and linked wallet, if any (ADR-0014). */
+export const getAccount = (): Promise<AccountResponse> => call<AccountResponse>("/account");
+
+/** Saves a partial settings update -- only the given fields change. */
+export const saveAccountSettings = (
+  patch: AccountSettingsRequest
+): Promise<{ settings: AccountResponse["settings"] }> =>
+  call("/account/settings", { method: "POST", body: JSON.stringify(patch) });
+
+export const getAccountActivity = (): Promise<AccountActivityResponse> =>
+  call<AccountActivityResponse>("/account/activity");

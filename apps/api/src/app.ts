@@ -29,15 +29,21 @@ import { buildDeck } from "./thetanuts/deck.js";
 import { buildDepth } from "./thetanuts/depth-view.js";
 import { marketOverview } from "./thetanuts/markets.js";
 import { reviewIntent } from "./agents/review.js";
-import { practiceRoutes, practiceHoldings } from "./practice.js";
+import { practiceRoutes, practiceHoldings, type PracticePosition } from "./practice.js";
 import { rfqRoutes } from "./rfq.js";
-import { requireToken } from "./gate.js";
+import { requireToken, apiToken } from "./gate.js";
 import { coverRoutes } from "./insurance/http.js";
 import { safeErrorResponse } from "./errors.js";
 import { realHoldings } from "./thetanuts/holdings.js";
 import { prepareFillTx, UnsafeOrder } from "./thetanuts/prepareFill.js";
 import { verifyFillOnChain } from "./thetanuts/verifyFill.js";
 import { buildChallengeMessage, generateNonce, verifyChallengeSignature } from "./auth.js";
+import { requireAccount, optionalAccountId } from "./account.js";
+import {
+  upsertLinkedWallet, logActivity, getAccountSettings, saveAccountSettings,
+  getLinkedWallet, listPracticePositionsAsHoldings, recordPracticePosition, listActivity,
+} from "./accountStore.js";
+import { AccountSettingsRequest } from "@copilot/shared";
 import { usd } from "./format.js";
 import {
   sessionFor, remainingBudget, setRiskBudget,
@@ -96,6 +102,25 @@ const BOOK_MOVE_DAYS = 7;
 const COST_ROUTE_LIMIT = { rateLimit: { max: COST_ROUTE_MAX_PER_MINUTE, timeWindow: "1 minute" } };
 
 /**
+ * How long a wallet already linked to this account (`accountStore.ts`'s `linked_wallets`,
+ * written by every successful `/auth/verify`) stays trusted without asking for a fresh
+ * signature again. `GET /session` seeds `verifiedWallet` from that durable record when
+ * the in-memory `Session` doesn't have one -- a backend restart, or simply a browser tab
+ * that never itself completed a challenge, no longer means re-signing a wallet this
+ * account has already proven.
+ *
+ * Deliberately NOT permanent: ADR-0012 chose session-scoped, re-verify-on-each-load trust
+ * on purpose, and trusting the linked record forever would quietly reverse that -- a
+ * leaked account token alone would then be enough to reach `/fill/prepare` for the linked
+ * wallet, with nothing left requiring a live signature. Bounding it, and rolling the
+ * window forward on every active use (see the `/session` handler) rather than fixing it
+ * at the original sign-in, keeps the exposure window short without asking a Trader who is
+ * actively using the app to keep re-signing. Matches `wallet.ts`'s `DEFAULT_RECONNECT_TTL_MS`
+ * on the frontend so "recently active" means the same span on both sides.
+ */
+const VERIFIED_WALLET_TRUST_TTL_MS = 3 * 60 * 60 * 1000;
+
+/**
  * A query string arrives as strings, so numbers are coerced.
  *
  * `asset` is REQUIRED and has no default. A default of ETH is how an ETH-only assumption
@@ -126,13 +151,28 @@ const DepthQuery = z.object({
 });
 
 /**
- * Who a row belongs to: the wallet this session proved it holds (ADR-0012), lowercased
- * so one Trader is one key whatever case their wallet reports.
+ * Guards the four /forecast/* GET routes specifically (news, price, risk-benefit,
+ * indicators) -- nothing else calls this.
  *
- * Nothing the client says is involved. The old x-copilot-owner header let any caller name
- * any owner and read or overwrite that owner's row; this cannot be asserted, only proven.
+ * `requireToken`'s "no token configured -> loopback-only trust" fallback does not hold
+ * here. Every one of these routes is a plain GET, which the Fetch/CORS spec treats as
+ * a "simple" request: a cross-site page's `<img src=...>` or a `no-cors` fetch still
+ * reaches and fully executes the handler even though `@fastify/cors`'s allowlist keeps
+ * the browser from reading the JSON back -- CORS never rejects the request server-side,
+ * it only withholds the response. With COPILOT_API_TOKEN unset that left every billed
+ * AI/CoinGecko call behind these routes forgeable by any page the operator's browser
+ * happened to load. So unlike every other token-gated route in this file, a missing
+ * token here refuses the request instead of falling back to trusting the loopback bind.
  */
-const ownerFor = (s: Session): string | null => s.verifiedWallet?.toLowerCase() ?? null;
+function requireForecastToken(req: any, reply: any): boolean {
+  if (!apiToken()) {
+    reply.code(503).send({
+      error: "Forecast routes require COPILOT_API_TOKEN to be configured on the server. See .env.example.",
+    });
+    return false;
+  }
+  return requireToken(req, reply);
+}
 
 /**
  * A Card reference, resolved back to the Order it names.
@@ -207,6 +247,41 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.get("/session", async (req, reply) => {
     if (!requireToken(req, reply)) return;
     const s = sessionFor(req.headers);
+
+    const userId = await optionalAccountId(req);
+    if (userId) {
+      const settings = await getAccountSettings(userId);
+      // Seed the in-memory ceiling from the account's saved one. `setRiskBudget` refuses
+      // a ceiling below what's already been spent this session -- which can genuinely
+      // happen here (unlike at session creation) if /session is polled again after some
+      // spend, and the account's saved ceiling is now lower than that spend. Skip the
+      // seed rather than throwing: the ceiling in memory simply stays at its current,
+      // still-valid value for the rest of this session.
+      if (s.riskBudgetUsdc !== settings.riskBudgetUsdc) {
+        try {
+          setRiskBudget(s, settings.riskBudgetUsdc);
+        } catch {
+          // already spent more than the account's current setting -- leave s.riskBudgetUsdc as is
+        }
+      }
+
+      // Seed a proven wallet the same way: an in-memory session with nothing yet doesn't
+      // necessarily mean this Trader has never proven one -- a backend restart, or simply
+      // a browser tab that's never itself completed a challenge, wiped only the copy in
+      // memory. `linked_wallets` still has it, from whichever tab or backend lifetime
+      // last did the real signature. Bounded by VERIFIED_WALLET_TRUST_TTL_MS (see its own
+      // comment for why this isn't permanent) and rolled forward on this same successful
+      // use, so continued activity keeps the window fresh without a new signature -- only
+      // real inactivity past the window asks for one again.
+      if (!s.verifiedWallet) {
+        const linked = await getLinkedWallet(userId);
+        if (linked && Date.now() - Date.parse(linked.verifiedAt) <= VERIFIED_WALLET_TRUST_TTL_MS) {
+          markWalletVerified(s, linked.address);
+          void upsertLinkedWallet(userId, linked.address);
+        }
+      }
+    }
+
     const remaining = remainingBudget(s);
     return {
       riskBudgetUsdc: s.riskBudgetUsdc,
@@ -217,6 +292,14 @@ export async function buildApp(): Promise<FastifyInstance> {
         spentUsdc: usd(s.spentUsdc),
         remainingUsdc: usd(remaining),
       },
+      // Lets the browser skip re-verifying a wallet it didn't actually need to forget --
+      // either this exact session already proved it via a real signature (ADR-0012), or
+      // (see the seeding above) this account did, recently enough, in some other tab or
+      // backend lifetime. Either way, reporting it back isn't a new trust decision, just
+      // not discarding one already made. Whatever casing the wallet originally signed
+      // with, unchanged -- callers compare case-insensitively, same as any other wallet
+      // address comparison in this file.
+      verifiedWallet: s.verifiedWallet,
     };
   });
 
@@ -231,6 +314,13 @@ export async function buildApp(): Promise<FastifyInstance> {
     } catch (e: any) {
       return reply.code(400).send({ error: e.message });
     }
+
+    const userId = await optionalAccountId(req);
+    if (userId) {
+      void saveAccountSettings(userId, { riskBudgetUsdc });
+      void logActivity(userId, "budget_changed", { riskBudgetUsdc });
+    }
+
     return { riskBudgetUsdc: s.riskBudgetUsdc, remainingUsdc: remainingBudget(s) };
   });
 
@@ -390,6 +480,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.post("/auth/challenge", async (req, reply) => {
     if (!requireToken(req, reply)) return;
+    if (!(await requireAccount(req, reply))) return;
     const parsed = AuthChallengeRequest.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "walletAddress is required" });
 
@@ -406,6 +497,8 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.post("/auth/verify", async (req, reply) => {
     if (!requireToken(req, reply)) return;
+    const userId = await requireAccount(req, reply);
+    if (!userId) return;
     const parsed = AuthVerifyRequest.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "signature is required" });
 
@@ -421,6 +514,8 @@ export async function buildApp(): Promise<FastifyInstance> {
       return;
     }
     markWalletVerified(s, pending.walletAddress);
+    void upsertLinkedWallet(userId, pending.walletAddress);
+    void logActivity(userId, "wallet_linked", { walletAddress: pending.walletAddress });
     return { walletAddress: pending.walletAddress };
   });
 
@@ -432,6 +527,8 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.post("/fill/prepare", async (req, reply): Promise<PreparedFill | undefined> => {
     if (!requireToken(req, reply)) return;
+    const userId = await requireAccount(req, reply);
+    if (!userId) return;
     const parsed = FillPrepareRequest.safeParse(req.body);
     if (!parsed.success) {
       reply.code(400).send({ error: "proposalId and a valid walletAddress are required", issues: parsed.error.issues });
@@ -467,6 +564,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
     try {
       const prepared = await prepareFillTx(found.proposal, found.order, trader);
+      void logActivity(userId, "fill_prepared", { proposalId, walletAddress: trader });
       return {
         approveTx: prepared.approveTx,
         fillTx: prepared.fillTx,
@@ -516,6 +614,8 @@ export async function buildApp(): Promise<FastifyInstance> {
         reply.code(410).send({ error: "No prepared fill found for that proposal." });
         return;
       }
+      const userId = await optionalAccountId(req);
+      if (userId) void logActivity(userId, "fill_settled", { proposalId, txHash, confirmed: verification.succeeded });
       return { remainingUsdc: remainingBudget(s), confirmed: verification.succeeded };
     } catch (e) {
       reply.code(502).send(safeErrorResponse(req.log, e, "Could not verify that transaction. Try again."));
@@ -531,11 +631,16 @@ export async function buildApp(): Promise<FastifyInstance> {
    * The board: everything the Trader holds, real and practised, each labelled.
    *
    * Reads holdings for whichever wallet the browser reports as connected (ADR-0011).
-   * With none given, it falls back to the operator's own configured wallet -- which is
-   * what keeps a wallet-less dev session and the CLI's single-wallet model working
-   * exactly as before. Gated on having an address, not on `canSign()` -- a non-custodial
-   * deployment never holds a signing key at all, and its board must still show whatever
-   * wallet the browser connected.
+   * With none given, falls back to the signed-in account's linked wallet, if any, then
+   * to the operator's own configured wallet -- which is what keeps a wallet-less dev
+   * session and the CLI's single-wallet model working exactly as before. Gated on
+   * having an address, not on `canSign()` -- a non-custodial deployment never holds a
+   * signing key at all, and its board must still show whatever wallet the browser
+   * connected.
+   *
+   * Practice Run holdings come from the account's persisted history when signed in
+   * (ADR-0014), or the in-memory session otherwise -- never both, so a Practice Run
+   * opened this session while signed in is not double-counted.
    */
   app.get("/positions", async (req, reply) => {
     if (!requireToken(req, reply)) return;
@@ -547,15 +652,20 @@ export async function buildApp(): Promise<FastifyInstance> {
     // used to read ETH's and value all six against it, which marked a BTC holding at
     // `max(0, ETH_spot - BTC_strike)` -- zero, however deep in the money it really was.
     const prices = await spotPrices().catch(() => ({}) as Record<string, number>);
-    const address = parsedQuery.data.address ?? walletAddress();
+    const userId = await optionalAccountId(req);
+    const linkedWallet = userId ? await getLinkedWallet(userId) : null;
+    const address = parsedQuery.data.address ?? linkedWallet?.address ?? walletAddress();
 
     const [real, resolvedAddress] = address ? await realHoldings(prices, address) : [[], null];
+    const practiceHoldingsList = userId
+      ? await listPracticePositionsAsHoldings(userId, prices)
+      : practiceHoldings(session, prices);
 
     return {
       address: resolvedAddress,
       // The headline price stays ETH's: it labels the tape, not any one holding.
       spotUsd: prices.ETH === undefined ? null : usd(prices.ETH),
-      holdings: [...real, ...practiceHoldings(session, prices)],
+      holdings: [...real, ...practiceHoldingsList],
     };
   });
 
@@ -567,7 +677,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   const forecast = <T>(analyse: (scenario: Awaited<ReturnType<typeof buildScenario>>) => Promise<T>) =>
     async (req: any, reply: any) => {
-      if (!requireToken(req, reply)) return;
+      if (!requireForecastToken(req, reply)) return;
       const parsed = parseForecastQuery((req.query ?? {}) as Record<string, unknown>);
       if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
       try {
@@ -591,7 +701,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    * 503 when the service is down, per ADR-0007. The other Forecast routes keep working.
    */
   app.get("/forecast/indicators", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
-    if (!requireToken(req, reply)) return;
+    if (!requireForecastToken(req, reply)) return;
     const symbol = typeof (req.query as any)?.symbol === "string" ? (req.query as any).symbol.trim() : "";
     if (!symbol) return reply.code(400).send({ error: "symbol query parameter is required" });
     try {
@@ -632,8 +742,8 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.get("/risk-profile", async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const owner = ownerFor(sessionFor(req.headers));
-    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    const owner = await requireAccount(req, reply);
+    if (!owner) return;
     try {
       return { profile: await getRiskProfile(owner) };
     } catch (e) {
@@ -643,8 +753,8 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.put("/risk-profile", async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const owner = ownerFor(sessionFor(req.headers));
-    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    const owner = await requireAccount(req, reply);
+    if (!owner) return;
     const parsed = RiskProfileName.safeParse((req.body as any)?.profile);
     if (!parsed.success) return reply.code(400).send({ error: "profile must be one of conservative, balanced, aggressive" });
     try {
@@ -662,8 +772,8 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.get("/suggestion", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const owner = ownerFor(sessionFor(req.headers));
-    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    const owner = await requireAccount(req, reply);
+    if (!owner) return;
 
     let profile;
     try {
@@ -718,13 +828,13 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   app.post("/decisions", { config: COST_ROUTE_LIMIT }, async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const owner = ownerFor(sessionFor(req.headers));
-    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    const owner = await requireAccount(req, reply);
+    if (!owner) return;
     const parsed = DecisionRequest.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid decision", issues: parsed.error.issues });
     try {
-      // The owner is the Trader's wallet address now, and the browser has no use for it
-      // back -- echoing it would put a 40-hex address on the wire for nothing.
+      // The owner is the Trader's account id now (a UUID), and the browser has no use
+      // for it back -- echoing it would put an id on the wire for nothing.
       const { ownerId: _ownerId, ...row } = await recordDecision(owner, parsed.data);
       return row;
     } catch (e) {
@@ -734,8 +844,8 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.get("/decisions/stats", async (req, reply) => {
     if (!requireToken(req, reply)) return;
-    const owner = ownerFor(sessionFor(req.headers));
-    if (!owner) return reply.code(401).send({ error: "Connect and verify your wallet to use this." });
+    const owner = await requireAccount(req, reply);
+    if (!owner) return;
     const strategyId = typeof (req.query as any)?.strategyId === "string" ? (req.query as any).strategyId : undefined;
     try {
       return await decisionStats(owner, strategyId);
@@ -744,9 +854,56 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
   });
 
-  await app.register(practiceRoutes);
+  await app.register(practiceRoutes, {
+    onOpened: (position: PracticePosition, req: unknown) => {
+      void (async () => {
+        const userId = await optionalAccountId(req);
+        if (!userId) return;
+        await recordPracticePosition(userId, position);
+        await logActivity(userId, "practice", { asset: position.asset, direction: position.direction });
+      })();
+    },
+  });
   await app.register(rfqRoutes);
   await app.register(coverRoutes);
+
+  /**
+   * The signed-in account's saved settings and linked wallet, if any -- what
+   * `AccountControl` reads to render itself, and what a fresh signup reads back as
+   * all-defaults.
+   */
+  app.get("/account", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const userId = await requireAccount(req, reply);
+    if (!userId) return;
+
+    const [settings, linkedWallet] = await Promise.all([getAccountSettings(userId), getLinkedWallet(userId)]);
+    return { settings, linkedWallet };
+  });
+
+  app.post("/account/settings", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const userId = await requireAccount(req, reply);
+    if (!userId) return;
+    const parsed = AccountSettingsRequest.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid settings", issues: parsed.error.issues });
+
+    await saveAccountSettings(userId, parsed.data);
+    if (parsed.data.riskBudgetUsdc !== undefined) {
+      void logActivity(userId, "budget_changed", { riskBudgetUsdc: parsed.data.riskBudgetUsdc });
+    }
+    const settings = await getAccountSettings(userId);
+    return { settings };
+  });
+
+  app.get("/account/activity", async (req, reply) => {
+    if (!requireToken(req, reply)) return;
+    const userId = await requireAccount(req, reply);
+    if (!userId) return;
+
+    const items = await listActivity(userId);
+    return { items };
+  });
 
   return app;
 }

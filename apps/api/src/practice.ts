@@ -104,7 +104,7 @@ export function practiceHoldings(session: Session, prices: Record<string, number
 }
 
 /** What the contract settles at if the market stops here. Never below zero -- we only buy. */
-function intrinsicValue(p: PracticePosition, spot: number): number {
+export function intrinsicValue(p: PracticePosition, spot: number): number {
   const perContract = p.isCall ? Math.max(0, spot - p.strike.value) : Math.max(0, p.strike.value - spot);
   return Number((perContract * p.contracts.value).toFixed(2));
 }
@@ -119,8 +119,17 @@ function intrinsicValue(p: PracticePosition, spot: number): number {
  * The proposal is consumed, exactly as /fill consumes it. A Trader who practises and
  * then wants the real thing asks for a fresh quote, which is the correct behaviour
  * anyway: the one they practised on is seconds old and the book has moved.
+ *
+ * `opts.onOpened`, if given, is called with the newly-opened position after it succeeds
+ * -- and ONLY then, so a failed open never fires it. Deliberately just a function type,
+ * not an import: this file must never import anything that could reach a signer, and a
+ * caller-supplied callback lets `app.ts` (which already imports the account/Supabase
+ * layer) do account-aware persistence without this module knowing accounts exist.
  */
-export async function practiceRoutes(app: FastifyInstance): Promise<void> {
+export async function practiceRoutes(
+  app: FastifyInstance,
+  opts?: { onOpened?: (position: PracticePosition, req: unknown) => void }
+): Promise<void> {
   app.post("/practice", async (req, reply) => {
     const parsedBody = ProposalIdBody.safeParse(req.body);
     if (!parsedBody.success) return reply.code(400).send({ error: "proposalId required" });
@@ -131,8 +140,9 @@ export async function practiceRoutes(app: FastifyInstance): Promise<void> {
     if (!found)
       return reply.code(410).send({ error: "That quote has expired. Prices move -- ask for a fresh one." });
 
-    open(session, found.proposal);
+    const position = open(session, found.proposal);
     session.proposals.delete(proposalId);
+    opts?.onOpened?.(position, req);
 
     // No Risk Budget is consumed: nothing was risked. The ceiling exists to bound real
     // losses, and spending it on practice would stop a Trader learning before trading.

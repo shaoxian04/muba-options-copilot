@@ -19,6 +19,7 @@ import type { CoverQuoteResult } from "@copilot/shared";
 import { usd, contracts, percent, movePercent, ratio, days, moment } from "../format.js";
 import { readLoan } from "./loan.js";
 import { assess, PREMIUM_CAP_USDC, TENOR_DAYS } from "./liquidation.js";
+import { safeErrorResponse } from "../errors.js";
 // The Lapse is the same moment `POST /rfq` will actually ask a maker for, so it is
 // computed in one place rather than twice. A quote that promises a different expiry from
 // the one the request carries is a lie nobody would notice.
@@ -44,19 +45,28 @@ export async function coverRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed.success)
       return reply.code(400).send({ error: "An address is required", issues: parsed.error.issues });
 
-    const read = await readLoan(parsed.data.address);
+    let read: Awaited<ReturnType<typeof readLoan>>;
+    try {
+      read = await readLoan(parsed.data.address);
+    } catch (e) {
+      // Anything here may be a raw ethers/RPC error -- THETANUTS_RPC_URL carries the
+      // provider API key as a URL path segment, and that key must never reach a
+      // response body. See errors.ts.
+      return reply.code(502).send(safeErrorResponse(req.log, e, "Could not read that Loan. Try again."));
+    }
     if (!read.ok) {
       // 200, not an error status. A refusal is an ANSWER -- the Borrower asked a question
       // and got a true one. The same reasoning as `rfq.ts`, which refuses rather than
       // pretending, and `NO_ORDER` on /propose, which is a market condition and not a fault.
       const body: CoverQuoteResult = { status: "REFUSED", refusal: read.refusal };
-      return reply.send(body);
+      // Fastify serializes a plain object as JSON (not HTML); no reflected-HTML path exists here.
+      return reply.send(body); // nosemgrep: javascript.express.security.audit.xss.direct-response-write.direct-response-write
     }
 
     const result = assess(read.loan);
     if (!result.ok) {
       const body: CoverQuoteResult = { status: "REFUSED", refusal: result.refusal };
-      return reply.send(body);
+      return reply.send(body); // nosemgrep: javascript.express.security.audit.xss.direct-response-write.direct-response-write
     }
 
     const { loan } = read;
@@ -92,6 +102,6 @@ export async function coverRoutes(app: FastifyInstance): Promise<void> {
       },
     };
 
-    return reply.send(body);
+    return reply.send(body); // nosemgrep: javascript.express.security.audit.xss.direct-response-write.direct-response-write
   });
 }
