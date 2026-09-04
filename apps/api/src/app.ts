@@ -19,7 +19,7 @@ import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
 import { ProposeRequest, UnderlyingSymbol, MAX_HORIZON_DAYS, MAX_RISK_BUDGET_USDC, type ProposeResult, RiskProfileName, DecisionRequest } from "@copilot/shared";
 import { canSign, walletAddress, chain } from "./thetanuts/client.js";
-import { buyableOrders, daysToExpiry, orderIdentity, PUT } from "./thetanuts/orders.js";
+import { buyableOrders, daysToExpiry, orderIdentity, PUT, UpstreamShapeChanged } from "./thetanuts/orders.js";
 import { impliedMovePct } from "./thetanuts/implied-move.js";
 import { spotPrice, spotPrices } from "./thetanuts/market.js";
 import { UnknownUnderlying } from "./thetanuts/underlyings.js";
@@ -209,6 +209,29 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.addHook("onSend", async (_req, reply, payload) => {
     reply.header("X-Content-Type-Options", "nosniff");
     return payload;
+  });
+
+  /**
+   * An upstream contract change is an outage, and must read as one.
+   *
+   * Handled centrally rather than per route because every route that touches the book --
+   * /deck, /depth, /book, /markets, /propose, the Cover quote -- inherits the same
+   * failure, and the whole point of `UpstreamShapeChanged` is that it must never be
+   * mistaken for a quiet market. 502 (this backend's upstream is wrong) rather than 500
+   * (this backend is wrong), and logged at error level so it is alertable.
+   *
+   * Everything else keeps Fastify's default handling.
+   */
+  app.setErrorHandler((error, req, reply) => {
+    if (error instanceof UpstreamShapeChanged) {
+      req.log.error({ err: error }, "Upstream order book shape changed");
+      return reply.code(502).send({ error: error.message });
+    }
+    req.log.error({ err: error }, "Unhandled error");
+    const status = typeof (error as { statusCode?: unknown }).statusCode === "number"
+      ? (error as { statusCode: number }).statusCode
+      : 500;
+    return reply.code(status).send(safeErrorResponse(req.log, error, "Something went wrong."));
   });
 
   app.get("/health", async () => ({ ok: true, canSign: canSign() }));

@@ -54,6 +54,68 @@ export const isOn = (o: OrderWithSignature, underlying: Underlying): boolean =>
   feedOf(o) === underlying.feed;
 
 /**
+ * The indexer answered in a shape this code cannot read.
+ *
+ * NOT a market condition, and deliberately not silent. Every field the book depends on
+ * lives in `rawApiData`, which the SDK types as unknown -- so a renamed or removed field
+ * does not fail to compile and does not throw. It simply makes `feedOf` return "",
+ * `underlyingOf` return undefined, and `passesTheDoor` false for every Order, at which
+ * point `buyableOrders` hands back an empty array and the Trader reads "No maker is
+ * quoting this right now."
+ *
+ * That message is true of a quiet market and catastrophically false of a broken
+ * integration, and nothing distinguished them. This does.
+ */
+export class UpstreamShapeChanged extends Error {
+  constructor(field: string, count: number) {
+    super(
+      `The order book came back in an unreadable shape: not one of ${count} Orders carried a usable ` +
+        `\`${field}\`. This is an upstream contract change, not an empty market -- the book is being ` +
+        `refused rather than reported as quiet.`
+    );
+    this.name = "UpstreamShapeChanged";
+  }
+}
+
+/**
+ * How many Orders must be in hand before a total absence counts as evidence.
+ *
+ * This check is a heuristic for an outage, and a heuristic needs a sample. One Order with
+ * no price feed is one malformed record -- which genuinely happens, and which the door has
+ * always simply excluded. Forty with no price feed is a renamed field. Below this many,
+ * the honest answer is that we cannot tell, so the old behaviour stands and the Orders are
+ * filtered out individually.
+ *
+ * Five rather than a larger number because the live book runs to dozens of Orders across
+ * six Underlyings: real drift empties all of them at once and clears this easily, while a
+ * market thin enough to sit under it is nearly empty regardless.
+ */
+const MIN_ORDERS_FOR_DRIFT = 5;
+
+/**
+ * Fail loudly when the whole book has become unreadable, rather than quietly empty.
+ *
+ * The line drawn here is between ONE odd Order and a changed contract. A single record
+ * missing a field is skipped exactly as before -- one malformed Order must never cost a
+ * Trader the book. But "we received forty Orders and not one carried a readable price
+ * feed" has no innocent reading.
+ *
+ * Only `priceFeed` is checked. It is the field the door itself depends on, and its absence
+ * is unambiguous. `greeks.iv` is deliberately NOT checked despite failing the same way:
+ * `impliedVol` documents it as present only "if the indexer supplied it", the Deck already
+ * handles its absence by excluding the Card, and a book quoting no volatility is a real
+ * market state rather than a broken one.
+ *
+ * Note this checks READABILITY, not the allowlist: an Order on a feed the registry does
+ * not carry is a real Order we choose to exclude (ADR-0010), and must not be mistaken for
+ * drift.
+ */
+function assertReadableShape(all: OrderWithSignature[]): void {
+  if (all.length < MIN_ORDERS_FOR_DRIFT) return;
+  if (!all.some((o) => feedOf(o) !== "")) throw new UpstreamShapeChanged("priceFeed", all.length);
+}
+
+/**
  * Every Order on one Underlying a Trader may safely buy right now. The only entry point
  * to the book.
  *
@@ -65,10 +127,14 @@ export const isOn = (o: OrderWithSignature, underlying: Underlying): boolean =>
  *   - the registry allowlist, so an Order we cannot describe is never described;
  *   - ADR-0002, so the Trader is never the seller;
  *   - plain USDC collateral, so the fill does not fail on a balance they do not hold.
+ *
+ * The shape check runs BEFORE them, because every one of those filters reads a field that
+ * may have stopped existing, and all three fail closed when it has.
  */
 export async function buyableOrders(symbol: string): Promise<OrderWithSignature[]> {
   const underlying = requireUnderlying(symbol);
   const all = await getClient().api.fetchOrders();
+  assertReadableShape(all);
   return all.filter((o) => isOn(o, underlying) && passesTheDoor(o));
 }
 
@@ -93,6 +159,7 @@ const passesTheDoor = (o: OrderWithSignature): boolean =>
  */
 export async function buyableEverywhere(): Promise<OrderWithSignature[]> {
   const all = await getClient().api.fetchOrders();
+  assertReadableShape(all);
   return all.filter(passesTheDoor);
 }
 
