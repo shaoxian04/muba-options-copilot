@@ -16,6 +16,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 
 vi.mock("../thetanuts/client.js", async () => await import("./stub-client.js"));
+vi.mock("../supabase.js", async () => await import("./stub-supabase.js"));
 vi.mock("../insurance/loan.js", async () => await import("./stub-loan.js"));
 
 // The Risk Profile / Suggestion / Decision routes reach Supabase and the agents
@@ -42,6 +43,7 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
 import { resetStub, state, chain, TRADER_ADDRESS, proveWallet } from "./stub-client.js";
+import { registerUser } from "./stub-supabase.js";
 import { resetStub as resetLoanStub, state as loanState } from "./stub-loan.js";
 import { NOW, DEFAULT_BOOK, makeOrder, SPOT, PRICES } from "./fixtures.js";
 import { getRiskProfile, setRiskProfile } from "../supabase/riskProfiles.js";
@@ -62,6 +64,9 @@ const WRITE = process.env.WRITE_FIXTURES === "1";
 
 /** The session every fixture is generated under, so its cardRefs resolve against each other. */
 const SESSION = "fixtures";
+
+/** The one signed-in account every fixture needing one (ADR-0014) is generated under. */
+const ACCOUNT_TOKEN = "fixture-account-token";
 
 /**
  * Every fixture, named up front.
@@ -94,6 +99,7 @@ const NAMES = [
   "veto",
   "no-order",
   "refusal",
+  "account",
   // --- Liquidation Cover surface -----------------------------------------------
   // Four QUOTE fixtures: the states the Cover surface has to render.
   "cover-healthy",
@@ -146,35 +152,47 @@ function stabilise(value: unknown): unknown {
 let app: FastifyInstance;
 const generated: Record<string, unknown> = {};
 
-const get = async (url: string, session = SESSION) =>
-  (await app.inject({ method: "GET", url, headers: { "x-session-id": session } })).json();
+const get = async (url: string, session = SESSION, accountToken?: string) =>
+  (
+    await app.inject({
+      method: "GET",
+      url,
+      headers: { "x-session-id": session, ...(accountToken ? { "x-account-token": accountToken } : {}) },
+    })
+  ).json();
 
 // `payload` is typed rather than left as `unknown`, which sends TypeScript down a
 // different `inject` overload and loses the response type entirely.
-const post = async (url: string, payload: Record<string, unknown>, session = SESSION) =>
-  await app.inject({ method: "POST", url, headers: { "x-session-id": session }, payload });
+const post = async (url: string, payload: Record<string, unknown>, session = SESSION, accountToken?: string) =>
+  await app.inject({
+    method: "POST",
+    url,
+    headers: { "x-session-id": session, ...(accountToken ? { "x-account-token": accountToken } : {}) },
+    payload,
+  });
 
 const DOWN_1 = "/deck?asset=ETH&direction=DOWN&horizonDays=1&sizeUsdc=2";
 const intent = { underlying: "ETH", direction: "DOWN", sizeUsdc: 2, horizonDays: 1 } as const;
 
-// The Risk Profile / Suggestion / Decision routes now key on the session's own proven
-// wallet (ADR-0012), not a caller-named header -- so these fixtures need a session that
-// has actually been through /auth/challenge + /auth/verify, same as SESSION above once
-// proveWallet(app, SESSION) runs. OWNER is what that verification resolves to: the
-// TRADER_ADDRESS stub-client.ts's proveWallet proves, lowercased.
+// The Risk Profile / Suggestion / Decision routes now key on the signed-in account
+// (ADR-0017), not a wallet -- so these three helpers below just need an account token,
+// no wallet proof. OWNER is still used purely to compose the mocked response bodies
+// below (riskProfiles.js/decisions.js are mocked at the module boundary in this file,
+// so nothing here actually reads it off a session).
 const OWNER = TRADER_ADDRESS.toLowerCase();
 
 const getAsOwner = async (url: string) =>
-  (await app.inject({ method: "GET", url, headers: { "x-session-id": SESSION } })).json();
+  (await app.inject({ method: "GET", url, headers: { "x-session-id": SESSION, "x-account-token": ACCOUNT_TOKEN } })).json();
 
 const putAsOwner = async (url: string, payload: Record<string, unknown>) =>
-  (await app.inject({ method: "PUT", url, headers: { "x-session-id": SESSION }, payload })).json();
+  (await app.inject({ method: "PUT", url, headers: { "x-session-id": SESSION, "x-account-token": ACCOUNT_TOKEN }, payload })).json();
 
 const postAsOwner = async (url: string, payload: Record<string, unknown>) =>
-  (await app.inject({ method: "POST", url, headers: { "x-session-id": SESSION }, payload })).json();
+  (await app.inject({ method: "POST", url, headers: { "x-session-id": SESSION, "x-account-token": ACCOUNT_TOKEN }, payload })).json();
 
 beforeAll(async () => {
   resetStub();
+  registerUser(ACCOUNT_TOKEN, { id: "cccccccc-0000-4000-8000-000000000003", email: "fixture@example.com" });
   app = await buildApp();
 
   // --- the ordinary surface -------------------------------------------------
@@ -222,27 +240,32 @@ beforeAll(async () => {
   generated["practice"] = (await post("/practice", { proposalId: forPractice.proposalId })).json();
   generated["positions-after-practice"] = await get("/positions");
 
-  // Proving wallet ownership -- the sign-in challenge (ADR-0012). The nonce is a fresh
-  // random value every run (that is the point of it), so it is normalized to a fixed
-  // placeholder here rather than through the shared `stabilise` below, which only
-  // replaces a whole matching field value, not a value embedded inside a sentence.
-  const challenge = (await post("/auth/challenge", { walletAddress: TRADER_ADDRESS })).json() as { message: string };
+  // Proving wallet ownership -- the sign-in challenge (ADR-0012), which now also
+  // requires a signed-in account (ADR-0014). The nonce is a fresh random value every
+  // run (that is the point of it), so it is normalized to a fixed placeholder here
+  // rather than through the shared `stabilise` below, which only replaces a whole
+  // matching field value, not a value embedded inside a sentence.
+  const challenge = (await post("/auth/challenge", { walletAddress: TRADER_ADDRESS }, SESSION, ACCOUNT_TOKEN)).json() as { message: string };
   generated["auth-challenge"] = {
     message: challenge.message.replace(/Nonce: [0-9a-f]{32}/, "Nonce: stable-nonce-for-fixtures"),
   };
-  await proveWallet(app, SESSION);
+  await proveWallet(app, SESSION, TRADER_ADDRESS, ACCOUNT_TOKEN);
 
-  // A prepared fill, and settling it -- the non-custodial, chain-verified contract
-  // (ADR-0011, ADR-0012).
+  // A prepared fill, and settling it -- the non-custodial, chain-verified, account-gated
+  // contract (ADR-0011, ADR-0012, ADR-0014).
   const forFill = (await post("/propose", intent)).json() as { proposalId: string };
   generated["fill-prepare"] = (
-    await post("/fill/prepare", { proposalId: forFill.proposalId, walletAddress: TRADER_ADDRESS })
+    await post("/fill/prepare", { proposalId: forFill.proposalId, walletAddress: TRADER_ADDRESS }, SESSION, ACCOUNT_TOKEN)
   ).json();
   state.receipt = { status: 1, to: chain.contracts.optionBook };
   generated["fill-settle"] = (
-    await post("/fill/settle", { proposalId: forFill.proposalId, txHash: "0xFIXTURETX" })
+    await post("/fill/settle", { proposalId: forFill.proposalId, txHash: "0xFIXTURETX" }, SESSION, ACCOUNT_TOKEN)
   ).json();
   state.receipt = null;
+
+  // The signed-in account's own view of itself -- settings plus the wallet just linked
+  // by proveWallet() above.
+  generated["account"] = await get("/account", SESSION, ACCOUNT_TOKEN);
 
   // --- the halt states ------------------------------------------------------
   process.env.COPILOT_REVIEW_FIXTURE = "veto";

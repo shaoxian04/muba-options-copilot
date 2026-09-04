@@ -12,6 +12,7 @@
 import { describe, it, expect, beforeEach, vi, afterAll } from "vitest";
 
 vi.mock("../thetanuts/client.js", async () => await import("./stub-client.js"));
+vi.mock("../supabase.js", async () => await import("./stub-supabase.js"));
 
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -19,6 +20,8 @@ import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
 import { resetStub, spies, state, TRADER_ADDRESS, proveWallet } from "./stub-client.js";
+import { resetSupabaseStub, registerUser, state as supabaseState } from "./stub-supabase.js";
+import { getAccountSettings, listActivity } from "../accountStore.js";
 import { NOW, makePosition } from "./fixtures.js";
 import { DEFAULT_BUDGET } from "../sessions.js";
 
@@ -30,8 +33,12 @@ let app: FastifyInstance;
 let sessionSeq = 0;
 const freshSession = () => `practice-${++sessionSeq}`;
 
+const ACCOUNT_TOKEN = "acct-token-1";
+
 beforeEach(async () => {
   resetStub();
+  resetSupabaseStub();
+  registerUser(ACCOUNT_TOKEN, { id: "user-1", email: "trader@example.com" });
   app = await buildApp();
 });
 
@@ -169,13 +176,13 @@ describe("/fill/prepare has no practice flag", () => {
   it("still prepares a real fill when handed one", async () => {
     state.canSign = true;
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     const proposalId = await proposalIn(session);
 
     const res = await app.inject({
       method: "POST",
       url: "/fill/prepare",
-      headers: { "x-session-id": session },
+      headers: { "x-session-id": session, "x-account-token": ACCOUNT_TOKEN },
       payload: { proposalId, walletAddress: TRADER_ADDRESS, practice: true, dryRun: true, simulate: true },
     });
 
@@ -187,16 +194,52 @@ describe("/fill/prepare has no practice flag", () => {
   it("opens no practice holding when handed one", async () => {
     state.canSign = true;
     const session = freshSession();
-    await proveWallet(app, session);
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
     await app.inject({
       method: "POST",
       url: "/fill/prepare",
-      headers: { "x-session-id": session },
+      headers: { "x-session-id": session, "x-account-token": ACCOUNT_TOKEN },
       payload: { proposalId: await proposalIn(session), walletAddress: TRADER_ADDRESS, practice: true },
     });
 
     const board = (await positions(session)).json();
     expect(board.holdings.filter((h: any) => h.kind === "PRACTICE")).toEqual([]);
+  });
+});
+
+describe("the onOpened callback", () => {
+  it("is called with the position once a Practice Run opens", async () => {
+    const onOpened = vi.fn();
+    const Fastify = (await import("fastify")).default;
+    const { practiceRoutes } = await import("../practice.js");
+    const appWithCallback = Fastify();
+    await appWithCallback.register(practiceRoutes, { onOpened });
+
+    const session = freshSession();
+    const proposalId = await proposalIn(session);
+
+    await appWithCallback.inject({
+      method: "POST", url: "/practice", headers: { "x-session-id": session }, payload: { proposalId },
+    });
+
+    expect(onOpened).toHaveBeenCalledTimes(1);
+    const [position] = onOpened.mock.calls[0]!;
+    expect(position.asset).toBeDefined();
+  });
+
+  it("is never called when opening fails (an expired proposal)", async () => {
+    const onOpened = vi.fn();
+    const Fastify = (await import("fastify")).default;
+    const { practiceRoutes } = await import("../practice.js");
+    const appWithCallback = Fastify();
+    await appWithCallback.register(practiceRoutes, { onOpened });
+
+    await appWithCallback.inject({
+      method: "POST", url: "/practice", headers: { "x-session-id": freshSession() },
+      payload: { proposalId: "00000000-0000-0000-0000-000000000000" },
+    });
+
+    expect(onOpened).not.toHaveBeenCalled();
   });
 });
 
@@ -311,5 +354,97 @@ describe("GET /positions", () => {
     state.positions = [];
     const second = (await positions(session)).json();
     expect(second.holdings).toEqual([]);
+  });
+});
+
+describe("account-aware GET /session and POST /session/budget", () => {
+  it("seeds the Risk Budget from the account's saved setting on first read", async () => {
+    supabaseState.accountSettings.set("user-1", { risk_budget_usdc: 25, default_asset: null, default_direction: null });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/session",
+      headers: { "x-session-id": freshSession(), "x-account-token": ACCOUNT_TOKEN },
+    });
+    expect(res.json().riskBudgetUsdc).toBe(25);
+  });
+
+  it("a budget change while signed in persists to the account, and logs it", async () => {
+    const session = freshSession();
+
+    await app.inject({
+      method: "POST",
+      url: "/session/budget",
+      headers: { "x-session-id": session, "x-account-token": ACCOUNT_TOKEN },
+      payload: { riskBudgetUsdc: 40 },
+    });
+
+    expect((await getAccountSettings("user-1")).riskBudgetUsdc).toBe(40);
+    const activity = await listActivity("user-1");
+    expect(activity.some((a) => a.actionType === "budget_changed")).toBe(true);
+  });
+
+  it("an anonymous budget change does not touch any account", async () => {
+    await app.inject({
+      method: "POST",
+      url: "/session/budget",
+      headers: { "x-session-id": freshSession() },
+      payload: { riskBudgetUsdc: 40 },
+    });
+    expect(supabaseState.accountSettings.size).toBe(0);
+  });
+
+  it("reports the session's proven wallet, so a refresh can skip re-verifying it", async () => {
+    const session = freshSession();
+    await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/session",
+      headers: { "x-session-id": session, "x-account-token": ACCOUNT_TOKEN },
+    });
+    expect(res.json().verifiedWallet).toBe(TRADER_ADDRESS);
+  });
+
+  it("reports verifiedWallet: null before any wallet has been proven this session", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/session",
+      headers: { "x-session-id": freshSession(), "x-account-token": ACCOUNT_TOKEN },
+    });
+    expect(res.json().verifiedWallet).toBeNull();
+  });
+});
+
+describe("account-aware GET /positions and Practice Run persistence", () => {
+  it("a signed-in Practice Run is persisted and shows up on the board", async () => {
+    const session = freshSession();
+    const proposalId = await proposalIn(session);
+
+    await app.inject({
+      method: "POST",
+      url: "/practice",
+      headers: { "x-session-id": session, "x-account-token": ACCOUNT_TOKEN },
+      payload: { proposalId },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/positions",
+      headers: { "x-session-id": freshSession(), "x-account-token": ACCOUNT_TOKEN },
+    });
+    const holdings = res.json().holdings;
+    expect(holdings.some((h: any) => h.kind === "PRACTICE")).toBe(true);
+  });
+
+  it("falls back to the linked wallet's address when the browser reports none", async () => {
+    await proveWallet(app, freshSession(), TRADER_ADDRESS, ACCOUNT_TOKEN);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/positions",
+      headers: { "x-session-id": freshSession(), "x-account-token": ACCOUNT_TOKEN },
+    });
+    expect(res.json().address).toBe(TRADER_ADDRESS);
   });
 });

@@ -15,17 +15,18 @@
  * `ConfirmModal`, which holds the only Confirm in the product -- so the Deck section
  * below is the one place left that can put a Trader in front of it.
  */
+import { AccountControl } from "../components/AccountControl";
 import { Board } from "../components/Board";
-import { Chat, type Seed } from "../components/Chat";
+import { Chat } from "../components/Chat";
 import { Chips } from "../components/Chips";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { DeckRow } from "../components/DeckRow";
 import { DepthChart } from "../components/DepthChart";
 import { EmptyDeck, VetoScreen } from "../components/Halt";
-import { PayoffStrip } from "../components/PayoffStrip";
 import { Rail } from "../components/Rail";
 import { RfqModal } from "../components/RfqModal";
 import { Tape } from "../components/Tape";
+import { WalletPicker } from "../components/WalletPicker";
 import { agentGate, useNow, useSurface } from "../lib/surface";
 
 export default function Page() {
@@ -41,40 +42,37 @@ export default function Page() {
    */
   const horizonLabel = s.deck?.expiries.find((e) => e.horizonDays === s.horizonDays)?.label;
 
-  /**
-   * The seed prompts, naming whatever the rail has selected.
-   *
-   * They FOLLOW the picker; they do not drive it. Pressing one asks for a Deck on the
-   * Underlying already selected -- it never switches Underlying, because reading an
-   * asset out of a sentence is the Trade Agent's job and that service does not exist
-   * yet (ADR-0007). Until it does, the rail is the only thing that moves the selection.
-   */
-  const seeds: Seed[] = [
-    {
-      said: `I think ${s.asset} drops before Friday`,
-      // No `underlying` in the intent, deliberately: a seed follows the picker, so it
-      // deals whatever the rail already has selected and never moves it.
-      run: () => void s.deal(`I think ${s.asset} drops before Friday`, { direction: "DOWN" }),
-    },
-    {
-      said: "What if it goes up instead?",
-      run: () => void s.deal("What if it goes up instead?", { direction: "UP" }),
-    },
-    {
-      said: "What is this, in one line?",
-      run: () =>
-        s.say(
-          `You pay a little now. If ${s.asset} finishes past the number on the card, you get paid the ` +
-            "difference. If it does not, you lose what you paid and not a cent more."
-        ),
-    },
-  ];
-
   return (
     <main className="app">
-      <Chat log={s.log} seeds={seeds} busy={s.busy} deal={s.deal} walletVerified={s.walletVerified} />
+      <Chat
+        log={s.log}
+        busy={s.busy}
+        submitTradeMessage={s.submitTradeMessage}
+        deal={s.deal}
+        pick={s.pick}
+        signedIn={!!s.account}
+      />
 
       <div className="rig">
+        <AccountControl
+          account={s.account}
+          onSignOut={s.signOut}
+          walletAddress={s.walletAddress}
+          connecting={s.walletConnecting}
+          verified={s.walletVerified}
+          verifying={s.walletVerifying}
+          error={s.walletError}
+          onOpenWalletPicker={s.onOpenWalletPicker}
+          onVerify={() => void s.verifyWallet()}
+          onDisconnectWallet={s.onDisconnectWallet}
+        />
+        <WalletPicker
+          open={s.walletPickerOpen}
+          wallets={s.availableWallets}
+          recentWallet={s.recentWallet}
+          onPick={(walletId) => void s.onPickWallet(walletId)}
+          onClose={s.onCloseWalletPicker}
+        />
         <Rail markets={s.markets} asset={s.asset} loading={s.marketsLoading} onPick={s.setAsset} />
         <Tape deck={s.deck} now={now} />
 
@@ -214,29 +212,6 @@ export default function Page() {
               </section>
 
               {/*
-                Issue #32: variant E drops the payoff curve, and this ticket is where
-                that gets a decision rather than staying implicit. It survives -- it is
-                NOT a Forecast under ADR-0005 (`PayoffStrip.tsx` says why: it is
-                arithmetic on the contract the Trader already picked, not an opinion
-                about where the Underlying goes, the same footing Implied Move and
-                Implied Chance already stand on) -- and it stays HERE, in the main body,
-                rather than moving inside `ConfirmModal`. Two reasons: it already reads
-                off `proposal`, which `deal()` sets without ever opening the confirmation
-                (the seed prompts on the left deal a Card straight from the chat), so a
-                Trader who asked the Copilot for a trade and never clicked a Card would
-                lose the curve entirely if it only existed inside the modal; and issues
-                #11-#14 already built a keyboard-operable crosshair against this exact
-                placement (`journeys.spec.ts`, "draws the payoff curve…"), which moving
-                it would break for no gain -- a Forecast is exactly what ADR-0005 keeps
-                away from a confirmation, and the curve was never one.
-              */}
-              {proposal ? (
-                <section className="sect" aria-label="What this pays">
-                  <PayoffStrip proposal={proposal} spot={s.deck?.spotUsd ?? null} />
-                </section>
-              ) : null}
-
-              {/*
                 Issue #32: the board reads across all SIX Underlyings, not scoped to
                 whichever one the rail has selected. This matches `GET /positions`
                 itself (`apps/api/src/app.ts`) -- it takes no `asset` parameter and
@@ -270,17 +245,10 @@ export default function Page() {
               receipt={s.receipt}
               practiceDone={s.practiceDone}
               gates={agentGate(s.result)}
-              walletAddress={s.walletAddress}
-              walletConnecting={s.walletConnecting}
-              walletVerified={s.walletVerified}
-              walletVerifying={s.walletVerifying}
-              walletError={s.walletError}
               onResize={(usdc) => void s.setSize(usdc)}
               onConfirm={() => void s.confirm()}
               onPractice={() => void s.runPractice()}
               onClose={s.closeConfirm}
-              onConnectWallet={() => void s.connectWallet()}
-              onVerifyWallet={() => void s.verifyWallet()}
             />
           </>
         )}
@@ -310,7 +278,7 @@ export default function Page() {
             verified: s.walletVerified,
             verifying: s.walletVerifying,
             error: s.walletError,
-            onConnect: () => void s.connectWallet(),
+            onConnect: () => s.onOpenWalletPicker(),
             onVerify: () => void s.verifyWallet(),
           }}
           onOffsetCommit={s.setRfqOffset}

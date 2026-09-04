@@ -23,6 +23,11 @@ Trading needs nothing else. The Forecast routes additionally need at least one o
 each falling through when its key is absent or its call fails. Without any of them the
 rest of the app runs exactly as before; only `/forecast/*` refuses.
 
+The four `/forecast/*` GET routes (`news`, `price`, `risk-benefit`, `indicators`) also need
+`COPILOT_API_TOKEN` set — unlike every other route in this app, they refuse rather than
+running unauthenticated, since a plain GET is forgeable cross-site even without a matching
+CORS origin (see the API section below).
+
 The Risk Profile / Suggestion / Decision routes need `SUPABASE_URL` and
 `SUPABASE_SERVICE_ROLE_KEY` — already present, empty, in `.env.example`. Without them those
 five routes 502. The schema for the two tables they use (`risk_profiles`, `decisions`) lives
@@ -79,7 +84,10 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 | `POST /auth/verify` | no | verifies that signature and marks the session's wallet proven |
 | `POST /fill/prepare` | no | reserves Risk Budget against a proposalId from `/propose` and returns the unsigned transaction(s) the Trader's own **proven** wallet must send |
 | `POST /fill/settle` | no | looks up the transaction's real result on-chain and finalizes or releases the reservation accordingly (ADR-0012) |
-| `GET /positions` | no | the board: holdings for whichever wallet address the browser reports (falling back to the operator's configured wallet), plus this session's Practice Runs, each labelled |
+| `GET /positions` | no | the board: holdings for whichever wallet address the browser reports (falling back to the operator's configured wallet, or the account's own linked wallet when signed in), plus this session's Practice Runs, each labelled |
+| `GET /account` | no | the signed-in account's saved settings and linked wallet, if any (ADR-0014) |
+| `POST /account/settings` | no | save a partial Risk Budget / default-asset / default-direction update |
+| `GET /account/activity` | no | a page of the account's own activity log |
 | `POST /rfq` | no | opens a sealed-bid request: a strike/tenor/size the book does not offer (`kind: "TRADER"`) or a Loan to cover (`kind: "COVER"`, an address and nothing else). Holds the Reserve Price against the Risk Budget and returns the one unsigned transaction the requester's own **proven** wallet must send. A `COVER` request for an uncoverable Loan answers with that Loan's own refusal instead |
 | `POST /rfq/confirm` | no | looks up the opening transaction's real receipt, reads the quotation id the chain assigned, and releases the reservation if it never opened (ADR-0012) |
 | `GET /rfq/:requestId` | no | the wait: which phase, how many makers have answered, and the premium once one has. Never a maker's identity, and never a premium before an Offer exists |
@@ -90,11 +98,11 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 | `GET /forecast/news` | no | simulated-headline sentiment for `?symbol=&horizon=`. Opinion, quarantined from the trade flow (ADR-0005) |
 | `GET /forecast/price` | no | a price prediction grounded in real market data. Opinion, never a trade input |
 | `GET /forecast/risk-benefit` | no | the risk/benefit reading, with a runtime guardrail against Max Loss phrasing |
-| `GET /risk-profile` | no | the caller's saved Risk Profile, or `null` if none is set yet. Needs a verified wallet |
-| `PUT /risk-profile` | no | saves conservative/balanced/aggressive for the caller. Needs a verified wallet |
-| `GET /suggestion` | no | an ETH Suggestion from the Strategy Agent for the caller's saved profile. Needs a verified wallet; `null` fields if no profile is saved yet |
-| `POST /decisions` | no | records ACCEPTED/DISMISSED for a Suggestion the caller was shown. Needs a verified wallet |
-| `GET /decisions/stats` | no | per-strategy accept/dismiss counts for the caller, optionally `?strategyId=`. Needs a verified wallet |
+| `GET /risk-profile` | no | the caller's saved Risk Profile, or `null` if none is set yet. Needs a signed-in account |
+| `PUT /risk-profile` | no | saves conservative/balanced/aggressive for the caller. Needs a signed-in account |
+| `GET /suggestion` | no | an ETH Suggestion from the Strategy Agent for the caller's saved profile. Needs a signed-in account; `null` fields if no profile is saved yet |
+| `POST /decisions` | no | records ACCEPTED/DISMISSED for a Suggestion the caller was shown. Needs a signed-in account |
+| `GET /decisions/stats` | no | per-strategy accept/dismiss counts for the caller, optionally `?strategyId=`. Needs a signed-in account |
 
 `/propose` is what fills the confirmation card; `/fill/prepare` then `/fill/settle` are what
 Confirm does — the Trader's own connected wallet signs and submits the actual transaction
@@ -105,6 +113,14 @@ owns — that proof comes from `/auth/challenge` and `/auth/verify`, a signed me
 than a transaction. And `/fill/settle` no longer trusts the browser's own report of whether
 a fill worked: given a `txHash`, it looks up that transaction's real receipt on-chain and
 decides success or failure from that alone (ADR-0012).
+
+`/auth/challenge`, `/auth/verify`, and `/fill/prepare` also require a signed-in account
+now, on top of everything above -- a valid `x-account-token` (a Supabase Auth session,
+verified server-side), refused with 401 otherwise (ADR-0014). Deck browsing and Practice
+Run need neither an account nor a wallet. A successful `/auth/verify` call, when signed in,
+also links that wallet to the account (one wallet per account, overwritten on relink); the
+Risk Budget ceiling, Practice Run history, and an activity log persist per account through
+`GET /account`, `POST /account/settings`, and `GET /account/activity`.
 
 The `/rfq` routes are the other money path, and they are a different shape (ADR-0017). A
 Fill is one act against a price that already exists; an RFQ opens a sealed-bid auction,
@@ -166,24 +182,39 @@ regardless of the token, since they cost real Thetanuts/AI API usage even though
 move funds. Do not bind it to `0.0.0.0` on shared WiFi -- anyone on the network could then
 spend from the wallet, or run up your API bill.
 
+`$COPILOT_API_TOKEN` does not make a non-loopback bind safe by itself: `$NEXT_PUBLIC_COPILOT_API_TOKEN`
+puts the same value in the public frontend bundle, so anyone who loads the site can read it
+back out and replay it directly against the API from outside the browser, bypassing CORS
+entirely -- CORS governs what a browser script may read, not what a plain HTTP client can send.
+So `apps/api/src/server.ts` refuses to start on any `HOST` other than `127.0.0.1`/`localhost`
+unless `EXTERNAL_AUTH_IN_FRONT=true` is also set, which is an explicit acknowledgment that some
+other, non-client-embedded authentication mechanism (a reverse proxy that authenticates callers
+itself, mTLS, a private network with no public ingress) is genuinely in front of this process.
+
+The four `/forecast/*` GET routes (`news`, `price`, `risk-benefit`, `indicators`) are the one
+exception to "whenever that is set": they refuse with 503 if `COPILOT_API_TOKEN` is unset,
+rather than falling back to loopback-only trust. A plain GET is a CORS-simple request -- a
+cross-site page's `<img src>` or a `no-cors` fetch still reaches the handler and runs a real,
+billed AI/CoinGecko call even though the browser can't read the response back, so an unset
+token left those four routes forgeable by any page the operator's browser happened to load.
+
 The Risk Profile / Suggestion / Decision routes are gated by `$COPILOT_API_TOKEN` when set,
-and then again by the wallet the session proved it holds. They key their data on
-`Session.verifiedWallet`, lowercased -- read off the session, never off a header (ADR-0013).
-Without a proven wallet all five answer 401; there is no fallback identity, because a
-fallback is reachable by simply not connecting.
+and then again by the account that signed in. They key their data on the id
+`requireAccount` resolves an `x-account-token` to -- read off a verified Supabase session,
+never off a header (ADR-0018, supersedes ADR-0013). Without a signed-in account all five
+answer 401; there is no fallback identity, because a fallback is reachable by simply not
+signing in.
 
-This closes a real hole. These routes used to key on `x-copilot-owner`, a client-supplied
-header nothing verified, so any holder of the shared token could name a different owner and
-read or overwrite that owner's Risk Profile or Decisions. The header is now gone from both
-sides rather than merely validated, so an owner id is no longer something a caller can
-assert -- only a signature establishes one.
+This closes a real hole, twice over. These routes originally keyed on `x-copilot-owner`, a
+client-supplied header nothing verified, so any holder of the shared token could name a
+different owner and read or overwrite that owner's Risk Profile or Decisions. ADR-0013
+closed that by keying on the wallet a session cryptographically proved instead; ADR-0018
+re-keys on the account for consistency with the rest of the account system (Risk Budget,
+linked wallet, Practice history) without reopening the hole -- an account id is only ever
+handed back after Supabase itself verifies the bearer token, exactly as unforgeable as the
+wallet signature it replaces.
 
-The trade-off is that `verifiedWallet` is in-memory and per-session (ADR-0012), so a backend
-restart or a new tab means signing again -- gasless, and already requested at connect time --
-before a Trader can read their own saved Risk Profile. The data is durable; the proof of who
-may read it is not.
-
-That header is what the Insights tab's card is keyed on. `apps/web/components/SuggestionCard.tsx`
+That account id is what the Insights tab's card is keyed on. `apps/web/components/SuggestionCard.tsx`
 sits between the Insights log and the ask-row: it is the Risk Profile picker and the
 Suggestion it drives, as one card, and shows no figures at all — no size, no cost, no days.
 At ≤900px `globals.css` collapses the layout to one column and `.commit` is
@@ -216,10 +247,12 @@ The reasoning behind this project is written down, not assumed:
   - [0008](./docs/adr/0008-cover-is-bought-by-rfq-for-single-collateral-loans-only.md) — Cover is RFQ-only, single-collateral Loans only
   - [0011](./docs/adr/0011-non-custodial-fill-for-multi-tenant-wallets.md) — each Trader signs their own fill; the backend prepares, never signs
   - [0012](./docs/adr/0012-wallet-proof-sessions-and-chain-verified-settle.md) — sessions prove wallet ownership before a fill; the chain decides whether a fill succeeded
-  - [0013](./docs/adr/0013-a-risk-profile-belongs-to-a-wallet.md) — a Risk Profile is keyed on the proven wallet, not a browser-minted id
+  - [0013](./docs/adr/0013-a-risk-profile-belongs-to-a-wallet.md) — a Risk Profile is keyed on the proven wallet, not a browser-minted id (superseded by 0018)
+  - [0014](./docs/adr/0014-sign-in-required-before-wallet-connect.md) — a real account is required before wallet-connect or Confirm; Deck browsing and Practice Run stay open
   - [0015](./docs/adr/0015-the-liquidation-price-is-aaves-and-disagreeing-sources-refuse.md) — the Liquidation Price is Aave's, and two disagreeing price sources refuse rather than pick
   - [0016](./docs/adr/0016-cover-is-partial-and-says-by-how-much.md) — a Cover says how much of the Loan it actually covers
   - [0017](./docs/adr/0017-the-rfq-money-path-is-two-signatures-with-a-wait-between-them.md) — an RFQ is two signatures with a wait between them, and no price until a maker answers
+  - [0018](./docs/adr/0018-a-risk-profile-belongs-to-an-account.md) — a Risk Profile is keyed on the signed-in account, not the wallet (supersedes 0013)
 
 ## Layout
 
@@ -230,7 +263,9 @@ apps/web              the trading surface. Next.js, UI only -- no SDK, no key, n
   components/         Tape, DeckRow, PayoffStrip, CommitBar, Board, Halt, Chat, SuggestionCard
   lib/api.ts          the only way this app talks to anything
   lib/surface.ts      the whole surface as one state machine
-  lib/wallet.ts       the only place this app touches a browser wallet (ADR-0011)
+  lib/wallet.ts       the only place this app touches a browser wallet (ADR-0011) --
+                      multiple extensions (via EIP-6963) plus WalletConnect, picked
+                      through WalletPicker.tsx, not a single assumed window.ethereum
   lib/clock.ts        the ONE place a number becomes text in the browser. Durations only
   lib/geometry.ts     coordinates and widths. Never text
   tests/              Playwright + axe, stubbed from fixtures the real API generated

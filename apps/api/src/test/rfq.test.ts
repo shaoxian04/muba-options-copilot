@@ -26,6 +26,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 vi.mock("../thetanuts/client.js", async () => await import("./stub-client.js"));
 vi.mock("../insurance/loan.js", () => ({ readLoan: vi.fn() }));
+vi.mock("../supabase.js", async () => await import("./stub-supabase.js"));
 
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
@@ -40,6 +41,7 @@ import {
   spies,
   state,
 } from "./stub-client.js";
+import { resetSupabaseStub, registerUser } from "./stub-supabase.js";
 import { SPOT } from "./fixtures.js";
 import { readLoan } from "../insurance/loan.js";
 import type { LoanReading } from "../insurance/liquidation.js";
@@ -55,14 +57,20 @@ let sessionSeq = 0;
 
 const OPTION_ADDRESS = getAddress("0x00000000000000000000000000000000000000aa");
 
+/** Every test in this file signs in as the same fake account -- /auth/challenge and
+ * /auth/verify require one (ADR-0014), even though the RFQ routes themselves don't. */
+const ACCOUNT_TOKEN = "rfq-account-token";
+
 beforeEach(async () => {
   resetStub();
+  resetSupabaseStub();
+  registerUser(ACCOUNT_TOKEN, { id: "rfq-user", email: "rfq-trader@example.com" });
   mockedReadLoan.mockReset();
   app = await buildApp();
   // A fresh session per test: the Risk Budget is session state, and a shared session
   // would let one test's reservation change another test's arithmetic.
   session = `rfq-${++sessionSeq}`;
-  await proveWallet(app, session);
+  await proveWallet(app, session, TRADER_ADDRESS, ACCOUNT_TOKEN);
 });
 
 const headers = () => ({ "x-session-id": session });

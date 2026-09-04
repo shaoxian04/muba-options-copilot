@@ -45,12 +45,12 @@ import {
   type CoverQuoteResult,
   type FillReceipt,
 } from "../../lib/api";
-import { RFQ_POLL_MS } from "../../lib/surface";
-import { useWallet } from "../../lib/useWallet";
+import { RFQ_POLL_MS, useSurface } from "../../lib/surface";
 import { sendTx } from "../../lib/wallet";
+import { AccountControl } from "../../components/AccountControl";
 import { CoverPriceLine } from "../../components/CoverPriceLine";
 import { CoverConfirmModal } from "../../components/CoverConfirmModal";
-import { WalletConnect } from "../../components/WalletConnect";
+import { WalletPicker } from "../../components/WalletPicker";
 
 /**
  * One row in a "sheet" dl: a labelled value with an optional qualifier underneath.
@@ -96,7 +96,7 @@ export default function CoverPage() {
    */
   const requestIdRef = useRef<string | null>(null);
 
-  const wallet = useWallet();
+  const s = useSurface();
 
   async function read(e: React.FormEvent) {
     e.preventDefault();
@@ -152,10 +152,10 @@ export default function CoverPage() {
    * page checks so it can say why before a press rather than after one.
    */
   const walletOwnsLoan =
-    Boolean(wallet.address) &&
-    wallet.verified &&
+    Boolean(s.walletAddress) &&
+    s.walletVerified &&
     Boolean(quote) &&
-    wallet.address!.toLowerCase() === quote!.address.toLowerCase();
+    s.walletAddress!.toLowerCase() === quote!.address.toLowerCase();
 
   /**
    * Poll the open request while makers can still answer.
@@ -327,26 +327,36 @@ export default function CoverPage() {
          * halfway through a confirmation.
          */}
         <div className="cvr-wallet">
-          <WalletConnect
-            address={wallet.address}
-            connecting={wallet.connecting}
-            verified={wallet.verified}
-            verifying={wallet.verifying}
-            error={wallet.error}
-            onConnect={() => void wallet.connect()}
-            onVerify={() => void wallet.verify()}
+          <AccountControl
+            account={s.account}
+            onSignOut={s.signOut}
+            walletAddress={s.walletAddress}
+            connecting={s.walletConnecting}
+            verified={s.walletVerified}
+            verifying={s.walletVerifying}
+            error={s.walletError}
+            onOpenWalletPicker={s.onOpenWalletPicker}
+            onVerify={() => void s.verifyWallet()}
+            onDisconnectWallet={s.onDisconnectWallet}
           />
-          {wallet.address && wallet.address.toLowerCase() !== address.trim().toLowerCase() ? (
+          {s.walletAddress && s.walletAddress.toLowerCase() !== address.trim().toLowerCase() ? (
             <button
               type="button"
               className="cvr-usemine"
-              onClick={() => setAddress(wallet.address!)}
+              onClick={() => setAddress(s.walletAddress!)}
               data-testid="cover-use-my-wallet"
             >
               Read my own loan
             </button>
           ) : null}
         </div>
+        <WalletPicker
+          open={s.walletPickerOpen}
+          wallets={s.availableWallets}
+          recentWallet={s.recentWallet}
+          onPick={(walletId) => void s.onPickWallet(walletId)}
+          onClose={s.onCloseWalletPicker}
+        />
 
         {/*
          * A transport failure or a 4xx: something actually went wrong, and it is a

@@ -14,7 +14,7 @@
  */
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import { stubApi, installFakeWallet, advanceOffers, COVER_ADDRESSES } from "./stub";
+import { stubApi, installFakeWallet, advanceOffers, signIn, COVER_ADDRESSES } from "./stub";
 import coverHealthy from "./fixtures/cover-healthy.json" with { type: "json" };
 
 type Page = import("@playwright/test").Page;
@@ -36,6 +36,10 @@ async function readHealthyLoan(page: Page) {
  */
 async function connectAsBorrower(page: Page) {
   await page.getByTestId("connect-wallet").click();
+  await expect(page.getByTestId("wallet-picker")).toBeVisible();
+  // installFakeWallet always registers rdns "test.fakewallet0" as its one extension --
+  // picking it is what every journey means by "connect the wallet" (see journeys.spec.ts).
+  await page.getByTestId("wallet-option-test.fakewallet0").click();
   await expect(page.getByTestId("wallet-address")).toBeVisible();
 }
 
@@ -194,9 +198,9 @@ test.describe("who may buy", () => {
     // Borrower exactly as exposed as before -- a Cover in name only.
     await installFakeWallet(page, { address: "0x9999999999999999999999999999999999999999" });
     await stubApi(page);
+    await signIn(page);
     await readHealthyLoan(page);
-    await page.getByTestId("connect-wallet").click();
-    await expect(page.getByTestId("wallet-address")).toBeVisible();
+    await connectAsBorrower(page);
 
     await page.getByTestId("cover-door").click();
     await expect(page.getByTestId("cover-submit")).toBeDisabled();
@@ -214,6 +218,7 @@ test.describe("requesting, waiting and paying", () => {
 
   test("the first press opens a request and buys nothing -- still no premium anywhere", async ({ page }) => {
     const traffic = await stubApi(page);
+    await signIn(page);
     await readHealthyLoan(page);
     await connectAsBorrower(page);
     await page.getByTestId("cover-door").click();
@@ -239,6 +244,7 @@ test.describe("requesting, waiting and paying", () => {
     page,
   }) => {
     await stubApi(page);
+    await signIn(page);
     await readHealthyLoan(page);
     await connectAsBorrower(page);
     await page.getByTestId("cover-door").click();
@@ -251,6 +257,7 @@ test.describe("requesting, waiting and paying", () => {
     page,
   }) => {
     const traffic = await stubApi(page);
+    await signIn(page);
     await readHealthyLoan(page);
     await connectAsBorrower(page);
     await page.getByTestId("cover-door").click();
@@ -274,6 +281,7 @@ test.describe("requesting, waiting and paying", () => {
 
   test("every gate step is lit once the Cover is bought, and the Lapse is restated", async ({ page }) => {
     await stubApi(page);
+    await signIn(page);
     await readHealthyLoan(page);
     await connectAsBorrower(page);
     await page.getByTestId("cover-door").click();
@@ -292,6 +300,7 @@ test.describe("requesting, waiting and paying", () => {
 
   test("an unanswered request says so and offers a withdrawal, rather than hanging", async ({ page }) => {
     await stubApi(page, "rfq-unanswered");
+    await signIn(page);
     await readHealthyLoan(page);
     await connectAsBorrower(page);
     await page.getByTestId("cover-door").click();
@@ -311,6 +320,7 @@ test.describe("requesting, waiting and paying", () => {
 
   test("closing and reopening the door starts a fresh dialog, not the previous request", async ({ page }) => {
     await stubApi(page);
+    await signIn(page);
     await readHealthyLoan(page);
     await connectAsBorrower(page);
 
@@ -328,6 +338,7 @@ test.describe("requesting, waiting and paying", () => {
 
   test("is reachable and fully operable by keyboard alone", async ({ page }) => {
     await stubApi(page);
+    await signIn(page);
     await readHealthyLoan(page);
     await connectAsBorrower(page);
 
@@ -352,6 +363,7 @@ test.describe("requesting, waiting and paying", () => {
     test(`is axe-core clean in ${colorScheme} theme, asking, waiting and bought`, async ({ page }) => {
       await page.emulateMedia({ colorScheme });
       await stubApi(page);
+      await signIn(page);
       await readHealthyLoan(page);
       await connectAsBorrower(page);
       await page.getByTestId("cover-door").click();

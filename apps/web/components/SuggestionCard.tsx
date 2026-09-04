@@ -51,13 +51,13 @@ type SuggestionStatus =
 
 export function SuggestionCard({
   deal,
-  walletVerified,
+  signedIn,
   onAccepted,
 }: {
   /** Same signature as `Surface.deal` -- dealt on accept for the Suggestion's own intent. */
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
-  /** Whether the session has proven wallet ownership (ADR-0012). Gates the Risk Profile. */
-  walletVerified: boolean;
+  /** Whether an account is signed in (ADR-0017). Gates the Risk Profile -- no wallet required. */
+  signedIn: boolean;
   /** Switches Chat to the Trade tab. Called only once accept has actually dealt a Deck. */
   onAccepted: () => void;
 }) {
@@ -74,10 +74,9 @@ export function SuggestionCard({
   const [dealError, setDealError] = useState<string | null>(null);
 
   useEffect(() => {
-    // No proven wallet, no request -- the server would 401 anyway now that
-    // /risk-profile is keyed by the wallet address a session verified under
-    // ADR-0012, not the old forgeable owner header.
-    if (!walletVerified) {
+    // No account, no request -- the server would 401 anyway now that /risk-profile is
+    // keyed on the signed-in account (ADR-0017), not a wallet.
+    if (!signedIn) {
       setProfile(null);
       setProfileStatus("unauthorized");
       return;
@@ -101,7 +100,7 @@ export function SuggestionCard({
     return () => {
       cancelled = true;
     };
-  }, [walletVerified]);
+  }, [signedIn]);
 
   // Refetches the Suggestion whenever the saved profile changes -- including the very
   // first time it loads. This is the whole replacement for the old refresh counter: a
@@ -237,7 +236,7 @@ export function SuggestionCard({
   if (profileStatus === "unauthorized") {
     return (
       <div className="suggestion-card">
-        <p className="suggestion-card-note">Connect your wallet to save a Risk Profile.</p>
+        <p className="suggestion-card-note">Sign in to save a Risk Profile.</p>
       </div>
     );
   }

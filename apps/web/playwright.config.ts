@@ -53,6 +53,15 @@ export default defineConfig({
       // without it would not notice Confirm answering 401.
       NEXT_PUBLIC_API_BASE: "http://127.0.0.1:3001",
       NEXT_PUBLIC_COPILOT_API_TOKEN: TEST_API_TOKEN,
+      // `signIn()` in `tests/stub.ts` writes a fake Supabase session into localStorage
+      // under a key derived from this same URL's project ref (`sb-<ref>-auth-token`,
+      // matching `@supabase/supabase-js`'s own key format). It must be set here to the
+      // exact value `stub.ts` falls back to when unset -- otherwise the built app's own
+      // `supabaseClient.ts` picks a DIFFERENT fallback (no `NEXT_PUBLIC_SUPABASE_URL` is
+      // configured anywhere in this repo), the two land on different project refs, and
+      // the browser's real Supabase client never finds the session the test wrote.
+      NEXT_PUBLIC_SUPABASE_URL: "https://fixture.supabase.co",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "fixture-anon-key",
     },
   },
 });
