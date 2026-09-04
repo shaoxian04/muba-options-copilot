@@ -594,31 +594,53 @@ button[disabled] {
   it reads as "ask for something" and not as one more chip to press -- deliberately
   distinct from both the direction chips and a Card.
 */
+/*
+ * The RFQ door. It stays DASHED -- issue #31's distinction between "ask for something"
+ * and "pick one of these" is carried by the border style, and a filled pill here would
+ * read as a fifth Card.
+ *
+ * Everything else about it got louder. It was drawn in `--line` on `transparent` at
+ * `--ink-2`, which is the styling of a disabled control, and it sat shorter than the
+ * chips beside it -- so the one route to a strike the book does not carry looked like
+ * the least important thing in its own row. Now it is dashed in the accent, tinted,
+ * inked at full contrast and the same height as its neighbours: still visibly a
+ * different KIND of control, no longer a quieter one.
+ */
 .chips .rfqbtn {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 6px 13px;
-  border: 1px dashed var(--line);
+  gap: 8px;
+  padding: 6px 16px;
+  /* 44px, not the 38px the expiry chips use: `deck.spec.ts` holds every control on a
+     phone to a 44px tap target, and this one had been clearing it only by accident. */
+  min-height: 44px;
+  border: 1.5px dashed var(--warn);
   border-radius: 999px;
-  background: transparent;
-  font-size: 12.5px;
-  color: var(--ink-2);
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
   transition: 0.12s;
   white-space: nowrap;
 }
 .chips .rfqbtn:hover {
   border-color: var(--warn);
   color: var(--ink);
-  background: var(--surface);
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  transform: translateY(-1px);
 }
 .chips .rfqbtn i {
   font-style: normal;
   font-family: "IBM Plex Mono", monospace;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--warn);
+}
+@media (prefers-reduced-motion: reduce) {
+  .chips .rfqbtn:hover {
+    transform: none;
+  }
 }
 
 .exp {
