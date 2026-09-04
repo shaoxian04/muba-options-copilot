@@ -62,6 +62,8 @@ import { assessRiskBenefit } from "./forecast/riskBenefit.js";
 import { parseForecastQuery, parseAskBody, forecastErrorStatus } from "./forecast/http.js";
 import { answerQuestion } from "./forecast/ask.js";
 import { fetchIndicators, IndicatorsUnavailable } from "./forecast/indicators.js";
+import { CryptoNewsQuery, MacroNewsQuery, AllNewsQuery } from "@copilot/shared";
+import { getCryptoNewsFeed, getMacroNewsFeed, getAllNewsFeed } from "./news/service.js";
 import { fetchSuggestion, SuggestionUnavailable } from "./strategy/suggest.js";
 import { getRiskProfile, setRiskProfile } from "./supabase/riskProfiles.js";
 import { recordDecision, decisionStats } from "./supabase/decisions.js";
@@ -709,6 +711,30 @@ export async function buildApp(): Promise<FastifyInstance> {
       const { status, error } = forecastErrorStatus(e);
       return reply.code(status).send({ error });
     }
+  });
+
+  /**
+   * Raw news feeds -- crypto (CryptoPanic, falling back to live RSS then
+   * CryptoCompare) and macro (GNews, falling back to NewsAPI then the same RSS/
+   * CryptoCompare chain). Read-only, ungated like /book and /deck: real external
+   * reads, not a billed AI call, so this does not use requireForecastToken.
+   */
+  app.get("/news/crypto", async (req, reply) => {
+    const parsed = CryptoNewsQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
+    return getCryptoNewsFeed(parsed.data);
+  });
+
+  app.get("/news/macro", async (req, reply) => {
+    const parsed = MacroNewsQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
+    return getMacroNewsFeed(parsed.data);
+  });
+
+  app.get("/news", async (req, reply) => {
+    const parsed = AllNewsQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid query parameters", issues: parsed.error.issues });
+    return getAllNewsFeed(parsed.data);
   });
 
   /**

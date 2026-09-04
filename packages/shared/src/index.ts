@@ -698,6 +698,7 @@ export const CoverQuoteResult = z.discriminatedUnion("status", [
 export type CoverQuoteResult = z.infer<typeof CoverQuoteResult>;
 
 export * from "./forecast.js";
+export * from "./news.js";
 
 import { strategySchemas, RiskProfileName, RiskProfileResponse, DecisionStatsResponse } from "./strategy.js";
 export { RiskProfileName, RiskProfileResponse, DecisionStatsResponse };
