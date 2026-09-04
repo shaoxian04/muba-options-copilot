@@ -52,6 +52,7 @@ import suggestionUnset from "./fixtures/suggestion-unset.json" with { type: "jso
 import suggestionEth from "./fixtures/suggestion-eth.json" with { type: "json" };
 import suggestionNoSignal from "./fixtures/suggestion-no-signal.json" with { type: "json" };
 import decisionsAccepted from "./fixtures/decisions-accepted.json" with { type: "json" };
+import history from "./fixtures/history.json" with { type: "json" };
 
 export const API = "http://127.0.0.1:3001";
 
@@ -205,6 +206,7 @@ export const fixtures = {
   suggestionEth,
   suggestionNoSignal,
   decisionsAccepted,
+  history,
 };
 
 /**
@@ -1002,6 +1004,16 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
         if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
         if (!accountAuthorised(request)) return json(route, { error: "Sign in to continue." }, traffic, 401);
         return json(route, { settings: { riskBudgetUsdc: 5, defaultAsset: null, defaultDirection: null }, linkedWallet: null }, traffic);
+      }
+
+      /**
+       * The History tab (ADR-0018): gated on sign-in alone, no wallet proof required --
+       * `requireAccount`, the same gate `/account` uses.
+       */
+      case "/history": {
+        if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
+        if (!accountAuthorised(request)) return json(route, { error: "Sign in to continue." }, traffic, 401);
+        return json(route, history, traffic);
       }
 
       case "/fill/settle": {

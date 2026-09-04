@@ -2921,3 +2921,89 @@ button[disabled] {
 /* Disclaimer: the server's own prose, verbatim.
    --ink-2, not --ink-3: at this size --ink-3 fails WCAG AA (see the same note by .strip .axis). */
 .cvr .disclaimer { color: var(--ink-2); line-height: 1.5; max-width: 46rem; margin: 0; }
+
+/* ================= Yours: Open | History toggle ================= */
+/* Tab look copied from .engine-tabs -- same button/selected pattern, own class so
+   Chat.tsx's tabs stay untouched. */
+.yours-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.yours-tabs button {
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.yours-tabs button:hover {
+  color: var(--ink);
+}
+.yours-tabs button[aria-selected="true"] {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.yours-signin-note {
+  font-size: 13px;
+  color: var(--ink-2);
+  margin: 0;
+}
+
+/* History rows: same card look as .hold (the board's own cards), own class so
+   Board.tsx's rules stay untouched. A header (instrument + premium) sits over a fixed
+   label/value grid -- one field per row, grid-template-columns pinned so the label
+   column lines up the same way in every card, not just within one. */
+.hist {
+  flex: none;
+  width: 232px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 11px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.hist-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-2);
+}
+.hist .k {
+  font-family: "IBM Plex Mono", monospace;
+  font-weight: 600;
+  font-size: 14px;
+}
+.hist .pl {
+  font-family: "Martian Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.05em;
+}
+.hist-body {
+  display: grid;
+  grid-template-columns: 70px 1fr;
+  row-gap: 6px;
+  column-gap: 8px;
+  align-items: baseline;
+}
+.hist .t2 {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.hist .v {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink);
+}

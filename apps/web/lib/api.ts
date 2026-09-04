@@ -13,7 +13,7 @@
 import type {
   AccountActivityResponse, AccountResponse, AccountSettingsRequest,
   Card, ConversationTurn, CoinAskResult, CoverQuote, CoverQuoteResult, CoverRefusal,
-  DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding,
+  DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding, HistoryItem, HistoryResponse,
   MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, RiskProfileName,
   RiskProfileResponse, SuggestionResponse, UnderlyingSymbol,
   PreparedRfq, PreparedRfqCancel, PreparedRfqSettle, RfqAsk, RfqPhase, RfqStatus,
@@ -23,7 +23,7 @@ import { supabase } from "./supabaseClient";
 export type {
   AccountActivityResponse, AccountResponse, AccountSettingsRequest,
   Card, ConversationTurn, CoinAskResult, CoverQuote, CoverQuoteResult, CoverRefusal,
-  DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding,
+  DecisionRequest, Deck, DepthView, ExpiryOption, Figure, Holding, HistoryItem, HistoryResponse,
   MarketOverview, MarketRow, PreparedFill, ProposeResult, RfqTenorDays, RiskProfileName,
   RiskProfileResponse, SuggestionResponse, UnderlyingSymbol,
   PreparedRfq, PreparedRfqCancel, PreparedRfqSettle, RfqAsk, RfqPhase, RfqStatus,
@@ -455,3 +455,7 @@ export const saveAccountSettings = (
 
 export const getAccountActivity = (): Promise<AccountActivityResponse> =>
   call<AccountActivityResponse>("/account/activity");
+
+/** The History tab: every real Fill this account made, newest first (ADR-0018). */
+export const getHistory = (): Promise<HistoryResponse> =>
+  call<HistoryResponse>("/history", { headers: authHeaders() });
