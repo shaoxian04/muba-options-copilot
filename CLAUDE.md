@@ -171,7 +171,10 @@ These are needed on every task. Violating one silently breaks the product's cent
   and every number re-derived, so an override passes every check an agent-chosen Card does.
 - **A Suggestion crosses the Strategy Agent boundary as a nested Trade Intent and nothing
   else** — no name, no reasoning, no confidence. Enforced by `extra="forbid"` in
-  `apps/agents/strategy/schema.py` (ADR-0005).
+  `apps/agents/strategy/schema.py` (ADR-0005). A second, separate channel — the drag-drop
+  closest-order search on the Insights tab — may use an AI's predicted price to select a
+  strike, but only ever as an existing, already-priced order's `cardRef`, confined to the
+  analysis surface. (ADR-0019)
 - **A Risk Profile and a Decision belong to an account, never to a browser.** `owner_id`
   is the id `requireAccount` resolves an `x-account-token` to — read off a verified
   Supabase session, never off a header. No client-supplied value may name an owner, and
@@ -213,7 +216,7 @@ it here with a one-line lesson.
 - **`apps/api/src/insurance/CONTEXT.md`** — Borrower, Loan, Cover, Liquidation Price, Lapse.
   **Read before any Liquidation Cover work.**
 - **`docs/adr/`** — the decisions and why they went that way. 0001, 0004, and 0013 are
-  superseded; 0006–0012 and 0014–0018 are current — 0009 is why the surface may look
+  superseded; 0006–0012 and 0014–0019 are current — 0009 is why the surface may look
   like a game but never celebrates a Fill, 0010 is why an Underlying is keyed by price
   feed and not by token, 0011 is why a Trader's own wallet signs a fill instead of the
   backend, 0012 is why a session must prove wallet ownership and the chain alone
@@ -221,10 +224,12 @@ it here with a one-line lesson.
   before wallet-connect or Confirm, though Deck browsing and Practice Run stay open to
   anyone, 0015/0016 are why Cover's Liquidation Price is Aave's own and a Cover is
   partial rather than all-or-nothing, 0017 is why an RFQ is two signatures with a wait
-  between them and why no price appears before a maker answers, and 0018 is why a Risk
+  between them and why no price appears before a maker answers, 0018 is why a Risk
   Profile and a Decision are keyed on the signed-in account rather than a wallet
-  (supersedes 0013). **Read before changing architecture, or when code looks
-  deliberately odd and you're tempted to "fix" it.**
+  (supersedes 0013), and 0019 is why the drag-drop closest-order search may let an
+  AI's predicted price choose a strike without breaking ADR-0005. **Read before
+  changing architecture, or when code looks deliberately odd and you're tempted to
+  "fix" it.**
 - **`README.md`** — API route table, repo layout, setup, security posture of the API process.
   **Read before running or wiring anything.**
 - **`apps/web/prototype-copilot.html`** — the settled design for the single-asset ETH Deck as

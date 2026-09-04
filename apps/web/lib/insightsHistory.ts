@@ -4,7 +4,7 @@
  * that already exists. Only turns that got a real answer count; a plain error line
  * (an unrecognized symbol, a server failure) never enters history.
  */
-import { CONVERSATION_HISTORY_MAX_TURNS, type ConversationTurn, type CoinAskResult } from "@copilot/shared";
+import { CONVERSATION_HISTORY_MAX_TURNS, type ConversationTurn, type CoinAskResult, type UnderlyingSymbol } from "@copilot/shared";
 
 export interface InsightsLine {
   who: "trader" | "copilot";
@@ -12,10 +12,17 @@ export interface InsightsLine {
   results?: Record<string, CoinAskResult>;
   /**
    * Set only when this exchange came from dropping a Deck card (Chat.tsx) — carries
-   * the card's own real strike and direction so the render can compare them against
-   * the AI's predicted range for the matching coin. Absent for a typed question.
+   * the card's own real strike, direction and expiry so the render can compare them
+   * against the AI's predicted range/direction for the matching coin, and so a
+   * closest-order search (NearestOrderPreview) knows which expiry to start from.
    */
-  cardContext?: { underlying: string; strikeValue: number; strikeDisplay: string; direction: "UP" | "DOWN" };
+  cardContext?: {
+    underlying: UnderlyingSymbol;
+    strikeValue: number;
+    strikeDisplay: string;
+    direction: "UP" | "DOWN";
+    horizonDays: number;
+  };
 }
 
 export function deriveHistory(log: InsightsLine[]): ConversationTurn[] {

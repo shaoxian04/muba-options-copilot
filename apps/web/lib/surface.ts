@@ -336,8 +336,14 @@ export interface Surface {
   setHorizon: (h: number) => void;
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
   submitTradeMessage: (text: string) => void;
-  /** Clicking a Card. Opens the confirmation (issue #30) as well as pricing the pick. */
-  pick: (cardRef: string) => Promise<void>;
+  /**
+   * Clicking a Card (issue #30), or accepting an AI-matched order from
+   * `NearestOrderPreview`. Opens the confirmation as well as pricing the pick. `on`
+   * switches which coin/direction/expiry is selected first when given and different
+   * from what's currently showing -- needed because a matched order can belong to a
+   * different one than whatever the Trader currently has selected.
+   */
+  pick: (cardRef: string, on?: { underlying: UnderlyingSymbol; direction: Direction; horizonDays: number }) => Promise<void>;
   /**
    * Re-price the SAME Order at a different stake -- what the confirmation's stepper
    * and presets call. A server round trip against the unchanged `cardRef`, exactly
@@ -1441,27 +1447,45 @@ export function useSurface(): Surface {
   );
 
   /**
-   * Clicking a Card (issue #30). Prices it at the default stake and opens the
-   * confirmation -- the only Confirm in the product now lives there, so this is the
-   * one deliberate act that puts a Trader in front of it.
+   * Clicking a Card (issue #30), or accepting an AI-matched order. Prices it at the
+   * default stake and opens the confirmation -- the only Confirm in the product now
+   * lives there, so this is the one deliberate act that puts a Trader in front of it.
+   *
+   * `on`, when given and different from what's currently selected, switches the
+   * coin/direction/expiry chips first -- the same raw setters `deal()` already uses
+   * directly, which arm the existing Deck-reload effect (lines 793-796) in the
+   * background. Not awaited: `ask()` below prices directly against `on`'s own fields,
+   * never against `deck` state, so the confirmation is correct immediately regardless
+   * of how long the background Deck refetch takes to catch up.
    */
   const pick = useCallback(
-    async (cardRef: string) => {
+    async (cardRef: string, on?: { underlying: UnderlyingSymbol; direction: Direction; horizonDays: number }) => {
       if (busy) return;
       // Before anything else: `busy` is about to go true, which disables this same
       // Card's button in the same render that opens the confirmation. Capture it now,
       // while it is still the enabled, focused element -- an effect inside the modal
       // would run one render too late to see it.
       openerElRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+      const askingAsset = on?.underlying ?? asset;
+      const askingDirection = on?.direction ?? direction;
+      const askingHorizon = on?.horizonDays ?? horizonDays;
+      if (askingAsset !== asset || askingDirection !== direction || askingHorizon !== horizonDays) {
+        expiryChosen.current = true;
+        setAssetState(askingAsset);
+        setDirectionState(askingDirection);
+        setHorizonState(askingHorizon);
+      }
+
       setSizeUsdcState(STAKE_USDC);
       setConfirmOpen(true);
-      const answer = await ask(cardRef, direction, STAKE_USDC);
+      const answer = await ask(cardRef, askingDirection, STAKE_USDC, { underlying: askingAsset, horizonDays: askingHorizon });
       if (answer?.kind === "PROPOSAL" && answer.proposal.chosenBy === "TRADER") {
         const f = answer.proposal.figures;
         say(`Your pick: ${f.strike.display}, ${f.contracts.display} contracts for ${f.premiumUsdc.display}. Same checks either way.`);
       }
     },
-    [ask, busy, direction, say]
+    [ask, busy, direction, say, asset, horizonDays]
   );
 
   /**

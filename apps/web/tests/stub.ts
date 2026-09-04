@@ -161,6 +161,24 @@ const forecastAskEth = {
   },
 };
 
+/**
+ * The same shape as `forecastAskEth`, but with a real predicted direction and range
+ * instead of "flat" -- what NearestOrderPreview.tsx needs to actually run a search.
+ * Predicted range {2500, 2600} has a midpoint of 2550, which is closest to deck-up-1's
+ * $2,560 card (card-0) -- 10 away, versus 30 for $2,520 and 70 for $2,480.
+ */
+const forecastAskEthUp = {
+  ETH: {
+    ...forecastAskEth.ETH,
+    price: {
+      ...forecastAskEth.ETH.price,
+      direction: "up" as const,
+      predictedRange: { low: 2500, high: 2600 },
+      rationale: "Momentum has turned clearly positive, so a range centred above the current price looks reasonable.",
+    },
+  },
+};
+
 export const fixtures = {
   deckDown1,
   deckSolDown1,
@@ -180,6 +198,7 @@ export const fixtures = {
   depthEth,
   depthEthMarked,
   forecastAskEth,
+  forecastAskEthUp,
   riskProfileUnset,
   riskProfileBalanced,
   suggestionUnset,
@@ -258,7 +277,9 @@ export type Scenario =
    * "no-signal" status), distinct from the default scenario where a saved
    * profile always fires.
    */
-  | "no-signal";
+  | "no-signal"
+  /** The card-drop forecast answers with a real "up" direction and range instead of "flat" -- see forecastAskEthUp. */
+  | "forecast-up";
 
 export interface Traffic {
   /** Every request the page made to the API, in order. */
@@ -921,7 +942,7 @@ export async function stubApi(page: Page, scenario: Scenario = "normal"): Promis
        */
       case "/forecast/ask": {
         if (!authorised(request)) return json(route, { error: "Unauthorized" }, traffic, 401);
-        return json(route, forecastAskEth, traffic);
+        return json(route, scenario === "forecast-up" ? forecastAskEthUp : forecastAskEth, traffic);
       }
 
       /*

@@ -87,4 +87,60 @@ test.describe("dragging a card into the chat panel", () => {
     expect(dataTransferKeys).toContain(cards[0]!.strike.display);
     expect(dataTransferKeys).not.toMatch(/maker|nonce|signature|orderId/i);
   });
+
+  test("shows a plain note instead of a match when the AI forecast has no clear direction", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("card").first().dragTo(page.locator(".chat"));
+
+    const answer = page.locator(".coin-answer").first();
+    await expect(answer).toContainText("No clear predicted direction to match a strike against.");
+    await expect(page.getByTestId("nearest-order-preview")).toHaveCount(0);
+  });
+});
+
+test.describe("dragging a card whose AI forecast has a real predicted direction", () => {
+  // The file-level `beforeEach` above (line 13) still runs first for every test in this
+  // block too -- Playwright scopes a `beforeEach` to the whole file when it's declared
+  // outside any `describe`, not just to the sibling block it's written next to. So this
+  // hook doesn't replace that one; it runs after it and re-installs a different stub
+  // scenario (`"forecast-up"` instead of the file-level hook's default/flat one) and
+  // signs in a second time. The second `stubApi(page, ...)` call's `page.route()`
+  // registrations shadow the first's for the same paths -- Playwright resolves
+  // `page.route()` by last-registered-wins -- so this test still ends up answered by the
+  // "forecast-up" fixtures despite two stubs being active.
+  test.beforeEach(async ({ page, isMobile }) => {
+    test.skip(isMobile, "drag-and-drop targets desktop pointer input only");
+    await stubApi(page, "forecast-up");
+    await signIn(page);
+  });
+
+  test("shows the closest live order and opens the confirmation on Place order", async ({ page }) => {
+    // Re-installs the same "forecast-up" stub the describe-level beforeEach above
+    // already set up (shadowing it, per that hook's own comment) purely to get this
+    // test its own `Traffic` handle -- the beforeEach's own return value has nowhere
+    // to go, so every spec in this suite that needs `traffic` calls `stubApi` again
+    // locally instead (see journeys.spec.ts).
+    const traffic = await stubApi(page, "forecast-up");
+    await signIn(page);
+    await page.goto("/");
+    await page.getByTestId("card").first().dragTo(page.locator(".chat"));
+
+    const preview = page.getByTestId("nearest-order-preview");
+    await expect(preview).toBeVisible();
+    await expect(preview).toContainText("$2,560.00");
+    await expect(preview).toContainText("pays above");
+
+    await page.getByTestId("nearest-order-place").click();
+    await expect(page.getByTestId("confirm-modal")).toBeVisible();
+
+    // The fixture keyed by "card-0" happens to belong to the DOWN deck, so
+    // confirm-modal becoming visible alone can't tell an UP/1-day match from a
+    // silently broken one -- it would render either way. What actually proves Task
+    // 4's chip-switching logic ran is the /propose request itself: direction and
+    // horizon must have followed the AI-matched order, not whatever the Trade tab's
+    // chips defaulted to.
+    const proposals = traffic.all.filter((r) => new URL(r.url()).pathname === "/propose");
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]!.postDataJSON()).toMatchObject({ direction: "UP", horizonDays: 1, cardRef: "card-0" });
+  });
 });

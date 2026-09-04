@@ -50,13 +50,15 @@
  */
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { usePathname } from "next/navigation";
-import type { ChatLine, TradeIntent } from "../lib/surface";
+import type { UnderlyingSymbol } from "@copilot/shared";
+import type { ChatLine, Direction, TradeIntent } from "../lib/surface";
 import type { ProposeResult } from "../lib/api";
 import { askForecast } from "../lib/api";
 import { deriveHistory, type InsightsLine } from "../lib/insightsHistory";
 import { buildCardQuestion, CARD_DRAG_MIME, type DroppedCard } from "../lib/cardQuestion";
 import { compareStrikeToRange } from "../lib/strikeOutlook";
 import { SuggestionCard } from "./SuggestionCard";
+import { NearestOrderPreview } from "./NearestOrderPreview";
 
 type Engine = "trade" | "insights";
 
@@ -87,6 +89,7 @@ export function Chat({
   busy,
   submitTradeMessage,
   deal,
+  pick,
   signedIn,
 }: {
   log: ChatLine[];
@@ -94,6 +97,8 @@ export function Chat({
   submitTradeMessage: (text: string) => void;
   /** Same signature as `Surface.deal` -- threaded down to Suggestion for Accept. */
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
+  /** Same signature as `Surface.pick` -- threaded down to NearestOrderPreview's "Place order". */
+  pick: (cardRef: string, on?: { underlying: UnderlyingSymbol; direction: Direction; horizonDays: number }) => Promise<void>;
   /**
    * Whether an account is signed in (ADR-0014). The gate this panel enforces is
    * sign-in alone, not a connected wallet -- a signed-in Trader with no wallet yet still
@@ -207,6 +212,7 @@ export function Chat({
           strikeValue: card.strikeValue,
           strikeDisplay: card.strikeDisplay,
           direction: card.direction,
+          horizonDays: card.horizonDays,
         },
         true
       );
@@ -255,6 +261,7 @@ export function Chat({
           busy={insightsBusy}
           onAsk={(q) => void runInsightsQuestion(q)}
           deal={deal}
+          pick={pick}
           signedIn={signedIn}
           onAccepted={() => selectEngine("trade")}
           disabled={!signedIn}
@@ -337,6 +344,7 @@ function InsightsEngine({
   busy,
   onAsk,
   deal,
+  pick,
   signedIn,
   onAccepted,
   disabled,
@@ -345,6 +353,7 @@ function InsightsEngine({
   busy: boolean;
   onAsk: (question: string) => void;
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
+  pick: (cardRef: string, on?: { underlying: UnderlyingSymbol; direction: Direction; horizonDays: number }) => Promise<void>;
   signedIn: boolean;
   onAccepted: () => void;
   disabled: boolean;
@@ -434,6 +443,17 @@ function InsightsEngine({
                             );
                           })()}
                         </div>
+                      ) : null}
+
+                      {cardContext && cardContext.underlying === symbol && r.price ? (
+                        <NearestOrderPreview
+                          underlying={cardContext.underlying}
+                          predictedDirection={r.price.direction}
+                          predictedRange={r.price.predictedRange}
+                          probeHorizonDays={cardContext.horizonDays}
+                          pick={pick}
+                          onAccepted={onAccepted}
+                        />
                       ) : null}
 
                       {r.disclaimer ? <div className="disclaimer">{r.disclaimer}</div> : null}
