@@ -9,6 +9,7 @@ import type { OrderWithSignature } from "@thetanuts-finance/thetanuts-client";
 import { getClient } from "./client.js";
 import { USDC } from "./units.js";
 import { requireUnderlying, underlyingForFeed, type Underlying } from "./underlyings.js";
+import { cached, BOOK_TTL_MS } from "./upstream.js";
 
 /** OptionTypeEnum: 0 = call, 1 = put. */
 export const CALL = 0;
@@ -131,12 +132,42 @@ function assertReadableShape(all: OrderWithSignature[]): void {
  * The shape check runs BEFORE them, because every one of those filters reads a field that
  * may have stopped existing, and all three fail closed when it has.
  */
-export async function buyableOrders(symbol: string): Promise<OrderWithSignature[]> {
+export async function buyableOrders(
+  symbol: string,
+  { fresh = false }: ReadOptions = {}
+): Promise<OrderWithSignature[]> {
   const underlying = requireUnderlying(symbol);
-  const all = await getClient().api.fetchOrders();
+  const all = await fetchBook({ fresh });
   assertReadableShape(all);
   return all.filter((o) => isOn(o, underlying) && passesTheDoor(o));
 }
+
+/**
+ * How a caller wants the book read.
+ *
+ * `fresh` is not a performance switch -- it is the ADR-0006 boundary. The trade path
+ * re-fetches the Order and re-derives every number at commit time, and that guarantee is
+ * exactly what a shared cache would quietly remove. Read paths that only DISPLAY the book
+ * (the Deck, the depth chart, the ticker rail) take the shared read; anything that leads
+ * to a signature does not.
+ */
+export interface ReadOptions {
+  /** Bypass the shared cache entirely. Required on the money path. */
+  fresh?: boolean;
+}
+
+/**
+ * The one call to the indexer for the whole book, shared between viewers unless refused.
+ *
+ * Keyed on nothing but the fact itself: `fetchOrders` takes no arguments and returns every
+ * Order on every Underlying, so one entry serves every asset and every direction. Which is
+ * also why this is worth doing -- the same payload was being fetched once per route, per
+ * poll, per tab.
+ */
+const fetchBook = ({ fresh }: { fresh: boolean }): Promise<OrderWithSignature[]> =>
+  fresh
+    ? getClient().api.fetchOrders()
+    : cached("orders:all", BOOK_TTL_MS, () => getClient().api.fetchOrders());
 
 /**
  * The door itself: the checks every Order must pass, wherever it is being read for.
@@ -157,8 +188,8 @@ const passesTheDoor = (o: OrderWithSignature): boolean =>
  * number of functions: an unregistered feed and a seller-side Order are excluded here
  * exactly as they are there.
  */
-export async function buyableEverywhere(): Promise<OrderWithSignature[]> {
-  const all = await getClient().api.fetchOrders();
+export async function buyableEverywhere({ fresh = false }: ReadOptions = {}): Promise<OrderWithSignature[]> {
+  const all = await fetchBook({ fresh });
   assertReadableShape(all);
   return all.filter(passesTheDoor);
 }

@@ -188,7 +188,7 @@ export async function proposeOrder(
     throw e;
   }
 
-  const spot = await spotPrice(intent.underlying);
+  const spot = await spotPrice(intent.underlying, { fresh: true });
 
   const proposal: TradeProposal = {
     intent,
@@ -234,7 +234,7 @@ export async function proposeChosenOrder(
 ): Promise<{ proposal: TradeProposal; order: OrderWithSignature; economics: OrderEconomics }> {
   // The same `orderIdentity` the reference was minted from -- these two must never
   // drift apart, which is why neither builds its own.
-  const fresh = (await buyableOrders(intent.underlying)).find((o) => orderIdentity(o) === orderIdentity(chosen));
+  const fresh = (await buyableOrders(intent.underlying, { fresh: true })).find((o) => orderIdentity(o) === orderIdentity(chosen));
   if (!fresh) throw new QuoteMoved();
 
   return proposeOrder(intent, fresh, "TRADER");
@@ -263,7 +263,7 @@ export class QuoteMoved extends Error {
 export async function proposeTrade(
   intent: TradeIntent
 ): Promise<{ proposal: TradeProposal; order: OrderWithSignature; economics: OrderEconomics }> {
-  const orders = await buyableOrders(intent.underlying);
+  const orders = await buyableOrders(intent.underlying, { fresh: true });
   if (!orders.length)
     throw new NoSuitableOrder(intent, `Nothing is quoting on ${intent.underlying} right now.`);
 

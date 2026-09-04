@@ -7,10 +7,27 @@
  */
 import { getClient } from "./client.js";
 import { requireUnderlying, SYMBOLS } from "./underlyings.js";
+import { cached, BOOK_TTL_MS } from "./upstream.js";
+import type { ReadOptions } from "./orders.js";
+
+/**
+ * Market data, read once and shared.
+ *
+ * `getMarketData` returns every price at once, so a single entry answers every symbol --
+ * and it was previously fetched separately by the Deck, the depth chart, the board, the
+ * Cover quote and `/book`, several of them on the same six-second tick.
+ *
+ * `fresh` bypasses it for the money path, exactly as `buyableOrders` does: the spot a
+ * Settlement Scenario ladder is drawn against must be the one read at commit time.
+ */
+const marketData = ({ fresh }: { fresh: boolean }): Promise<any> =>
+  fresh
+    ? (getClient().api.getMarketData() as Promise<any>)
+    : cached("market:data", BOOK_TTL_MS, () => getClient().api.getMarketData() as Promise<any>);
 
 /** Every price the protocol is quoting, keyed by symbol. One fetch, six answers. */
-export async function spotPrices(): Promise<Record<string, number>> {
-  const md: any = await getClient().api.getMarketData();
+export async function spotPrices({ fresh = false }: ReadOptions = {}): Promise<Record<string, number>> {
+  const md: any = await marketData({ fresh });
   const prices = md?.prices ?? {};
   const out: Record<string, number> = {};
   for (const symbol of SYMBOLS) {
@@ -27,9 +44,9 @@ export async function spotPrices(): Promise<Record<string, number>> {
  * surface is measured against this number, so a substituted one would be wrong
  * everywhere at once and look completely normal.
  */
-export async function spotPrice(symbol: string): Promise<number> {
+export async function spotPrice(symbol: string, { fresh = false }: ReadOptions = {}): Promise<number> {
   const underlying = requireUnderlying(symbol);
-  const md: any = await getClient().api.getMarketData();
+  const md: any = await marketData({ fresh });
   const p = md?.prices?.[underlying.symbol];
   if (typeof p !== "number") throw new Error(`No ${underlying.symbol} spot price in market data`);
   return p;

@@ -134,6 +134,39 @@ export const RFQ_TENOR_DAYS: readonly RfqTenorDays[] = [7, 14, 30, 60];
  */
 export const RFQ_POLL_MS = 6_000;
 
+/**
+ * Run `tick` on an interval, but only while the tab is actually being looked at.
+ *
+ * Returns a cleanup function, so it can be the whole body of a `useEffect`.
+ *
+ * Two behaviours, and the second is what keeps this invisible to a Trader: polling pauses
+ * while the document is hidden, and fires once immediately on becoming visible again.
+ * Without the catch-up, coming back to a tab would show a stale tape for up to the full
+ * interval -- which would be a worse experience than the waste it replaced.
+ *
+ * Guarded for a server render, where `document` does not exist. If it is missing the
+ * interval simply runs, which is the old behaviour.
+ */
+export function pollWhileVisible(tick: () => void, intervalMs: number): () => void {
+  const hidden = () => typeof document !== "undefined" && document.visibilityState === "hidden";
+
+  const timer = setInterval(() => {
+    if (!hidden()) tick();
+  }, intervalMs);
+
+  if (typeof document === "undefined") return () => clearInterval(timer);
+
+  const onVisibility = () => {
+    if (document.visibilityState === "visible") tick();
+  };
+  document.addEventListener("visibilitychange", onVisibility);
+
+  return () => {
+    clearInterval(timer);
+    document.removeEventListener("visibilitychange", onVisibility);
+  };
+}
+
 /** The tape has to look alive without hammering a route that reads the chain. */
 const DECK_POLL_MS = 6000;
 
@@ -985,11 +1018,24 @@ export function useSurface(): Surface {
       .finally(() => setMarketsLoading(false));
   }, []);
 
-  // The tape is only honest if it keeps asking. Cheap: /deck is read-only and local.
-  useEffect(() => {
-    const timer = setInterval(() => void loadDeck(asset, direction, horizonDays), DECK_POLL_MS);
-    return () => clearInterval(timer);
-  }, [asset, direction, horizonDays, loadDeck]);
+  /**
+   * The tape is only honest if it keeps asking -- but only while somebody is looking.
+   *
+   * This comment used to read "Cheap: /deck is read-only and local", which was wrong in a
+   * way that mattered. `/deck` costs a full book read, a market-data read and a
+   * `getBookState` over every Position the indexer has ever recorded; the last of those
+   * alone runs to about three seconds. Nothing about it is local.
+   *
+   * The server now shares those reads between viewers (`upstream.ts`), so the cost of one
+   * more open tab is small -- but a backgrounded tab left open overnight was still firing
+   * every six seconds forever, for a screen nobody was looking at. `pollWhileVisible`
+   * stops that and catches up the moment the Trader comes back, so returning to the tab
+   * never shows a stale tape while waiting for the next tick.
+   */
+  useEffect(
+    () => pollWhileVisible(() => void loadDeck(asset, direction, horizonDays), DECK_POLL_MS),
+    [asset, direction, horizonDays, loadDeck]
+  );
 
   /**
    * The Maker Depth chart's data.
@@ -1033,10 +1079,10 @@ export function useSurface(): Surface {
     void loadDepth(asset, horizonDays, { spinner: true });
   }, [asset, horizonDays, loadDepth]);
 
-  useEffect(() => {
-    const timer = setInterval(() => void loadDepth(asset, horizonDays), DECK_POLL_MS);
-    return () => clearInterval(timer);
-  }, [asset, horizonDays, loadDepth]);
+  useEffect(
+    () => pollWhileVisible(() => void loadDepth(asset, horizonDays), DECK_POLL_MS),
+    [asset, horizonDays, loadDepth]
+  );
 
   const clearSelection = useCallback(() => {
     setSelectedRef(null);
