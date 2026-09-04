@@ -579,6 +579,24 @@ export function useSurface(): Surface {
   const [account, setAccount] = useState<{ userId: string; email: string; avatarUrl: string | null } | null>(
     null
   );
+
+  /**
+   * WHICH account is signed in, as a plain string -- what the wallet effects below depend
+   * on, never the `account` object itself.
+   *
+   * `accountFrom()` builds a fresh object on every auth event, and Supabase fires those
+   * for far more than signing in and out: a token refresh, or the tab regaining focus,
+   * re-emits the same account as a NEW object. Depending on that object re-ran the
+   * reconnect effect at those arbitrary moments -- harmless while already connected
+   * (`connect()` throws `ConnectorAlreadyConnectedError`, which the effect's own catch
+   * swallows), but a genuine reconnect attempt whenever an earlier one had failed and
+   * left the remembered pointer in place. For WalletConnect with a session that has since
+   * died, that attempt is a pairing QR appearing out of nowhere, mid-session, on nothing
+   * more than a token refresh. Keyed on the id, the same account never re-triggers either
+   * effect; a genuinely different one still does.
+   */
+  const accountId = account?.userId ?? null;
+
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [walletConnecting, setWalletConnecting] = useState(false);
   const [walletVerified, setWalletVerified] = useState(false);
@@ -750,16 +768,15 @@ export function useSurface(): Surface {
    */
   const previousAccountIdRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {
-    const currentId = account?.userId ?? null;
-    const changed = previousAccountIdRef.current !== undefined && previousAccountIdRef.current !== currentId;
-    previousAccountIdRef.current = currentId;
+    const changed = previousAccountIdRef.current !== undefined && previousAccountIdRef.current !== accountId;
+    previousAccountIdRef.current = accountId;
     if (!changed) return;
     setWalletAddress(null);
     setRecentWallet(null);
     setWalletVerified(false);
     setWalletVerifying(false);
     setWalletError(null);
-  }, [account]);
+  }, [accountId]);
 
   /**
    * Once an account is known: if a wallet was connected recently enough (a rolling
@@ -788,12 +805,14 @@ export function useSurface(): Surface {
    * every single time, since disconnecting genuinely ends the underlying session) on
    * every tab switch or reload until the TTL happened to lapse on its own.
    *
-   * Gated on `account` for two reasons: ADR-0014 requires signing in before wallet
+   * Gated on `accountId` for two reasons: ADR-0014 requires signing in before wallet
    * actions at all, and `recentConnectionWithinTtl`/`lastConnectedWalletId` now read
    * `wallet.ts`'s account-scoped storage (`setWalletMemoryScope`, set synchronously
    * alongside `setAccount` above) -- attempting this before the account is known would
    * always see empty, unscoped storage and never retry once it resolves. Depending on
-   * `account` is what makes this effect run again the moment that scope is actually set.
+   * `accountId` is what makes this effect run again the moment that scope is actually
+   * set -- and, being a plain string rather than the `account` object, what keeps it
+   * from re-running on every token refresh (see `accountId`'s own comment).
    *
    * Only `verifyIfAlreadyProven` runs after, deliberately, never the full
    * `verifyWalletFor`: this is a page-load effect nobody clicked, so it may only
@@ -811,7 +830,7 @@ export function useSurface(): Surface {
     const showRecentWalletOption = () =>
       void lastConnectedWalletId().then((id) => setRecentWallet(id ? walletOptionFor(id) : null));
 
-    if (!account) return;
+    if (!accountId) return;
 
     const recentId = recentConnectionWithinTtl();
     if (!recentId) {
@@ -830,7 +849,7 @@ export function useSurface(): Surface {
         void verifyIfAlreadyProven(address);
       })
       .catch(showRecentWalletOption);
-  }, [account, verifyIfAlreadyProven]);
+  }, [accountId, verifyIfAlreadyProven]);
 
   const openWalletPicker = useCallback(() => {
     setAvailableWallets(listAvailableWallets());

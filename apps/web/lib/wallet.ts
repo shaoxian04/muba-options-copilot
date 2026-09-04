@@ -70,12 +70,11 @@ function scopedKey(base: string): string | null {
 /**
  * The id `connectWallet`/`walletOptionFor` use for WalletConnect -- must match
  * `@wagmi/connectors`' own `walletConnect()` factory's `id: 'walletConnect'` exactly
- * (confirmed by reading its source), NOT an arbitrary string this app invents. `connect()`
- * persists a successful connection's real `connector.id` as `recentConnectorId`, and
- * `lastConnectedWalletId()` reads that same value back -- a mismatched casing here would
- * make a returning Trader's "reconnect to WalletConnect" option silently fall through to
- * `injectedConnectorFor`, which only recognises MIPD `rdns` strings, and throw
- * `WalletUnavailable` instead of ever reaching WalletConnect.
+ * (confirmed by reading its source), NOT an arbitrary string this app invents. It is what
+ * `rememberConnection` stores and `lastConnectedWalletId()` reads back, so a mismatched
+ * casing here would make a returning Trader's "reconnect to WalletConnect" option silently
+ * fall through to `injectedConnectorFor`, which only recognises MIPD `rdns` strings, and
+ * throw `WalletUnavailable` instead of ever reaching WalletConnect.
  */
 export const WALLETCONNECT_ID = "walletConnect";
 
