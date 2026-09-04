@@ -26,6 +26,7 @@ import { connect, disconnect, getConnection } from "@wagmi/core";
 import { walletConnect as walletConnectFactory } from "@wagmi/connectors/walletConnect";
 import { config } from "./wagmiConfig";
 import {
+  connectedAddress,
   connectWallet,
   disconnectWallet,
   isConnectionFresh,
@@ -356,6 +357,46 @@ describe("connectWallet", () => {
       expect(recentConnectionWithinTtl()).toBeNull();
       await expect(lastConnectedWalletId()).resolves.toBeNull();
     });
+  });
+});
+
+/**
+ * The navigation bug this closes can't be reached from the browser suite: it only bites
+ * WalletConnect (whose connector is cached module-level, so its uid still matches
+ * `config.state.current` after a client-side navigation, making `connect()` throw
+ * `ConnectorAlreadyConnectedError`), and there is no real relay to pair against in a
+ * test. An injected wallet builds a fresh connector every time and reconnects happily,
+ * which is why the e2e navigation case passes either way. This is the seam that can be
+ * checked directly.
+ */
+describe("connectedAddress", () => {
+  afterEach(() => vi.mocked(getConnection).mockReset());
+
+  it("reports the address wagmi is currently connected to", () => {
+    vi.mocked(getConnection).mockReturnValue({
+      address: "0xabc",
+      isConnected: true,
+    } as unknown as ReturnType<typeof getConnection>);
+
+    expect(connectedAddress()).toBe("0xabc");
+  });
+
+  it("reports nothing when wagmi is not connected", () => {
+    vi.mocked(getConnection).mockReturnValue({
+      address: undefined,
+      isConnected: false,
+    } as unknown as ReturnType<typeof getConnection>);
+
+    expect(connectedAddress()).toBeNull();
+  });
+
+  it("reports nothing mid-connect, when a connector is known but no address is yet", () => {
+    vi.mocked(getConnection).mockReturnValue({
+      address: undefined,
+      isConnected: true,
+    } as unknown as ReturnType<typeof getConnection>);
+
+    expect(connectedAddress()).toBeNull();
   });
 });
 

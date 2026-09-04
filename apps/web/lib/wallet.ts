@@ -280,6 +280,26 @@ export function resetWalletConnectConnectorForTests(): void {
 }
 
 /**
+ * The address wagmi is connected to right now, or null if it isn't connected.
+ *
+ * Exists because wagmi's `config` is a module-level singleton while `/` and `/cover`
+ * each mount their own `useSurface()`: navigating between them resets React's copy of
+ * the wallet state to nothing, but the underlying connection is still live. Reconnecting
+ * from scratch there is at best wasted work, and for WalletConnect it actively fails --
+ * `walletConnectConnector` hands back the same cached connector, whose `uid` still
+ * matches `config.state.current`, so `connect()` throws `ConnectorAlreadyConnectedError`
+ * and the surface is left showing "Connect wallet" over a wallet that never left. Only a
+ * full reload cleared it, by discarding the module state that made them match.
+ *
+ * Reading the live connection instead is both cheaper and truthful: if wagmi says an
+ * address is connected, it is, whatever any remembered pointer or TTL says.
+ */
+export function connectedAddress(): string | null {
+  const { address, isConnected } = getConnection(config);
+  return isConnected && address ? address : null;
+}
+
+/**
  * Connects the wallet the Trader picked from `listAvailableWallets()` and returns its
  * address. Every id but `WALLETCONNECT_ID` names an `rdns` MIPD detected. WalletConnect
  * is built on-demand too, via a dynamic import -- `@wagmi/connectors/walletConnect` pulls

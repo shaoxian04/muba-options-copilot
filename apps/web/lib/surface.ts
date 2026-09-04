@@ -51,6 +51,7 @@ import {
   type SessionState,
 } from "./api";
 import {
+  connectedAddress,
   connectWallet as connectWalletById,
   disconnectWallet as disconnectWalletById,
   lastConnectedWalletId,
@@ -833,6 +834,19 @@ export function useSurface(): Surface {
       void lastConnectedWalletId().then((id) => setRecentWallet(id ? walletOptionFor(id) : null));
 
     if (!accountId) return;
+
+    // Already connected -- adopt it rather than connect again. `/` and `/cover` each
+    // mount their own `useSurface()`, so a navigation between them resets this state
+    // while wagmi's own connection (a module-level singleton) is still live. See
+    // `connectedAddress` for why re-connecting there doesn't just waste a round trip
+    // but actively fails for WalletConnect.
+    const live = connectedAddress();
+    if (live) {
+      setWalletAddress(live);
+      void verifyIfAlreadyProven(live);
+      showRecentWalletOption();
+      return;
+    }
 
     const recentId = recentConnectionWithinTtl();
     if (!recentId) {

@@ -1105,6 +1105,33 @@ test.describe("wallet connection survives a refresh, within a TTL", () => {
     await expect(page.getByTestId("wallet-address")).toBeVisible();
   });
 
+  /**
+   * `/` and `/cover` each mount their own `useSurface()`, so navigating between them
+   * resets the wallet half of that state to nothing while wagmi's own connection (a
+   * module-level `config`) is still very much live. The header must not flip back to
+   * "Connect wallet" in the gap -- it did, and only a full reload put the address back.
+   */
+  test("stays connected across a Copilot <-> Cover navigation, with no reload", async ({ page }) => {
+    await stubApi(page);
+    await installFakeWallet(page);
+    await signIn(page);
+    await page.goto("/");
+
+    await page.getByTestId("connect-wallet").click();
+    await page.getByTestId("wallet-option-test.fakewallet0").click();
+    const address = await page.getByTestId("wallet-address").innerText();
+
+    await page.locator("header.shell-header nav").getByRole("link", { name: "Cover" }).click();
+    await expect(page).toHaveURL("/cover");
+    await expect(page.getByTestId("wallet-address")).toHaveText(address);
+    await expect(page.getByTestId("connect-wallet")).toHaveCount(0);
+
+    await page.locator("header.shell-header nav").getByRole("link", { name: "Copilot" }).click();
+    await expect(page).toHaveURL("/");
+    await expect(page.getByTestId("wallet-address")).toHaveText(address);
+    await expect(page.getByTestId("connect-wallet")).toHaveCount(0);
+  });
+
   test("reconnects and re-verifies silently within the window -- no picker, no Verify click", async ({ page }) => {
     await stubApi(page);
     await installFakeWallet(page);
