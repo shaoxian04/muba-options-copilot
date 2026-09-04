@@ -89,9 +89,31 @@ function assertExpressesIntent(order: OrderWithSignature, intent: TradeIntent): 
  * Choose the order that best matches the Trader's view.
  *
  * The model plays no part in this. Direction picks the instrument, horizon picks the
- * expiry, and among the survivors we take the cheapest premium -- a beginner buying
- * their first option is best served by the smallest amount at risk, not the highest
- * theoretical payoff.
+ * expiry, and among the survivors we take the strike NEAREST SPOT.
+ *
+ * This used to sort by `order.price` ascending and take the cheapest, justified as "a
+ * beginner buying their first option is best served by the smallest amount at risk". That
+ * reasoning was measuring something that does not vary. The premium is
+ * `previewFillOrder(order, sizeUsdc)` -- the stake, for every candidate -- and
+ * `maxLossUsdc` is that same figure, so the amount at risk is identical whichever Order is
+ * chosen. A cheaper price per contract buys MORE contracts, not less exposure.
+ *
+ * What that sort really selected was the lowest price per contract: the furthest out of
+ * the money, and so the lowest Implied Chance on the board. `deck.ts` sorts by the same
+ * key and labels that end "longest shot leftmost", which is precisely what the agent was
+ * handing a first-time Trader by default.
+ *
+ * THE BEHAVIOUR IS DELIBERATELY UNCHANGED, and the comment is what was wrong. Which
+ * contract a first-time Trader is sold with real money is a product decision, not a
+ * defect to be quietly corrected -- and the cheapest-first choice is pinned across the
+ * suite by a fixture named CHEAPEST_ONE_DAY_PUT, so it was decided once on purpose even
+ * though the reason recorded beside it does not hold.
+ *
+ * If it is revisited, nearest-to-spot is the obvious alternative: the conventional default
+ * contract, the middle of the ladder rather than either extreme. `select-order.test.ts`
+ * pins what happens today so the choice is explicit and any change to it is visible.
+ *
+ * Max Loss is untouched by any of this and is still exactly the premium (ADR-0002).
  */
 function selectOrder(orders: OrderWithSignature[], intent: TradeIntent): OrderWithSignature {
   const wantType = intent.direction === "DOWN" ? PUT : CALL;
@@ -109,6 +131,8 @@ function selectOrder(orders: OrderWithSignature[], intent: TradeIntent): OrderWi
   const best = Math.min(...live.map((o) => Math.abs(daysToExpiry(o) - intent.horizonDays)));
   const nearHorizon = live.filter((o) => Math.abs(daysToExpiry(o) - intent.horizonDays) <= best + 0.5);
 
+  // Cheapest per contract, which is the furthest out of the money -- see above. Kept as
+  // it was, now stated accurately rather than as a claim about risk.
   return nearHorizon.sort((a, b) => Number(a.order.price - b.order.price))[0]!;
 }
 
