@@ -37,11 +37,26 @@ test.describe("dragging a card into the chat panel", () => {
     await page.goto("/");
     await page.getByTestId("card").first().dragTo(page.locator(".chat"));
 
-    const answer = page.locator(".coin-answer").first();
-    await expect(answer).toContainText("Price outlook");
-    await expect(answer).toContainText("Risk / benefit");
-    await expect(answer).toContainText("Indicators");
+    // All three analyses still reach the surface -- what changed is that they are no
+    // longer three paragraphs of prose. The comparison and the indicators are the
+    // headline; the reasoning is one disclosure down, collapsed but never truncated.
+    const answer = page.getByTestId("insight-card").first();
+    await expect(answer).toBeVisible();
+
+    // Price outlook: the strike-vs-range reading, plus the forecast's own confidence.
     await expect(page.getByTestId("strike-outlook")).toBeVisible();
+    await expect(page.getByTestId("strike-outlook")).toContainText("confidence");
+    await expect(page.getByTestId("insight-band")).toBeVisible();
+
+    // Indicators: chips rather than a comma-spliced sentence.
+    await expect(answer.locator(".ins-chip").filter({ hasText: "RSI" })).toBeVisible();
+
+    // Risk / benefit: present, under "Why". Collapsed is not missing -- open it and
+    // assert the real text is there, so a regression that DROPS it still fails.
+    await expect(answer.locator(".ins-why summary")).toBeVisible();
+    await answer.locator(".ins-why summary").click();
+    await expect(answer.locator(".ins-why")).toContainText(fixtures.forecastAskEth.ETH.riskBenefit.upside);
+    await expect(answer.locator(".ins-why")).toContainText(fixtures.forecastAskEth.ETH.answer);
 
     const { violations } = await new AxeBuilder({ page }).include(".chat").analyze();
     const bad = violations.filter((v) => v.impact === "critical" || v.impact === "serious");
@@ -93,7 +108,7 @@ test.describe("dragging a card into the chat panel", () => {
     await page.goto("/");
     await page.getByTestId("card").first().dragTo(page.locator(".chat"));
 
-    const answer = page.locator(".coin-answer").first();
+    const answer = page.getByTestId("insight-card").first();
     await expect(answer).toContainText("No clear predicted direction to match a strike against.");
     await expect(page.getByTestId("nearest-order-preview")).toHaveCount(0);
   });
@@ -167,7 +182,7 @@ test.describe("dragging a card whose AI forecast has a real predicted direction"
     // Two card-drop answers are now in the log, but only the newest one is still being
     // searched -- an older drop's preview does not linger once a newer one exists.
     await expect(page.getByTestId("nearest-order-preview")).toHaveCount(1);
-    await expect(page.locator(".coin-answer")).toHaveCount(2);
+    await expect(page.getByTestId("insight-card")).toHaveCount(2);
   });
 });
 

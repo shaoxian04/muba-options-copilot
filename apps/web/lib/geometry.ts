@@ -639,3 +639,64 @@ export function expectedMoveIndex(
   });
   return best;
 }
+
+/* ==================================================================================
+ * The strike-vs-forecast band (the Insights card-drop answer).
+ *
+ * A dropped Card's strike, the AI's own predicted range for the same horizon, and
+ * today's spot, laid out on one horizontal axis to scale. Coordinates and never text:
+ * the labels drawn against these offsets are the strings the card and the forecast
+ * already carry, and the "below range / inside / above range" reading a Trader takes
+ * from it is `compareStrikeToRange` in `lib/strikeOutlook.ts`, not a number measured
+ * off this bar.
+ *
+ * This is the one place in the Insights panel that does arithmetic on prices, and it
+ * is allowed here for the same reason `coverPriceLine` above is: what comes out is a
+ * CSS percentage, never a figure anybody reads.
+ * ================================================================================== */
+
+export interface StrikeBand {
+  /** Left offset of the strike marker, 0-100, as a CSS percentage. */
+  strikeX: number;
+  /** The predicted range bar. */
+  range: { left: number; width: number };
+  /** Midpoint of that bar, so its label can be centred without the caller halving anything. */
+  rangeMidX: number;
+  /** Where today's price sits. */
+  spotX: number;
+}
+
+/**
+ * Lay out strike, predicted range and spot on one axis.
+ *
+ * Padded 12% beyond the extremes on each side so a marker never lands on the very edge
+ * of the track (the same framing trick `coverPriceLine` uses, tightened because this
+ * band is narrower). The degenerate all-equal case falls back to a proportional pad so
+ * the division can never be by zero.
+ */
+export function strikeBand(
+  strikeValue: number,
+  rangeLow: number,
+  rangeHigh: number,
+  spotValue: number
+): StrikeBand {
+  const values = [strikeValue, rangeLow, rangeHigh, spotValue];
+  const rawLo = Math.min(...values);
+  const rawHi = Math.max(...values);
+  const span = rawHi - rawLo;
+  const pad = span > 0 ? span * 0.12 : Math.max(1, rawHi * 0.02);
+  const lo = rawLo - pad;
+  const hi = rawHi + pad;
+  const x = (v: number) => ((v - lo) / (hi - lo)) * 100;
+
+  const left = x(rangeLow);
+  const right = x(rangeHigh);
+  return {
+    strikeX: x(strikeValue),
+    range: { left, width: right - left },
+    // Returned rather than left to the caller: `left + width / 2` in a component is
+    // still a component doing arithmetic, and no-arithmetic.test.ts cannot see it.
+    rangeMidX: left + (right - left) / 2,
+    spotX: x(spotValue),
+  };
+}

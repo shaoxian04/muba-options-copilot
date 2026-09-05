@@ -384,6 +384,15 @@ button[disabled] {
   flex-direction: column;
   gap: 13px;
 }
+/*
+  `.log` is a flex column, so every child inherits the "shrink to fit the container"
+  default. While every child was a `<p>` that never showed; the moment one became a card
+  (`.chat-card`, `.ins-card`) a tall one silently CLIPPED instead of scrolling -- found
+  by building it, and the first render of the prototype was cut in half by exactly this.
+*/
+.chat .log > * {
+  flex: 0 0 auto;
+}
 .chat .from-trader {
   align-self: flex-end;
   max-width: 88%;
@@ -3171,4 +3180,373 @@ button[disabled] {
   font-size: 12px;
   font-weight: 400;
   color: var(--ink);
+}
+
+/* ================= the Copilot's proposal Card (Trade tab) ================= */
+/*
+  What a typed sentence answers with: the Order the Trade Agent named, as a Card the
+  Trader presses themselves. The confirmation no longer opens by itself -- see the
+  comment in `surface.ts`'s chat path for why -- so this Card is the door, and it is
+  built to look like one.
+
+  Styled off `.suggestion-card`, the other thing in this panel that is a card rather
+  than a sentence, so the two read as one family. ADR-0009: nothing here pulses,
+  celebrates or counts down; the loud button in this product is Practice Run, and it
+  lives in the confirmation this opens.
+*/
+.chat-card {
+  padding: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--lift);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.chat-card-hd {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.chat-card-k {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--hue-deep);
+}
+.chat-card-chance {
+  font-size: 11px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+/* The trade as a belief, not an instrument -- the same translation ADR-0009 puts at the
+   top of the confirmation, one step earlier. CALL and PUT never appear here. */
+.chat-card-belief {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  line-height: 1.3;
+}
+.chat-card-figs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+}
+.chat-card-fig {
+  min-width: 0;
+}
+.chat-card-fig .k {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 1px;
+}
+.chat-card-fig .v {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.chat-card-place {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 14px;
+  border-radius: 10px;
+  border: 0;
+  background: var(--hue);
+  color: var(--hue-ink);
+  cursor: pointer;
+}
+.chat-card-place:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.chat-card-foot {
+  margin: 0;
+  font-size: 11px;
+  /* `--ink-2`, not `--ink-3`: at this size axe-core flags `--ink-3` on this surface,
+     the same way the note above `.chat .from-copilot .disclaimer` already records. */
+  color: var(--ink-2);
+}
+
+/* ================= the card-drop insight card (Insights tab) ================= */
+/*
+  A dropped Card's analysis. The two probabilities are the headline; the essay is one
+  click down. See `components/InsightCard.tsx` for why there is no verdict badge.
+*/
+.ins-card {
+  padding: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--lift);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+.ins-card-hd {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line-2);
+}
+.ins-card-k {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* The dropped Card restated, in place of the 40-word extractor question. */
+.ins-echo {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.ins-echo .sym {
+  font-weight: 700;
+  color: var(--ink);
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+/* Call and put stay blue and orange here too -- the pair `tests/support/ramp.test.ts`
+   holds to dE 8, never red/green. The direction is also spelled out in words beside it,
+   so the colour is reinforcement and never the only cue. */
+.ins-echo .dir {
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+.ins-echo .dir.down {
+  background: var(--put-soft);
+  color: var(--put);
+}
+.ins-echo .dir.up {
+  background: var(--call-soft);
+  color: var(--call);
+}
+.ins-echo .dot {
+  color: var(--ink-3);
+}
+.ins-echo .k {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+/* The echo replaces the text inside the trader bubble, so the bubble's own text padding
+   would double up around it. */
+.chat .from-trader.asked-by-card {
+  padding: 7px 11px;
+}
+
+.ins-cmp {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.ins-cmp > div {
+  min-width: 0;
+}
+.ins-cmp .k {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 4px;
+}
+.ins-cmp .big {
+  display: block;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.ins-cmp .sub {
+  display: block;
+  font-size: 11px;
+  color: var(--ink-3);
+  margin-top: 3px;
+}
+.ins-cmp .ai {
+  display: block;
+  font-size: 13px;
+  color: var(--ink);
+  line-height: 1.35;
+}
+.ins-cmp .ai em {
+  font-style: normal;
+  color: var(--hue-deep);
+  font-weight: 600;
+}
+.ins-cmp .ai.muted {
+  color: var(--ink-2);
+}
+
+/*
+  Strike, predicted range and spot on one axis. The band carries FIGURES only -- at the
+  panel's real width the strike label and the range label overlap the moment either
+  carries a trailing word, so the words live in `.ins-legend` instead. Found by
+  building it at 344px, not by reasoning about it.
+*/
+.ins-band-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.ins-band {
+  position: relative;
+  height: 38px;
+}
+.ins-band .axis {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 21px;
+  height: 2px;
+  background: var(--line);
+  border-radius: 2px;
+}
+.ins-band .rng {
+  position: absolute;
+  top: 17px;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--hue-soft);
+  border: 1px solid var(--hue);
+}
+.ins-band .spot {
+  position: absolute;
+  top: 13px;
+  width: 2px;
+  height: 18px;
+  background: var(--ink-2);
+}
+.ins-band .strike {
+  position: absolute;
+  top: 10px;
+  width: 2px;
+  height: 24px;
+  background: var(--put);
+}
+.ins-band .tag {
+  position: absolute;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  transform: translateX(-50%);
+}
+.ins-band .tag.st {
+  bottom: 0;
+  color: var(--put);
+  font-weight: 600;
+}
+.ins-band .tag.rl {
+  bottom: 0;
+  color: var(--hue-deep);
+}
+.ins-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 10px;
+  color: var(--ink-2);
+}
+.ins-legend .sw {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.ins-legend .sw.strike {
+  background: var(--put);
+}
+.ins-legend .sw.rng {
+  background: var(--hue);
+}
+.ins-legend .sw.spot {
+  background: var(--ink-2);
+}
+
+.ins-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ins-chip {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.ins-chip b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* The essay, demoted but never truncated. */
+.ins-why {
+  border-top: 1px solid var(--line-2);
+  padding-top: 9px;
+}
+.ins-why > summary {
+  cursor: pointer;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ins-why > summary::-webkit-details-marker {
+  display: none;
+}
+.ins-why > summary::before {
+  content: "\25B8";
+  font-size: 9px;
+  transition: transform 0.12s;
+}
+.ins-why[open] > summary::before {
+  transform: rotate(90deg);
+}
+.ins-why p {
+  margin: 9px 0 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.ins-why p strong {
+  color: var(--ink);
+}
+.ins-card .disclaimer {
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.45;
 }
