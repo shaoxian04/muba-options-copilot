@@ -1650,40 +1650,33 @@ export function useSurface(): Surface {
       setPracticeDone(false);
       try {
         const answer = await proposeChat({ prompt });
-        setResult(answer);
         setQuoteMoved(false);
 
-        if (answer.intent) {
-          const askingAsset = answer.intent.underlying ?? asset;
-          const asking = answer.intent.direction ?? direction;
-          const askingHorizon = answer.intent.horizonDays ?? horizonDays;
-          const askingSize = answer.intent.sizeUsdc ?? STAKE_USDC;
-
-          if (askingAsset !== asset || asking !== direction || askingHorizon !== horizonDays) {
-            clearSelection();
-            expiryChosen.current = true;
-            setAssetState(askingAsset);
-            setDirectionState(asking);
-            setHorizonState(askingHorizon);
-            await loadDeck(askingAsset, asking, askingHorizon, { spinner: true });
-          }
-          setSizeUsdcState(askingSize);
-        }
-
         if (answer.kind === "PROPOSAL") {
-          setSelectedRef(answer.cardRef);
-          if (answer.proposal.chosenBy === "AGENT") setDealtRef(answer.cardRef);
-          shownQuote.current = { ref: answer.cardRef, perContract: answer.proposal.figures.perContractUsd.display };
-
-          // The answer is two lines: the agent's reasoning, then the Order it named as a
-          // Card the Trader presses themselves.
+          // NOTHING on the right moves.
           //
-          // The confirmation deliberately does NOT open here. It used to, which made a
-          // typed sentence the one path in the product that put a spend a single click
-          // away without the Trader having chosen to look at it -- the shape ADR-0009
-          // removed the commit bar to avoid. Every other door (a Deck Card, an accepted
-          // Suggestion, a matched order) is a click on something already on screen, and
-          // this one now is too.
+          // This used to read the answer's Trade Intent and drag the whole surface after
+          // it -- asset, direction, expiry, stake, and a Deck reload -- so a sentence
+          // typed on the left silently replaced the Cards the Trader was reading on the
+          // right. The Deck is the Trader's own browsing context; a question about a
+          // 2-day ETH put is not an instruction to stop looking at whatever they had
+          // open.
+          //
+          // Nothing is lost by staying put, because the answer is self-contained: the
+          // Card below carries its own underlying, direction and expiry, and "Place
+          // order" hands all three to `pick`, which switches the Deck at that point --
+          // when the Trader has actually chosen to go there. `selectedRef`/`dealtRef`
+          // are deliberately not set either: they ring a Card in the Deck on screen, and
+          // this Order is not in it.
+          //
+          // The confirmation deliberately does NOT open here either. It used to, which
+          // made a typed sentence the one path in the product that put a spend a single
+          // click away without the Trader having chosen to look at it -- the shape
+          // ADR-0009 removed the commit bar to avoid.
+          //
+          // `result` stays untouched for the same reason: it drives the payoff strip and
+          // the "the agent picked $X" tag above the Deck, and naming a strike that is not
+          // in the row underneath it is worse than saying nothing.
           const expl = answer.explanation || `I found the ${answer.proposal.figures.strike.display} option for you.`;
           say(expl);
 
@@ -1703,9 +1696,19 @@ export function useSurface(): Surface {
             expiry: f.expiry,
           });
         } else if (answer.kind === "NO_ORDER") {
+          // Said in the chat and nowhere else. "Nothing matched" is an answer to what was
+          // typed, not a condition of the book the Trader is browsing -- the Deck on the
+          // right is still full of perfectly good Cards, and replacing it with an
+          // empty-Deck halt would be this panel lying about the market.
           shownQuote.current = { ref: null, perContract: null };
           say(answer.message || "No suitable order found for that horizon and direction.");
         } else if (answer.kind === "VETO") {
+          // The one thing a typed sentence still puts on the right, deliberately. ADR-0006
+          // makes the Review Agent's veto the only word that can stop a trade, and
+          // ADR-0009 says it has to read across a room -- a refusal that appears only as
+          // another grey line in a transcript is a refusal that can be scrolled past.
+          // Nothing is priced or opened either way; this is louder, not further along.
+          setResult(answer);
           shownQuote.current = { ref: null, perContract: null };
           say(answer.explanation || "Review agent vetoed this trade intent.");
         }
@@ -1729,7 +1732,9 @@ export function useSurface(): Surface {
         setBusy(false);
       }
     },
-    [asset, clearSelection, direction, heard, horizonDays, loadDeck, say]
+    // `asset`, `direction`, `horizonDays`, `clearSelection` and `loadDeck` are all gone
+    // from here: this path no longer reads or moves the Deck's selection at all.
+    [heard, say, showProposal]
   );
 
   /**

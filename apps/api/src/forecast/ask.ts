@@ -8,6 +8,7 @@
 import {
   ChatQuery,
   CoinAskResult,
+  ForecastDisplay,
   FORECAST_DISCLAIMER,
   type ChatQueryRequest,
   type ConversationTurn,
@@ -27,6 +28,7 @@ import { assessRiskBenefit } from "./riskBenefit.js";
 import { fetchIndicators } from "./indicators.js";
 import { synthesizeAnswer, type CoinSummary } from "./answer.js";
 import { describeHistory } from "./conversationHistory.js";
+import { usd } from "../format.js";
 
 export class IncompleteQuestion extends Error {}
 
@@ -109,6 +111,28 @@ interface GatheredCoin {
   news?: NewsAnalysis;
   price?: PricePrediction;
   riskBenefit?: RiskBenefitView;
+}
+
+/**
+ * The gathered numbers, as the strings the surface renders.
+ *
+ * Node's job, not the browser's -- see `ForecastDisplay` in packages/shared for why
+ * these cannot hang off `Indicators` or `PricePrediction` themselves. Nothing here
+ * derives a new figure; each one is a value already in `GatheredCoin`, formatted once.
+ *
+ * RSI keeps one decimal, matching how `answer.ts` already says it aloud in prose, so a
+ * Trader reading the chip and the sentence never sees the same indicator two ways.
+ */
+function displayFor(data: GatheredCoin): ForecastDisplay {
+  const i = data.indicators;
+  return {
+    spot: usd(data.market.price).display,
+    predictedRangeLow: data.price ? usd(data.price.predictedRange.low).display : null,
+    predictedRangeHigh: data.price ? usd(data.price.predictedRange.high).display : null,
+    rsi14: i?.rsi14 == null ? null : i.rsi14.toFixed(1),
+    sma20: i?.sma20 == null ? null : usd(i.sma20).display,
+    ema20: i?.ema20 == null ? null : usd(i.ema20).display,
+  };
 }
 
 /** Injected so the suite stays network-free, the same way marketData already is. */
@@ -219,6 +243,7 @@ export async function answerQuestion(
         if (s.data.news) result.news = s.data.news;
         if (s.data.price) result.price = s.data.price;
         if (s.data.riskBenefit) result.riskBenefit = s.data.riskBenefit;
+        result.display = displayFor(s.data);
 
         // A coin's own gathered data may be market-only, but its answer can still
         // legitimately reference another coin's opinion via `otherCoins` -- the

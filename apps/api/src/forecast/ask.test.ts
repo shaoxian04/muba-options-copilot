@@ -660,6 +660,40 @@ test("answerQuestion gathers indicators when the question asks for them", async 
   assert.equal(results.ETH.error, undefined);
 });
 
+test("every result carries display strings, so the browser never formats a figure itself", async () => {
+  const results = await answerQuestion("is ETH oversold right now?", {
+    create: indicatorsCreate(),
+    marketData: workingMarketDataDeps,
+    indicators: async () => ({ ...stubIndicators, rsi14: 62.17234190576524, ema20: 2356.069635087721 }),
+  });
+
+  // The exact failure this exists to stop: rendering `indicators.rsi14` raw put
+  // "RSI(14) 62.17234190576524" on the Insights card, and the fix a component reaches
+  // for -- `.toFixed(1)` -- is banned in apps/web by no-arithmetic.test.ts. So the
+  // rounding decision is made here, once, beside the number it came from.
+  assert.equal(results.ETH.display?.rsi14, "62.2");
+  assert.equal(results.ETH.display?.ema20, "$2,356.07");
+  assert.equal(results.ETH.display?.sma20, "$2,600.00");
+  assert.equal(results.ETH.display?.spot, "$2,451.00");
+  // No price forecast was asked for, so there is no range -- null, never a stray "$NaN".
+  assert.equal(results.ETH.display?.predictedRangeLow, null);
+  assert.equal(results.ETH.display?.predictedRangeHigh, null);
+});
+
+test("display leaves an indicator inside its warm-up window null rather than inventing one", async () => {
+  const results = await answerQuestion("is ETH oversold right now?", {
+    create: indicatorsCreate(),
+    marketData: workingMarketDataDeps,
+    indicators: async () => ({ ...stubIndicators, rsi14: null, sma20: null, ema20: null }),
+  });
+
+  assert.equal(results.ETH.display?.rsi14, null);
+  assert.equal(results.ETH.display?.sma20, null);
+  assert.equal(results.ETH.display?.ema20, null);
+  // Spot is market data, not an indicator -- it is there regardless.
+  assert.equal(results.ETH.display?.spot, "$2,451.00");
+});
+
 test("an indicators-only answer carries NO disclaimer -- they are computed fact, not opinion", async () => {
   const results = await answerQuestion("is ETH oversold right now?", {
     create: indicatorsCreate(),

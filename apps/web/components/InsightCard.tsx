@@ -54,13 +54,31 @@ export function CardEcho({ card }: { card: CardContext }) {
 /**
  * Strike, predicted range and spot on one axis.
  *
- * The band carries FIGURES only and the words live in the legend below it: at the 344px
- * the panel is actually rendered at, a "$2,340 strike" label and a "$2,400-$2,620
- * predicted" label overlap the moment either carries a trailing word. Found by building
- * it, not by reasoning about it.
+ * The band itself carries NO text. Labels positioned along it collide at the 344px the
+ * panel is actually rendered at -- a strike sitting just outside the range puts its
+ * label straight through the range's, and no amount of nudging fixes it for every
+ * strike, because where they land is the data. So the figures move into a readout
+ * underneath, where a flex row can wrap them instead of overlapping them, and each one
+ * carries the swatch that ties it to its mark on the band.
+ *
+ * That readout is also what names today's price: a Trader reading "the strike is below
+ * the predicted range" needs to know where the coin is trading NOW to know whether that
+ * is far away or nearly here.
  */
-function Band({ card, price, spotValue }: { card: CardContext; price: NonNullable<CoinAskResult["price"]>; spotValue: number }) {
+function Band({
+  card,
+  price,
+  spotValue,
+  display,
+}: {
+  card: CardContext;
+  price: NonNullable<CoinAskResult["price"]>;
+  spotValue: number;
+  display: CoinAskResult["display"];
+}) {
   const b = strikeBand(card.strikeValue, price.predictedRange.low, price.predictedRange.high, spotValue);
+  const low = display?.predictedRangeLow;
+  const high = display?.predictedRangeHigh;
 
   return (
     <div className="ins-band-wrap">
@@ -69,27 +87,40 @@ function Band({ card, price, spotValue }: { card: CardContext; price: NonNullabl
         <div className="rng" style={{ left: `${b.range.left}%`, width: `${b.range.width}%` }} />
         <div className="spot" style={{ left: `${b.spotX}%` }} />
         <div className="strike" style={{ left: `${b.strikeX}%` }} />
-        <span className="tag st" style={{ left: `${b.strikeX}%` }}>
-          {card.strikeDisplay}
-        </span>
-        <span className="tag rl" style={{ left: `${b.rangeMidX}%` }}>
-          {price.predictedRange.low}–{price.predictedRange.high}
-        </span>
       </div>
-      <div className="ins-legend">
-        <span>
-          <i className="sw strike" />
-          your strike
-        </span>
-        <span>
-          <i className="sw rng" />
-          predicted range
-        </span>
-        <span>
-          <i className="sw spot" />
-          spot now
-        </span>
-      </div>
+      {/*
+        The legend and the numbers are one thing, not two: a swatch beside its own value
+        says which mark on the band it is, and costs a line nobody has to cross-reference.
+      */}
+      <dl className="ins-readout" data-testid="insight-readout">
+        <div>
+          <dt>
+            <i className="sw strike" />
+            your strike
+          </dt>
+          <dd>{card.strikeDisplay}</dd>
+        </div>
+        {low && high ? (
+          <div>
+            <dt>
+              <i className="sw rng" />
+              predicted
+            </dt>
+            <dd>
+              {low}–{high}
+            </dd>
+          </div>
+        ) : null}
+        {display?.spot ? (
+          <div>
+            <dt>
+              <i className="sw spot" />
+              spot now
+            </dt>
+            <dd>{display.spot}</dd>
+          </div>
+        ) : null}
+      </dl>
     </div>
   );
 }
@@ -151,8 +182,9 @@ export function InsightCard({
           <div className="coin-detail">
             <span className="lbl">Price outlook</span>
             <span>
-              {price.direction}, predicted {price.predictedRange.low}–{price.predictedRange.high}, confidence{" "}
-              {price.confidence}. {price.rationale}
+              {price.direction}, predicted {result.display?.predictedRangeLow ?? price.predictedRange.low}–
+              {result.display?.predictedRangeHigh ?? price.predictedRange.high}, confidence {price.confidence}.{" "}
+              {price.rationale}
             </span>
           </div>
         ) : null}
@@ -168,8 +200,8 @@ export function InsightCard({
           <div className="coin-detail">
             <span className="lbl">Indicators</span>
             <span>
-              RSI(14) {result.indicators.rsi14 ?? "n/a"}, SMA(20) {result.indicators.sma20 ?? "n/a"}, EMA(20){" "}
-              {result.indicators.ema20 ?? "n/a"}
+              RSI(14) {result.display?.rsi14 ?? "n/a"}, SMA(20) {result.display?.sma20 ?? "n/a"}, EMA(20){" "}
+              {result.display?.ema20 ?? "n/a"}
             </span>
           </div>
         ) : null}
@@ -221,23 +253,31 @@ export function InsightCard({
         </div>
       </div>
 
-      {price && spotValue !== null ? <Band card={card} price={price} spotValue={spotValue} /> : null}
+      {price && spotValue !== null ? (
+        <Band card={card} price={price} spotValue={spotValue} display={result.display} />
+      ) : null}
 
-      {result.indicators || price ? (
+      {/*
+        Read off `display`, never off `indicators` -- the raw fields are full float
+        precision and render as "RSI(14) 62.17234190576524". The server decides how many
+        digits a Trader sees (`displayFor` in apps/api/src/forecast/ask.ts); a chip that
+        has no display string simply does not appear, rather than showing the raw one.
+      */}
+      {result.display || price ? (
         <div className="ins-chips">
-          {result.indicators?.rsi14 != null ? (
+          {result.display?.rsi14 ? (
             <span className="ins-chip">
-              RSI(14) <b>{result.indicators.rsi14}</b>
+              RSI(14) <b>{result.display.rsi14}</b>
             </span>
           ) : null}
-          {result.indicators?.sma20 != null ? (
+          {result.display?.sma20 ? (
             <span className="ins-chip">
-              20d SMA <b>{result.indicators.sma20}</b>
+              20d SMA <b>{result.display.sma20}</b>
             </span>
           ) : null}
-          {result.indicators?.ema20 != null ? (
+          {result.display?.ema20 ? (
             <span className="ins-chip">
-              20d EMA <b>{result.indicators.ema20}</b>
+              20d EMA <b>{result.display.ema20}</b>
             </span>
           ) : null}
           {price ? (

@@ -144,6 +144,21 @@ const forecastAskEth = {
       disclaimer: FORECAST_DISCLAIMER,
       generatedAt: "2026-01-15T12:00:00.000Z",
     },
+    /*
+      What `displayFor` in apps/api/src/forecast/ask.ts derives from the numbers above.
+      Present here so the browser suite renders what the real route sends: the surface
+      reads these and never the raw fields, because a raw `rsi14` is full float
+      precision ("62.17234190576524") and formatting it in a component is banned by
+      `tests/support/no-arithmetic.test.ts`.
+    */
+    display: {
+      spot: "$2,445.49",
+      predictedRangeLow: "$2,380.00",
+      predictedRangeHigh: "$2,500.00",
+      rsi14: "54.2",
+      sma20: "$2,410.11",
+      ema20: "$2,420.50",
+    },
     riskBenefit: {
       symbol: "ETH",
       horizon: "3 days",
@@ -181,6 +196,7 @@ const forecastAskEthUp = {
       predictedRange: { low: 2500, high: 2600 },
       rationale: "Momentum has turned clearly positive, so a range centred above the current price looks reasonable.",
     },
+    display: { ...forecastAskEth.ETH.display, predictedRangeLow: "$2,500.00", predictedRangeHigh: "$2,600.00" },
   },
 };
 
@@ -201,6 +217,7 @@ const forecastAskEthUpMulti = {
       predictedRange: { low: 2580, high: 2620 },
       rationale: "Momentum has turned clearly positive, so a range centred above the current price looks reasonable.",
     },
+    display: { ...forecastAskEth.ETH.display, predictedRangeLow: "$2,580.00", predictedRangeHigh: "$2,620.00" },
   },
 };
 
