@@ -18,9 +18,15 @@ import { usd } from "../format.js";
 /**
  * The buffer between the Liquidation Price and the Target Strike.
  *
- * A put struck AT the Liquidation Price is useless: it starts paying at the exact moment
- * the bots are already taking the collateral. The buffer is what buys the Borrower time
- * to act while the money is arriving. (ADR-0008)
+ * A put struck AT the Liquidation Price pays only if the price is still below it AT
+ * EXPIRY -- which is to say, only once the bots have long since taken the collateral. The
+ * buffer moves the strike above the floor, so the Cover finishes in the money for the
+ * falls that would liquidate the Loan and not only for the ones that keep going.
+ *
+ * It does NOT hand the Borrower cash to act with. These options are European: there is no
+ * exercise entrypoint, and settlement is pushed by the factory at expiry. The buffer
+ * widens the band of outcomes the Cover pays on; it does not make the payment early.
+ * (ADR-0008)
  */
 export const STRIKE_BUFFER = 0.1;
 

@@ -20,8 +20,10 @@ _Avoid_: position, borrow position, vault, account
 **Cover**:
 The put Position bought to protect a Loan, together with the date it expires. Always
 cash-settled in USDC, because the Borrower's collateral is locked inside Aave and cannot be
-delivered. A Cover is usually **partial** -- see Coverage. The word never implies the Loan is
-fully protected.
+delivered, and always settled **at expiry** -- these options are European, so a Cover
+compensates a Borrower who was liquidated rather than preventing the liquidation. A Cover is
+usually **partial** -- see Coverage. The word never implies the Loan is fully protected, nor
+that it is protected in time.
 _Avoid_: policy, insurance, hedge, protection
 
 **Liquidation Price**:
