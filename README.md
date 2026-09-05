@@ -1,12 +1,78 @@
 # Options Copilot
 
 Natural-language options trading on [Thetanuts Finance V4](https://docs.thetanuts.finance),
-live on Base mainnet. Built for the MUBA Hackathon, **Track 2 — AI × Options**.
+live on Base mainnet. Built for the MUBA Hackathon, **Track 1 — SDK Product** and
+**Track 2 — AI × Options**.
 
 **For someone who owns crypto but has never traded a derivative.** You say what you think will
 happen; the Copilot finds the option, tells you in plain English exactly what you can lose, and
 places the trade. It only ever buys — so your maximum loss is always exactly what you paid,
 and it says so before you commit.
+
+## Problem
+
+Most people holding crypto have two moves when they expect a fall: sell, or take the loss.
+Options give a third, but an options interface opens with strikes, expiries and greeks, so
+almost nobody uses them. Borrowers have it worse: collateral deposited on Aave is locked, so
+a falling price leaves them watching the health factor slide toward a liquidation penalty
+they cannot sell their way out of.
+
+Options Copilot turns a sentence into a real option order from the live Thetanuts book, and
+reads any Aave loan to find the put that protects it. It only ever buys, so the maximum loss
+is exactly the premium paid.
+
+## Blockchain and contracts
+
+**Base mainnet, chainId 8453.** There is no testnet deployment. Every order, price and fill
+in this project is against live mainnet contracts.
+
+| Contract | Address |
+|---|---|
+| Thetanuts OptionBook (Base_r12) | `0x1bDff855d6811728acaDC00989e79143a2bdfDed` |
+| Thetanuts OptionFactory (sealed-bid RFQ) | `0x8118daD971dEbffB49B9280047659174128A8B94` |
+| Aave V3 PoolAddressesProvider | `0xe20fCBdBfFC4Dd138cE8b2E6FBb6CB49777ad64D` |
+| USDC | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
+| WETH | `0x4200000000000000000000000000000000000006` |
+| WBTC | `0x0555E30da8f98308EdB960aa94C0Db47230d2B9c` |
+| cbBTC | `0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf` |
+
+The Aave Pool and price oracle are deliberately absent from that table: they are resolved
+from the PoolAddressesProvider at runtime, because Aave upgrades the Pool behind that
+registry and a hardcoded Pool address quietly stops being true. Confirmed 2026-09-02,
+`getPool()` returns `0xA238Dd80C259a72e81d7e4664a9801593F98d1c5`.
+
+An Underlying is identified by its Chainlink price feed rather than by its token (ADR-0010),
+so these six addresses are what the book is keyed on:
+
+| Asset | Price feed |
+|---|---|
+| BTC | `0x64c911996D3c6aC71f9b455B1E8E7266BcbD848F` |
+| ETH | `0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70` |
+| SOL | `0x975043adBb80fc32276CbF9Bbcfd4A601a12462D` |
+| BNB | `0x4b7836916781CAAfbb7Bd1E5FDd20ED544B453b1` |
+| XRP | `0x9f0C1dD78C4CBdF5b9cf923a549A201EdC676D34` |
+| AVAX | `0xE70f2D34Fd04046aaEC26a198A35dD8F2dF5cd92` |
+
+## Team
+
+- Dennis Heng Shu Yi
+- Ng Sean Sean
+- Tan Zhen Yu
+- Tang Shao Xian
+
+## AI tool declaration
+
+This project was built with AI assistance, and the parts it touched are stated rather than
+implied. Claude Code (Anthropic) was used for implementation, refactoring, test authoring and
+drafting the architecture decision records in `docs/adr/`. The architectural decisions
+themselves, the domain model in `CONTEXT.md`, and the hard invariants in `CLAUDE.md` were
+specified by the team, and generated code was reviewed before merge. The commit history
+records AI co-authorship where it applies.
+
+The product also uses AI at runtime, which is a separate thing. OpenAI, Groq and Anthropic
+models extract a Trade Intent from a sentence and produce the Forecast analysis. No model
+ever produces a number a Trader reads: every price and payoff is re-derived server-side from
+the live order book after the model has selected an Order (ADR-0006).
 
 ## Setup
 
@@ -43,13 +109,21 @@ npm run fill                   # dry run: previews a real order, signs nothing
 npm run fill -- --live         # SPENDS REAL USDC on Base mainnet
 npm run web                    # the trading surface on :3000 (needs the API up)
 npm run forecast -- ETH 7d     # the opinion surface. Costs a real AI API call
+npm run agents                 # the Python agents service on :8000. Needs the venv below
+npm run nlp -- "protect my ETH for 2 days with $20"   # intent extraction. No RPC needed
 ```
+
+The agents service needs its own environment once, and `apps/agents/README.md` has the
+detail: `cd apps/agents && python -m venv .venv`, activate it, then
+`pip install -r requirements.txt`. Only `GET /forecast/indicators` and `GET /suggestion`
+depend on it; everything else runs without it.
 
 ```bash
 npm run test:unit              # Vitest. Seconds, no browser
 npm run test:node              # the Forecast suites, under `tsx --test`
+npm run test:py                # pytest, against the venv in apps/agents/.venv
 npm run test:e2e               # Playwright + axe against the built app
-npm test                       # all three
+npm test                       # all four
 ```
 
 Two test runners, which is a merge artefact rather than a preference: the Forecast
@@ -80,6 +154,7 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 | `GET /depth` | no | where makers will actually trade on one Underlying, every expiry and both directions at once. Not a Deck; prices nothing. `?asset=X&horizonDays=n` (the horizon labels one statistic) |
 | `POST /propose` | **no** | TradeIntent in, `PROPOSAL \| VETO \| NO_ORDER` out. Prices a real order, signs nothing. Takes an optional `cardRef`, and an optional `contracts` (the size asked for in contracts instead of dollars — needs a `cardRef`, and the server converts it to a stake so the browser never does). |
 | `POST /practice` | **no** | opens a simulated Position from a `proposalId`. No token, no Risk Budget, no signer in reach. |
+| `POST /propose/chat` | **no** | a sentence in, the same `PROPOSAL \| VETO \| NO_ORDER` out. Extracts a Trade Intent from free text (ETH, BTC or SOL, English or Chinese) and hands it to the same `/propose` path, so nothing about pricing or selection differs. Falls back to a deterministic parser when no AI key is set |
 | `POST /auth/challenge` | no | issues a one-time message for the Trader's wallet to sign, proving ownership (ADR-0012) |
 | `POST /auth/verify` | no | verifies that signature and marks the session's wallet proven |
 | `POST /fill/prepare` | no | reserves Risk Budget against a proposalId from `/propose` and returns the unsigned transaction(s) the Trader's own **proven** wallet must send |
@@ -96,7 +171,7 @@ one and fund it with ~3 USDC plus a few cents of ETH for gas.
 | `POST /rfq/settle` | no | looks up the settlement on-chain, records the option it minted, and drops the Risk Budget hold from the Reserve Price to the premium actually charged |
 | `POST /rfq/cancel/prepare` / `POST /rfq/cancel` | no | withdraw a request nobody answered, taking the commitment to pay back off the chain |
 | `GET /cover/quote` | no | a Borrower's Aave V3 Loan on Base, and the put that would protect it: Liquidation Price, Target Strike, the full hedge. `?address=0x...`. Reads any address, requests nothing from a maker, signs nothing. Refuses -- with the reason in words -- for multi-collateral Loans, unsupported collateral, no debt, or a price its two sources disagree on |
-| `GET /forecast/news` | no | simulated-headline sentiment for `?symbol=&horizon=`. Opinion, quarantined from the trade flow (ADR-0005) |
+| `GET /forecast/news` | no | headline sentiment for `?symbol=&horizon=`, over the real feeds below. Opinion, quarantined from the trade flow (ADR-0005) |
 | `GET /forecast/price` | no | a price prediction grounded in real market data. Opinion, never a trade input |
 | `GET /forecast/risk-benefit` | no | the risk/benefit reading, with a runtime guardrail against Max Loss phrasing |
 | `GET /forecast/indicators` | no | indicators for one coin, from the Python agents service. The odd one out: arithmetic over public candles rather than opinion, so no AI call, no horizon and no disclaimer. Needs `npm run agents` |
@@ -174,11 +249,13 @@ is refused: a gap that large means a mis-resolved symbol or stale data, and grou
 forecast in it is worse than answering nothing. An unknown symbol 404s, a fetch failure
 502s, and no fabricated price is ever substituted for either.
 
-News is the deliberate opposite: **simulated, permanently**. `fetchNews` has the shape a
-real integration would have so the modules around it read against an interface, but there is
-no env var, config flag or fallback branch that could route it to a live provider -- there is
-no key for this and never will be. Every headline is tagged `source: "simulated"` and the
-disclaimer says so, because the one thing this must never do is read as real news.
+News is real, and it was not always. This file previously recorded a decision to keep
+headlines **simulated, permanently**; `apps/api/src/news/` replaced that with live providers
+and `forecast/news.ts` now asks it rather than fabricating anything. The fallback chain is
+CryptoPanic, then RSS, then CryptoCompare for crypto, and GNews, then NewsAPI, then that same
+chain for macro, so it works with zero keys configured. Every headline still carries its
+`source`, and the interface `fetchNews` reads against is unchanged, which is what made the
+swap a provider change rather than a rewrite.
 
 This process holds a funded key, so it is locked down by default: it binds to **loopback**,
 CORS is an explicit allowlist (never `origin: true`), and `/fill`, `/propose`, and
@@ -266,7 +343,10 @@ The reasoning behind this project is written down, not assumed:
 apps/web              the trading surface. Next.js, UI only -- no SDK, no key, no maths
   app/globals.css     the design system. The Implied Chance ramp is measured, not chosen
   app/page.tsx        two columns: language left, money right
-  components/         Tape, DeckRow, PayoffStrip, CommitBar, Board, Halt, Chat, SuggestionCard
+  components/         Tape, DeckRow, PayoffStrip, Board, Halt, Chat, Rail, Chips, Header,
+                      ConfirmModal, RfqModal, CoverConfirmModal, DepthChart, History,
+                      WalletConnect, WalletPicker, AccountControl, RiskProfileChip and the
+                      rest of the surface
   lib/api.ts          the only way this app talks to anything
   lib/surface.ts      the whole surface as one state machine
   lib/wallet.ts       the only place this app touches a browser wallet (ADR-0011) --
@@ -288,8 +368,23 @@ apps/api
     propose.ts        selects an Order, then calls pricing.ts. Derives nothing itself
     prepareFill.ts    builds unsigned fill calldata for the Trader's own wallet (ADR-0011)
     execute.ts        the operator's own custodial CLI path. Never called from the browser
+    underlyings.ts    the six Underlyings, keyed by Chainlink price feed (ADR-0010)
+    markets.ts        every Underlying at once, for the ticker rail
+    depth.ts          where makers will actually trade. Prices nothing
+    open-interest.ts  how many live Positions sit at each strike. Cached, never money
+    rfq/              the sealed-bid path (ADR-0017): build.ts, offers.ts, settle.ts,
+                      verify.ts -- the Ask, the decryption, the settlement calldata
+  src/insurance/      Liquidation Cover. Deterministic, no agent, no model
+    loan.ts           an Aave V3 Loan on Base. Single-collateral, WETH or cbBTC only
+    liquidation.ts    the arithmetic. Pure, and unit tested against hand-checked numbers
+    http.ts           GET /cover/quote
+  src/news/           the real news providers: CryptoPanic, RSS, CryptoCompare, macro
+  src/strategy/       the Node half of the Strategy Agent: Risk Profiles, Suggestions,
+                      Decisions. Owns both Supabase tables (ADR-0018)
   src/agents/
     review.ts         the Review Agent, stubbed. It may only veto, never authorise
+    trade.ts          a sentence -> a Trade Intent, with a deterministic parser behind the
+                      model. Names an Order's shape, never a number (ADR-0006)
   src/forecast/       the opinion surface. Imports nothing on the money path, ADR-0005
     agent.ts          one AI client: OpenAI, then Groq, then Claude. The seam tests stub
     marketData.ts     real prices, two sources, refused when they disagree
@@ -302,6 +397,8 @@ apps/api
   src/app.ts          the Fastify routes -- the only thing the browser talks to
   src/server.ts       binds the port. Importing app.ts opens no socket
   src/practice.ts     POST /practice, in a module with no signer in its import graph
+  src/rfq.ts          the seven RFQ routes. The other money path (ADR-0017)
+  src/history.ts      GET /history: what this account actually bought
   src/env.ts          loads the ROOT .env whatever directory npm launched from
   src/format.ts       every number becomes a string here, and nowhere else
   src/sessions.ts     Risk Budget + the server-side proposal and Card stores
@@ -310,11 +407,18 @@ apps/api
     explore.ts        read-only diagnostic
     fill.ts           thin CLI over propose + execute
     forecast.ts       prints all three analyses, through the routes' own functions
+    trade-nlp.ts      extracts a Trade Intent from a sentence. No RPC, no frontend
+    news.ts / ask.ts  the news feed and the free-text question, from the terminal
     wallet.ts         create / check the disposable wallet
+apps/agents           the Python service (ADR-0007). Loopback only, reaches the protocol
+                      only through the Node backend
+  strategy/           candles, indicators, profiles, the evaluator and the backtest
+  server.py           GET /health, /indicators, /suggest
+supabase/migrations   the two Strategy tables, and the RFQ table ADR-0021 explains
 packages/shared       zod schemas -- the TradeIntent wall from ADR-0001
   src/forecast.ts     the Forecast shapes, and the disclaimer every response carries
-.github/workflows/    CI: typecheck, then all three suites, on every push
-docs/superpowers/     the Forecast spec and its implementation plan
+.github/workflows/    CI: typecheck, then all four suites, on every push
+docs/superpowers/     specs and implementation plans
 ```
 
 ## Status
@@ -331,12 +435,16 @@ docs/superpowers/     the Forecast spec and its implementation plan
 - [x] Forecast analysis: news sentiment, price prediction, risk/benefit — real market data,
       simulated news, and a runtime guardrail keeping it clear of Max Loss language
 - [x] Tests and CI: Vitest with the Thetanuts client stubbed at its module boundary,
-      `node:test` for Forecast, Playwright + axe for the surface — all three on every push
+      `node:test` for Forecast, pytest for the agents, Playwright + axe for the surface —
+      all four on every push
 - [ ] **First real mainnet fill.** Every part of the path is built and exercised against
       live Base data — this ticks when one has actually been signed
-- [ ] Trade Intent extraction — the surface asks through seed prompts, not free text
-- [ ] The three agents as their own Python service (ADR-0007). Only Review exists, stubbed
-      as always-agreeing, and its silence has never been treated as consent
+- [x] Trade Intent extraction — the chat input takes a sentence and `POST /propose/chat`
+      turns it into a Trade Intent, with a deterministic parser behind the model
+- [x] The agents as their own Python service (ADR-0007): `apps/agents` serves the Strategy
+      Agent's indicators and Suggestions over loopback HTTP, with its own pytest suite
+- [ ] The Review Agent is still stubbed as always-agreeing, and its silence has never been
+      treated as consent
 - [x] RFQ for strikes the book does not carry — the full sealed-bid path, both doors:
       request, wait, a maker's real price, and a second signature to pay it (ADR-0017)
 - [x] Liquidation Cover, end to end — reads an Aave Loan, derives the hedge, and buys it
