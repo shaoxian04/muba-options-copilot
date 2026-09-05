@@ -476,11 +476,15 @@ function TradeEngine({
       </div>
 
       {/*
-        A typed sentence reaches the Trade Agent for real (`POST /propose/chat`): it is
-        read into a Trade Intent, checked against the Risk Budget, put past the Review
-        Agent's veto and priced. What comes back is an answer plus a Card -- and the
-        confirmation deliberately does not open by itself. The Trader presses "Place
-        order" on that Card, which is the same door a Deck Card click uses.
+        The ask row goes to POST /propose/chat: a sentence becomes a Trade Intent, which
+        is checked against the Risk Budget, put past the Review Agent's veto, and priced
+        through the same /propose path a Card is. The model names an Order's shape and
+        never a number (ADR-0006), and picking a Card off the Deck still works exactly
+        as before.
+
+        What comes back lands as an answer plus a Card. The confirmation deliberately
+        does not open by itself -- the Trader presses "Place order" on that Card, which
+        re-enters the same `pick(cardRef)` a Deck Card click uses.
       */}
       <form
         className="ask-row"
