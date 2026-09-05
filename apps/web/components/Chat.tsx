@@ -354,10 +354,10 @@ function TradeEngine({
       </div>
 
       {/*
-        There is no free-text-to-trade backend yet -- the Trade, Review and Strategy
-        Agents are a separate Python service that has not been started (ADR-0007) -- so
-        this logs what was typed and replies honestly rather than pretending to read it.
-        Picking a Card off the Deck is still the only way to price and buy something.
+        The ask row goes to POST /propose/chat: a sentence becomes a Trade Intent, which
+        is priced through the same /propose path a Card is. The model names an Order's
+        shape and never a number (ADR-0006), and picking a Card off the Deck still works
+        exactly as before.
       */}
       <form
         className="ask-row"
