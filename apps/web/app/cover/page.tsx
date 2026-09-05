@@ -403,10 +403,18 @@ export default function CoverPage() {
                 <span className="lbl">Health factor</span>
                 <span className="v hero">{quote.loan.healthFactor.display}</span>
               </div>
+              {/*
+               * "Compensation, not prevention" -- ADR-0008 says every surface must say so,
+               * and this sentence used to say the opposite ("before that happens"), which
+               * read as cash arriving in time to save the Loan. It cannot: these options
+               * are European and settle at expiry, so a Loan liquidated on day 3 is still
+               * liquidated, and the Cover pays on day 14. A Borrower who believes
+               * otherwise will not act, and the ADR calls that belief worse than no Cover.
+               */}
               <p className="say">
                 If {quote.underlying} falls to <b>{quote.cover.liquidationPrice.display}</b>, Aave
-                sells your collateral to repay the loan. A cover pays you back from{" "}
-                <b>{quote.cover.targetStrike.display}</b> — before that happens.
+                sells your collateral to repay the loan. A cover does not stop that — it pays you
+                back for it, from <b>{quote.cover.targetStrike.display}</b> down.
               </p>
               <div className="chip">
                 <span className="lbl">{quote.underlying} right now</span>
@@ -435,10 +443,21 @@ export default function CoverPage() {
               </div>
             </div>
 
-            {/* Lapse strip: expiry, prominent, with the no-auto-renewal sentence */}
+            {/*
+             * Lapse strip: expiry, prominent -- and the SECOND fact ADR-0008 says a
+             * surface owes a Borrower. This date is not only when cover stops; it is the
+             * only date that decides anything. A European option reads the price once, at
+             * expiry, so a crash that recovers before this date pays nothing at all, even
+             * though the Loan was liquidated on the way down.
+             */}
             <div className="lapse">
               <span className="lbl">Protection ends</span>
               <b className="v num">{quote.cover.expiry.display}</b>
+              <p>
+                This is also the only date that counts: the cover settles on {quote.underlying}’s
+                price at that moment, not on the lowest it touched. A fall that recovers before
+                then pays nothing, even if the loan was sold on the way down.
+              </p>
               <p>
                 After this the loan is uncovered again. Nothing renews on its own — renewing
                 without you would mean signing without you.
