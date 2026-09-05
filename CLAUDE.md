@@ -1,7 +1,7 @@
 # NutShell
 
-Keep this file short — it's an index, not documentation. Depth lives in `CONTEXT.md`,
-`docs/adr/` and `README.md`; link to it rather than restating it here.
+Keep this file short — it's an index, not documentation. Depth lives in `docs/details/`,
+`docs/adr/`, `CONTEXT.md` and `README.md`; link to it rather than restating it here.
 
 ## Project
 
@@ -13,189 +13,85 @@ traded a derivative: protection first, translation second. Real funds, tiny size
 Two contexts: the **Copilot** (a sentence becomes an option Position) and **Liquidation Cover**
 (an Aave Loan gets hedged against liquidation). See `CONTEXT-MAP.md`.
 
-## Repository status
+## Project architecture
 
-The SDK integration and the backend API are built and verified against mainnet: order
-selection, proposal, execution, Risk Budget, server-side proposal store. The Deck backend is
-built and tested (issues #3-#8): `GET /deck`, Implied Chance, the `cardRef` indirection,
-`PROPOSAL | VETO | NO_ORDER`, and `POST /practice`. **The trading surface is built**
-(issues #9-#14): the Deck, selection and override, the payoff strip, the commit bar, Practice
-Run, the board, and both halt states. The three agents (Trade, Review, Strategy) are a
-separate Python service (`apps/agents`, `npm run agents`) that serves the Strategy Agent's
-indicator and Suggestion halves over loopback HTTP (`GET /indicators`, `GET /suggest`); the
-Node backend fronts those with five routes over two Supabase tables (`GET|PUT /risk-profile`,
-`GET /suggestion`, `POST /decisions`, `GET /decisions/stats`), all five keyed on the
-signed-in account rather than a wallet (ADR-0018) — the Trade Agent still has no
-HTTP surface, and the Review Agent is stubbed as always-agreeing. The Insights tab now carries a
-Risk Profile picker and the Suggestion it drives (`SuggestionCard.tsx`), both gated behind
-sign-in alone, no wallet required; accepting one deals a
-Deck, but the Trade tab's only way to ask for a proposal directly is still the seed prompts on
-the left.
+```
+apps/web ──HTTP──▶ apps/api ──▶ Base (Thetanuts, Aave)
+Next.js UI         Fastify.    │        └── Supabase
+renders only       only key,   └─loopback─▶ apps/agents
+                   only chain              Python
+     packages/shared — zod contract both sides import
+```
 
-**Liquidation Cover reads and buys.** `apps/api/src/insurance/` holds `loan.ts` (Aave V3 on
-Base, single-collateral only), `liquidation.ts` (the arithmetic, pure and unit tested) and
-`http.ts` (`GET /cover/quote`), with the surface at `/cover`. It computes the Liquidation
-Price, the Target Strike and the full hedge for any address, and refuses in words otherwise.
-See ADR-0015 and ADR-0016 for the decisions taken while building the read half.
+The backend is the only process holding a key or talking to a chain. A sentence or a Loan
+address becomes a Trade Intent, an Order is selected by `cardRef`, the backend derives every
+number, and the Trader's own wallet signs. Full map in `docs/details/architecture.md`.
 
-**The RFQ money path is built** (ADR-0017), and both doors go through it: the trading
-surface's (`kind: "TRADER"`, a strike the book does not carry) and Cover's (`kind: "COVER"`,
-an address and nothing else). `apps/api/src/thetanuts/rfq/` holds `build.ts` (Ask to
-`RFQRequest`, where buy-only and USDC collateral are enforced), `offers.ts` (the chain and
-the indexer, and decrypting sealed bids), `settle.ts` (the second signature's calldata) and
-`verify.ts` (what the chain says happened); `apps/api/src/rfq.ts` is the seven routes. An
-RFQ is **not** a Fill: two signatures with a real wait between them, and no premium anywhere
-until a maker answers. Exercised end to end against stubs, not yet against a live maker.
-
-**The book is multi-asset** (issues #23-#27): six Underlyings — BTC, ETH, SOL, BNB, XRP,
-AVAX — keyed by Chainlink **price feed**, never by underlying token (four of them are
-cash-settled and share the zero address). `GET /deck` takes a **required** `asset`,
-`GET /depth` answers where makers will trade, `GET /markets` feeds the ticker rail, and the
-surface carries the rail and the Falls/Rises + expiry chips. Call/put is **blue and orange**;
-`apps/web/tests/support/ramp.test.ts` holds the pair to the same ΔE 8 bar red/green failed.
-
-**Forecast analysis** is built as three read-only routes (`GET /forecast/news|price|risk-benefit`)
-plus `npm run forecast`. It is opinion, quarantined from the trade flow by ADR-0005: nothing on
-the money path imports it, and no surface shows it beside a Max Loss. Its tests are written
-against `node:test` and run under `npm run test:node`, not Vitest.
-
-There are still no React component tests, deliberately. The frontend is held to its bar in a
-browser instead — Playwright and axe-core — and by two source-level checks that run under
-Vitest: `apps/web/tests/support/no-arithmetic.test.ts` fails if a component formats a number, and
-`apps/web/tests/support/ramp.test.ts` measures the Implied Chance palette against the same ΔE 8 bar
-red/green was held to and failed.
-
-Source lives in `apps/api` (backend + scripts), `packages/shared` (zod schemas shared across
-the stack), `apps/web` (the Next.js surface).
+Review Agent is a stub, Trade Agent has no HTTP surface, RFQ is stub-tested, no React
+component tests by choice.
 
 ## Build / run / test
 
-| What | Command | Notes |
-|---|---|---|
-| API | `npm run dev` | Fastify on `127.0.0.1:3001` |
-| Book diagnostic | `npm run explore` | Read-only. No wallet needed. Run this first when something looks broken |
-| Fill CLI (dry) | `npm run fill` | Previews a real order, signs nothing |
-| Fill CLI (live) | `npm run fill -- --live` | **Spends real USDC on mainnet** |
-| Wallet | `npm run wallet -- new` / `npm run wallet` | Create / check the disposable wallet |
-| Frontend | `npm run web` | Next.js on `localhost:3000`. Needs the API running |
-| Forecast CLI | `npm run forecast` | Read-only opinion. Costs a real AI API call |
-| Agents service | `npm run agents` | Python agents service on `127.0.0.1:8000`. Needed by `GET /forecast/indicators` |
-| Prototype | `npm run prototype` | Opens the throwaway design prototype |
-| Tests | `npm test` | Vitest, then `node:test`, then Playwright. No network, no chain, no wallet |
-| Unit tests only | `npm run test:unit` | Vitest alone — seconds, no browser |
-| Forecast tests | `npm run test:node` | The `node:test` suites, under `tsx --test` |
-| Agents tests | `npm run test:py` | pytest, against the venv in `apps/agents/.venv` |
-| Browser tests | `npm run test:e2e` | Playwright + axe. Builds the app first |
-| API fixtures | `npm run fixtures` | Regenerate what the browser suite stubs against |
-| Typecheck | `npm run typecheck` | Both workspaces |
+`npm install`, `cp .env.example .env`, fill in `THETANUTS_RPC_URL` — use a real RPC key, since
+the public Base endpoint throttles and the failures look exactly like bugs in your own code.
+`npx playwright install chromium` once for the browser suite.
 
-Setup: `npm install`, then `cp .env.example .env` and fill in `THETANUTS_RPC_URL`. The public
-Base endpoint throttles and the failures look exactly like bugs in your own code — use a real
-RPC key. For the browser suite, `npx playwright install chromium` once.
+| Command | Notes |
+|---|---|
+| `npm run dev` / `npm run web` | API on `:3001`, Next.js on `:3000` (needs the API up) |
+| `npm run agents` | Python service on `:8000`. Only `/forecast/indicators` and `/suggestion` need it |
+| `npm run explore` | Read-only book diagnostic, no wallet. Run this first when something looks broken |
+| `npm run fill` / `-- --live` | Previews a real order; `--live` **spends real USDC on mainnet** |
+| `npm test` | Vitest, then `node:test`, then Playwright. No network, chain or wallet |
+| `npm run test:unit` | Vitest alone — seconds, no browser |
 
-The browser suite stubs the API from `apps/web/tests/fixtures/`, which the real Fastify app
-generated. A deliberate contract change means `npm run fixtures`; an accidental one fails
-`web-fixtures.test.ts` with that instruction.
-
-## Stack at a glance
-
-TypeScript everywhere except the agents. Next.js frontend (UI only), Fastify backend owning the
-Thetanuts SDK / the signing key / Supabase, and a Python service for the three agents that
-reaches the protocol only over the backend's loopback HTTP API. Full reasoning in
-`docs/adr/0004` and `docs/adr/0007`.
+The rest (`wallet`, `forecast`, `nlp`, `test:node`, `test:py`, `test:e2e`, `typecheck`,
+`fixtures`) is in `package.json`. The browser suite stubs the API from
+`apps/web/tests/fixtures/`, generated by the real Fastify app: a deliberate contract change
+means `npm run fixtures`, an accidental one fails `web-fixtures.test.ts` with that instruction.
 
 ## Hard invariants — never compromise
 
-These are needed on every task. Violating one silently breaks the product's central promise.
+Twelve. Violating one silently breaks the product's central promise, so read the ADR before
+deciding one does not apply to your case.
 
-- **Buy only.** Never fill an Order where the Trader would be the seller. This is what makes Max
-  Loss exactly the premium paid. (ADR-0002)
-- **A model may name an Order; it may never originate a number.** Re-fetch the Order and
-  re-derive every value server-side. If a number is recomputed in React, this is undone.
-  (ADR-0006)
-- **The Review Agent may only veto, never authorise.** A pass from it skips zero code checks.
-  (ADR-0006)
-- **No signature without a human confirmation** — Cover included. No unattended renewal, ever.
-  (ADR-0008) On the RFQ path that means TWO confirmations: one to open the request, and a
-  separate one on a button that names the maker's actual price. A confirmation of a blank is
-  not a confirmation. (ADR-0017)
-- **An RFQ has no price until a maker answers.** `premiumUsdc` is null and the surface reads
-  "not priced yet" right up until a sealed bid has been decrypted. The Reserve Price beside
-  it is a ceiling and is never shown in a premium's place. Nothing on this path may estimate,
-  interpolate or derive an option price — which is why the size asked for is the whole hedge
-  (Cover) or one contract (trading), rather than something a cap was divided into. (ADR-0017)
-- **A sealed bid stays sealed.** The offeror's address, its signature and its nonce build the
-  settlement calldata and never cross to a browser. A surface gets a count and a premium.
-  (ADR-0017)
-- **The chain owns money.** No `positions` table, no balance cache. Fix slowness with a loading
-  state, not a cache. (ADR-0003) Two bounded exceptions, each with its own ADR and its own test:
-  read-only **observations** (the book, spot, open interest) are shared between viewers for
-  seconds, and the money path opts out of that sharing entirely (ADR-0020); and an open **RFQ** is
-  persisted, because its decryption key is the one piece of state re-reading the chain cannot
-  reconstruct (ADR-0021). The test for both is the same: if losing it can be fixed by asking the
-  chain, do not store it.
-- **A Forecast never appears beside a Max Loss** or inside a confirmation. Implied Move and
-  Implied Chance are observations, not opinions, and may appear anywhere. (ADR-0005)
-- **One pricing path.** The Deck and the Trade Proposal both come from `priceOrder` in
-  `apps/api/src/thetanuts/pricing.ts`. Nothing else may derive option economics, or a Trader
-  is shown one price and filled at another. `/depth` reports availability and prices
-  nothing. (Issue #1)
-- **An Underlying is a price feed, not a token.** SOL, BNB, XRP and AVAX are cash-settled
-  and all report the zero `underlyingToken`; keyed by token they collapse into one bucket.
-  The registry in `apps/api/src/thetanuts/underlyings.ts` is an **allowlist** — an Order
-  whose feed is not in it is excluded from the book entirely. (ADR-0010, issue #23)
-- **Payout asset is a property of the Underlying**, never of `isCall`. A BTC call delivers
-  WBTC and a SOL call settles in USDC. Derived only in `underlyings.ts`. (Issue #23)
-- **`asset` is required on `/deck`.** No default. A default is how an ETH-only assumption
-  survives the migration meant to remove it. (Issue #24)
-- **Distance from spot is signed.** `Math.abs` turns "already below — must stay" into a
-  confident, grammatical, backwards "must fall 0.4%". (Issue #24)
-- **The server formats every number.** Figures cross the wire as `{ value, display }`. The
-  frontend renders `display` verbatim — a `toFixed` in React undoes ADR-0006 invisibly. Two
-  files may do arithmetic, each saying why: `lib/clock.ts` (durations, which no response can
-  carry) and `lib/geometry.ts` (coordinates, never read as text). A test enforces the rest.
-- **The browser never receives calldata for an Order it has not already priced through
-  `/propose`.** (Narrowed by ADR-0011 from an absolute "no Order data crosses to the browser,"
-  to let `POST /fill/prepare` hand the Trader's own wallet the real transaction it must sign —
-  unavoidable once signing moves client-side.) The `cardRef` indirection still holds
-  everywhere else: `/deck` and `/propose` never expose a maker address, a nonce, or a
-  signature outside of the one route that prepares a fill for a proposal the browser was
-  already shown priced.
-- **A session must prove ownership of any wallet address it acts on.** `POST
-  /fill/prepare` refuses a `walletAddress` the session has not verified via
-  `POST /auth/challenge` + `POST /auth/verify` (ADR-0012) -- a signature, never a
-  transaction, and never requested without the Trader's own click.
-- **The chain decides whether a fill succeeded, not the caller.** `POST /fill/settle`
-  looks up the real transaction receipt itself (ADR-0012) whenever a `txHash` is given;
-  a client's own claim of success or failure is never taken at face value.
-- **An account, not just a wallet, is required to reach Confirm.** `POST
-  /auth/challenge`, `POST /auth/verify`, and `POST /fill/prepare` all refuse without a
-  valid `x-account-token` (ADR-0014) -- enforced server-side, never only by the UI.
-  Deck browsing and Practice Run need neither an account nor a wallet.
-- **A cardRef selects; it never supplies a value.** The Order is re-fetched off the live book
-  and every number re-derived, so an override passes every check an agent-chosen Card does.
-- **A Suggestion crosses the Strategy Agent boundary as a nested Trade Intent and nothing
-  else** — no name, no reasoning, no confidence. Enforced by `extra="forbid"` in
-  `apps/agents/strategy/schema.py` (ADR-0005). A second, separate channel — the drag-drop
-  closest-order search on the Insights tab — may use an AI's predicted price to select a
-  strike, but only ever as an existing, already-priced order's `cardRef`, confined to the
-  analysis surface. (ADR-0019)
-- **A Risk Profile and a Decision belong to an account, never to a browser.** `owner_id`
-  is the id `requireAccount` resolves an `x-account-token` to — read off a verified
-  Supabase session, never off a header. No client-supplied value may name an owner, and
-  there is no fallback identity for a caller who is not signed in. (ADR-0018)
-- **Practice can never spend.** `/practice` is a separate route, not a flag, and its module
-  imports nothing that can sign. A test walks the import graph. (Issue #8)
-- **The book has one door.** Everything reaches Orders through the single buyable filter, where
-  ADR-0002 is enforced. Nothing else fetches orders directly.
-- **Cover only for single-collateral Loans.** Refuse anything else and say why — the liquidation
-  price identity is silently wrong otherwise. (ADR-0008)
-- **A Cover is bought by the wallet that holds the Loan.** A put pays whoever holds it, so a
-  Cover opened by any other wallet protects the buyer and leaves the Borrower exactly as
-  exposed — while telling them they are covered. Reading a Loan needs no wallet, and must
-  keep not needing one. (ADR-0017)
-- **Never commit a key.** `.env` is gitignored, the wallet is disposable, and approvals are for
-  the exact amount — never `MaxUint256`.
+1. **Buy only** — never a Fill where the Trader sells, which is what makes Max Loss exactly the
+   premium paid. Enforced at the book's one door, the buyable filter in `orders.ts`; nothing
+   else fetches Orders. (ADR-0002)
+2. **A model may name an Order; it may never originate a number or authorise a trade.** Every
+   value is re-derived server-side from the re-fetched Order — a `cardRef` selects and supplies
+   nothing — and the Review Agent's pass skips zero checks. (ADR-0006)
+3. **One pricing path, one formatter.** `priceOrder` derives all option economics for both Deck
+   and Proposal; figures cross the wire as `{ value, display }` and the frontend renders them
+   verbatim. Only `clock.ts` and `geometry.ts` may compute, and a test enforces it. (Issue #1)
+4. **The chain owns money.** No `positions` table or balance cache, and the chain — not the
+   caller — decides whether a fill succeeded. If losing it can be fixed by asking the chain, do
+   not store it; the exceptions are shared observations and an RFQ's decryption key.
+   (ADR-0003, ADR-0012, ADR-0020, ADR-0021)
+5. **No signature without a human confirmation**, Cover included, with no unattended renewal.
+   On the RFQ path that means two, the second on a button naming the maker's real price — a
+   confirmation of a blank is not a confirmation. (ADR-0008, ADR-0017)
+6. **An RFQ has no price until a maker answers.** `premiumUsdc` stays null and nothing may
+   estimate or interpolate one; the Reserve Price is a ceiling and is never shown in a
+   premium's place. (ADR-0017)
+7. **Only opaque references cross to the browser.** No maker address, nonce, signature or
+   sealed bid ever leaves the server — the one narrowing is `/fill/prepare`, which hands a
+   Trader's own wallet calldata for a Proposal it was already shown priced.
+   (ADR-0011, ADR-0017)
+8. **Identity is proved server-side, never claimed.** A session proves wallet ownership by
+   signature, an account gates Confirm, and `owner_id` comes from a verified Supabase session
+   rather than a header. Deck browsing and Practice Run stay open to anyone.
+   (ADR-0012, ADR-0014, ADR-0018)
+9. **An Underlying is a price feed, not a token**, and `underlyings.ts` is an allowlist — an
+   Order whose feed is unlisted is excluded from the book entirely. (ADR-0010)
+10. **A Forecast never appears beside a Max Loss** or in a confirmation, and a Suggestion
+    crosses the Strategy boundary as a nested Trade Intent and nothing else. Implied Move and
+    Implied Chance are observations, and may appear anywhere. (ADR-0005, ADR-0019)
+11. **Cover is single-collateral only, and bought by the wallet that holds the Loan.** Any
+    other wallet leaves the Borrower exposed while telling them they are covered; reading a
+    Loan needs no wallet and must keep not needing one. (ADR-0008, ADR-0017)
+12. **Never commit a key.** `.env` is gitignored, the wallet is disposable, and approvals are
+    for the exact amount — never `MaxUint256`.
 
 ## Skills
 
@@ -213,6 +109,9 @@ it here with a one-line lesson.
 
 ## Read on demand — don't preload everything
 
+- **`docs/details/architecture.md`** — the four workspaces, which module owns which invariant,
+  the money path end to end, and the standing gaps.
+  **Read before changing where something lives, or when you need the module that owns a rule.**
 - **`CONTEXT.md`** — the glossary: Trader, Order, Fill, Position, Max Loss, Risk Budget, Trade
   Intent, Deck, Card, Implied Chance, the three agents.
   **Read before naming anything, or whenever a term in a request feels ambiguous.**

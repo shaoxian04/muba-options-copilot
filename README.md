@@ -60,17 +60,26 @@ interface can say so with no asterisk attached.
 ## Blockchain and contracts
 
 **Base mainnet, chainId 8453.** There is no testnet deployment. Every order, price and fill
-in this project is against live mainnet contracts.
+in this project is against live mainnet contracts. A real one, on chain:
+[`0xddffd03b…56a680a0`](https://basescan.org/tx/0xddffd03b10e777805656e1573849042a903e5129d3125aa83c3bdd4256a680a0).
 
-| Contract | Address |
-|---|---|
-| Thetanuts OptionBook (Base_r12) | `0x1bDff855d6811728acaDC00989e79143a2bdfDed` |
-| Thetanuts OptionFactory (sealed-bid RFQ) | `0x8118daD971dEbffB49B9280047659174128A8B94` |
-| Aave V3 PoolAddressesProvider | `0xe20fCBdBfFC4Dd138cE8b2E6FBb6CB49777ad64D` |
-| USDC | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
-| WETH | `0x4200000000000000000000000000000000000006` |
-| WBTC | `0x0555E30da8f98308EdB960aa94C0Db47230d2B9c` |
-| cbBTC | `0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf` |
+NutShell deploys no contracts of its own. Every address below belongs to a protocol it
+integrates, and `npm run explore` prints the first two off the live chain.
+
+| Contract | Address | Used for |
+|---|---|---|
+| Thetanuts OptionBook (Base_r12) | [`0x1bDff855d6811728acaDC00989e79143a2bdfDed`](https://basescan.org/address/0x1bDff855d6811728acaDC00989e79143a2bdfDed) | The resting order book. Every Fill |
+| Thetanuts OptionFactory (Base_r12) | [`0x8118daD971dEbffB49B9280047659174128A8B94`](https://basescan.org/address/0x8118daD971dEbffB49B9280047659174128A8B94) | Sealed-bid RFQ. Every Cover, and custom strikes |
+| Aave V3 PoolAddressesProvider | [`0xe20fCBdBfFC4Dd138cE8b2E6FBb6CB49777ad64D`](https://basescan.org/address/0xe20fCBdBfFC4Dd138cE8b2E6FBb6CB49777ad64D) | Reading a Borrower's Loan |
+| aBasWETH | [`0xD4a0e0b9149BCee3C920d2E00b5dE09138fd8bb7`](https://basescan.org/address/0xD4a0e0b9149BCee3C920d2E00b5dE09138fd8bb7) | Aave receipt token; its balance **is** the WETH collateral |
+| aBascbBTC | [`0xBdb9300b7CDE636d9cD4AFF00f6F009fFBBc8EE6`](https://basescan.org/address/0xBdb9300b7CDE636d9cD4AFF00f6F009fFBBc8EE6) | The same, for cbBTC collateral |
+| USDC | [`0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`](https://basescan.org/address/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913) | Every premium paid, and every cash settlement |
+| WETH | [`0x4200000000000000000000000000000000000006`](https://basescan.org/address/0x4200000000000000000000000000000000000006) | What an ETH call delivers; Aave collateral |
+| WBTC | [`0x0555E30da8f98308EdB960aa94C0Db47230d2B9c`](https://basescan.org/address/0x0555E30da8f98308EdB960aa94C0Db47230d2B9c) | What a BTC call delivers |
+| cbBTC | [`0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf`](https://basescan.org/address/0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf) | Aave collateral a Cover can hedge |
+
+The two BTC tokens are not interchangeable and are never treated as such: WBTC is a payout
+asset on the trading side, cbBTC is collateral on the Cover side.
 
 The Aave Pool and price oracle are deliberately absent from that table: they are resolved
 from the PoolAddressesProvider at runtime, because Aave upgrades the Pool behind that
@@ -78,16 +87,17 @@ registry and a hardcoded Pool address quietly stops being true. Confirmed 2026-0
 `getPool()` returns `0xA238Dd80C259a72e81d7e4664a9801593F98d1c5`.
 
 An Underlying is identified by its Chainlink price feed rather than by its token (ADR-0010),
-so these six addresses are what the book is keyed on:
+so these six addresses are what the book is keyed on. Read off the live book on 2026-09-01
+and confirmed by strike range — no two ranges overlap, so no feed is ambiguous:
 
 | Asset | Price feed |
 |---|---|
-| BTC | `0x64c911996D3c6aC71f9b455B1E8E7266BcbD848F` |
-| ETH | `0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70` |
-| SOL | `0x975043adBb80fc32276CbF9Bbcfd4A601a12462D` |
-| BNB | `0x4b7836916781CAAfbb7Bd1E5FDd20ED544B453b1` |
-| XRP | `0x9f0C1dD78C4CBdF5b9cf923a549A201EdC676D34` |
-| AVAX | `0xE70f2D34Fd04046aaEC26a198A35dD8F2dF5cd92` |
+| BTC | [`0x64c911996D3c6aC71f9b455B1E8E7266BcbD848F`](https://basescan.org/address/0x64c911996D3c6aC71f9b455B1E8E7266BcbD848F) |
+| ETH | [`0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70`](https://basescan.org/address/0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70) |
+| SOL | [`0x975043adBb80fc32276CbF9Bbcfd4A601a12462D`](https://basescan.org/address/0x975043adBb80fc32276CbF9Bbcfd4A601a12462D) |
+| BNB | [`0x4b7836916781CAAfbb7Bd1E5FDd20ED544B453b1`](https://basescan.org/address/0x4b7836916781CAAfbb7Bd1E5FDd20ED544B453b1) |
+| XRP | [`0x9f0C1dD78C4CBdF5b9cf923a549A201EdC676D34`](https://basescan.org/address/0x9f0C1dD78C4CBdF5b9cf923a549A201EdC676D34) |
+| AVAX | [`0xE70f2D34Fd04046aaEC26a198A35dD8F2dF5cd92`](https://basescan.org/address/0xE70f2D34Fd04046aaEC26a198A35dD8F2dF5cd92) |
 
 ## Team
 
