@@ -929,6 +929,12 @@ export async function buildApp(): Promise<FastifyInstance> {
         );
       }
       if (userId && verification.succeeded && pendingTerms) {
+        // Caught for the same reason logActivity above is: by this point the Trader's
+        // USDC has already moved, so a bookkeeping failure must never fail the request --
+        // but `recordFill` throws on anything but a duplicate tx_hash, and an uncaught
+        // rejection off a floating promise takes this process down on Node 22, right
+        // after a real fill. Logged loudly instead, so History missing a row is a line in
+        // the log rather than a mystery.
         void recordFill(userId, {
           walletAddress: pendingTerms.walletAddress,
           kind: "DECK",
@@ -940,7 +946,7 @@ export async function buildApp(): Promise<FastifyInstance> {
           expiryIso: pendingTerms.expiryIso,
           optionAddress: null,
           txHash,
-        });
+        }).catch((e) => req.log.error({ err: e, proposalId, txHash }, "Failed to record fill"));
       }
       return { remainingUsdc: remainingBudget(s), confirmed: verification.succeeded };
     } catch (e) {

@@ -37,7 +37,9 @@ vi.mock("../supabase/decisions.js", async (importOriginal) => {
   return { ...actual, recordDecision: vi.fn() };
 });
 vi.mock("../supabase/fills.js", () => ({
-  recordFill: vi.fn(),
+  // Resolved, not bare: `recordFill` is async, and a bare vi.fn() returns undefined,
+  // so a caller that attaches .catch() to it throws TypeError instead of recording.
+  recordFill: vi.fn().mockResolvedValue(null),
   listFills: vi.fn(),
 }));
 

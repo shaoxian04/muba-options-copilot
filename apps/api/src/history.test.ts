@@ -13,7 +13,9 @@ import { describe, it, expect, beforeEach, vi, afterAll } from "vitest";
 vi.mock("./thetanuts/client.js", async () => await import("./test/stub-client.js"));
 vi.mock("./supabase.js", async () => await import("./test/stub-supabase.js"));
 vi.mock("./supabase/fills.js", () => ({
-  recordFill: vi.fn(),
+  // Resolved, not bare: `recordFill` is async, and a bare vi.fn() returns undefined,
+  // so a caller that attaches .catch() to it throws TypeError instead of recording.
+  recordFill: vi.fn().mockResolvedValue(null),
   listFills: vi.fn(),
 }));
 
@@ -42,7 +44,11 @@ beforeEach(async () => {
   resetStub();
   resetSupabaseStub();
   registerUser(ACCOUNT_TOKEN, { id: ACCOUNT_ID, email: "trader@example.com" });
+  // Reset the CALLS, then restore the resolved value: `mockReset` strips the
+  // implementation too, and a bare mock returns undefined where the real `recordFill`
+  // returns a promise -- which its caller attaches .catch() to.
   mockedRecordFill.mockReset();
+  mockedRecordFill.mockResolvedValue(null);
   mockedListFills.mockReset();
   app = await buildApp();
 });
