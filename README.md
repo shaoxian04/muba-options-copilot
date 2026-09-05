@@ -1,25 +1,61 @@
-# Options Copilot
+# 🥜 NutShell
 
-Natural-language options trading on [Thetanuts Finance V4](https://docs.thetanuts.finance),
-live on Base mainnet. Built for the MUBA Hackathon, **Track 1 — SDK Product** and
-**Track 2 — AI × Options**.
+**Options on [Thetanuts Finance V4](https://docs.thetanuts.finance), in a nutshell.**
+Natural-language options trading, live on Base mainnet. Built for the MUBA Hackathon,
+**Track 1: SDK Product** and **Track 2: AI × Options**.
 
-**For someone who owns crypto but has never traded a derivative.** You say what you think will
-happen; the Copilot finds the option, tells you in plain English exactly what you can lose, and
-places the trade. It only ever buys — so your maximum loss is always exactly what you paid,
-and it says so before you commit.
+**For someone who owns crypto but has never traded a derivative.** Say what you think will
+happen and it finds a real option on the live book, explains it in plain English, and shows
+the most you can lose before you sign anything. Hand it the address of an Aave loan instead
+and it works out the put that would cover you, with no sentence to write at all.
+
+It only ever buys, so your maximum loss is always exactly what you paid. Every number you see
+comes from the live order book rather than from a language model, and nothing is signed
+without your click. Real funds, real mainnet, tiny size: trades of 1 to 2 USDC are normal
+here.
 
 ## Problem
 
-Most people holding crypto have two moves when they expect a fall: sell, or take the loss.
-Options give a third, but an options interface opens with strikes, expiries and greeks, so
-almost nobody uses them. Borrowers have it worse: collateral deposited on Aave is locked, so
-a falling price leaves them watching the health factor slide toward a liquidation penalty
-they cannot sell their way out of.
+Someone holding crypto who expects a fall has two moves: sell, or ride it down. Options are
+the third, and almost nobody makes it, not because the idea is hard. Every options interface
+opens with strikes, expiries and greeks, and none of them answer the only question a beginner
+actually has: **if I'm wrong, what does this cost me?**
 
-Options Copilot turns a sentence into a real option order from the live Thetanuts book, and
-reads any Aave loan to find the put that protects it. It only ever buys, so the maximum loss
-is exactly the premium paid.
+The fear behind that question is well founded. Options really can lose you more than you put
+in, but only if you **sell** them. Buying one has a floor: the premium, and nothing past it.
+Mainstream interfaces put the safe half and the dangerous half behind the same screen and
+leave you to work out which one you are doing.
+
+Borrowers face a sharper version, because the first move is not available to them at all.
+Collateral deposited on Aave is locked, so a falling price is not something you can sell your
+way out of. You watch the health factor slide toward a liquidation penalty and hope. A put is
+the instrument that helps, but pricing one against your own loan means knowing your
+liquidation price, choosing a strike above it, and sizing it against your debt: three pieces
+of arithmetic before you have even opened an order book.
+
+**NutShell is two doors onto the same thing.** Say what you think will happen, and it finds a
+real order on the live Thetanuts book, explains it in plain English, and states the most you
+can lose before you commit. Or hand it the address of an Aave loan, and it reads the position,
+derives the liquidation price Aave itself would use, and prices the put that pays out in USDC
+if the collateral falls past it. No sentence, no model, just arithmetic.
+
+```mermaid
+flowchart LR
+    Say["💬 'I think ETH will<br/>fall this week'"]
+    Loan["🏦 An Aave loan sliding<br/>toward liquidation"]
+    Nut["🥜 NutShell"]
+    Put["🛡️ A real put, bought<br/>on the live order book"]
+    Loss["✅ The most you can lose,<br/>in plain English,<br/>said before you sign"]
+
+    Say --> Nut
+    Loan --> Nut
+    Nut --> Put
+    Put --> Loss
+```
+
+**It only ever buys.** That single constraint is what makes everything else honest: your
+maximum loss is exactly the premium you paid, it is knowable before you sign, and the
+interface can say so with no asterisk attached.
 
 ## Blockchain and contracts
 
@@ -92,7 +128,7 @@ rest of the app runs exactly as before; only `/forecast/*` refuses.
 The four `/forecast/*` GET routes (`news`, `price`, `risk-benefit`, `indicators`) also need
 `COPILOT_API_TOKEN` set — unlike every other route in this app, they refuse rather than
 running unauthenticated, since a plain GET is forgeable cross-site even without a matching
-CORS origin (see the API section below).
+CORS origin.
 
 The Risk Profile / Suggestion / Decision routes need `SUPABASE_URL` and
 `SUPABASE_SERVICE_ROLE_KEY` — already present, empty, in `.env.example`. Without them those
@@ -142,176 +178,67 @@ alongside the rest.
 For a wallet: `npm i -g @thetanuts-finance/cli && thetanuts wallet create`. Use a **disposable**
 one and fund it with ~3 USDC plus a few cents of ETH for gas.
 
-## API
+## Architecture
 
-| Route | Spends money? | What it does |
+```mermaid
+flowchart LR
+    Say["💬 A sentence<br/>'I think ETH will fall'"]
+    Loan["🏦 An Aave loan<br/>you give an address"]
+    AI["🤖 AI agents<br/>read the sentence,<br/>suggest what to trade"]
+    Backend["🧠 Backend<br/>turns either one into<br/>a real, priced order"]
+    You["🧑 You<br/>sign it with your own wallet"]
+    Chain["⛓️ Base blockchain<br/>the options book, and your loan"]
+
+    Say --> AI
+    AI -- "the shape of a trade,<br/>never a price" --> Backend
+    Loan -- "no AI needed:<br/>the maths is fixed" --> Backend
+    Backend -- "the trade, and the most you can lose" --> You
+    You -- "your signature, your click" --> Chain
+    Backend <-- "reads the book, and your loan" --> Chain
+```
+
+**Two ways in, one way out.** Either you say what you think will happen, or you hand over the
+address of an Aave loan you want protected. Both end at the same place: a real option, priced
+off the live book, with the most you could lose written on it before you commit.
+
+The first door goes through the **AI agents**. One reads your sentence into "buy a put on
+ETH, about a week out", another watches the market and suggests a trade before you've asked,
+and a third can veto one. The second door doesn't need them at all, because a loan has a
+liquidation price, and the option that covers it follows from arithmetic, not opinion.
+
+The **backend** is the only part that understands options, and the only part that talks to
+the chain. The **blockchain** is where the money actually is: the backend only ever *prepares*
+a transaction, and your own wallet is what signs and sends it. Nothing is ever signed without
+your click, on the loan side included, where it would be easiest to quietly automate.
+
+The line that matters is between the AI and the money. An agent may **name** a trade (this
+asset, roughly this strike, roughly this expiry) but it may never produce a number you read.
+Every price, payoff and Max Loss is re-derived by the backend from the live order book after
+the AI has spoken, so a model that hallucinates a price changes nothing you see. A separate
+AI writes market commentary, and it is kept structurally away from the trading screens for
+the same reason.
+
+See **[CONTEXT-MAP.md](./CONTEXT-MAP.md)** for the two things this app does (trading, and
+protecting an existing loan), **[CONTEXT.md](./CONTEXT.md)** for the vocabulary, and
+[Design](#design) below for why each boundary is where it is.
+
+## Tech stack
+
+| Layer | What we use | Why |
 |---|---|---|
-| `GET /markets` | no | all six Underlyings at once: spot and the call/put split of Maker Depth. What the ticker rail is drawn from |
-| `GET /book` | no | the ETH book: spot, how many options are buyable, the Implied Move |
-| `GET /session` | no | Risk Budget and what is left of it |
-| `POST /session/budget` | no | set the Risk Budget |
-| `GET /deck` | no | every Order buyable right now on one Underlying, for one direction and one expiry, as Cards. `?asset=BTC\|ETH\|SOL\|BNB\|XRP\|AVAX&direction=DOWN\|UP&horizonDays=n&sizeUsdc=n`. **`asset` is required** -- a default is how an ETH-only assumption survives |
-| `GET /depth` | no | where makers will actually trade on one Underlying, every expiry and both directions at once. Not a Deck; prices nothing. `?asset=X&horizonDays=n` (the horizon labels one statistic) |
-| `POST /propose` | **no** | TradeIntent in, `PROPOSAL \| VETO \| NO_ORDER` out. Prices a real order, signs nothing. Takes an optional `cardRef`, and an optional `contracts` (the size asked for in contracts instead of dollars — needs a `cardRef`, and the server converts it to a stake so the browser never does). |
-| `POST /practice` | **no** | opens a simulated Position from a `proposalId`. No token, no Risk Budget, no signer in reach. |
-| `POST /propose/chat` | **no** | a sentence in, the same `PROPOSAL \| VETO \| NO_ORDER` out. Extracts a Trade Intent from free text (ETH, BTC or SOL, English or Chinese) and hands it to the same `/propose` path, so nothing about pricing or selection differs. Falls back to a deterministic parser when no AI key is set |
-| `POST /auth/challenge` | no | issues a one-time message for the Trader's wallet to sign, proving ownership (ADR-0012) |
-| `POST /auth/verify` | no | verifies that signature and marks the session's wallet proven |
-| `POST /fill/prepare` | no | reserves Risk Budget against a proposalId from `/propose` and returns the unsigned transaction(s) the Trader's own **proven** wallet must send |
-| `POST /fill/settle` | no | looks up the transaction's real result on-chain and finalizes or releases the reservation accordingly (ADR-0012) |
-| `GET /positions` | no | the board: holdings for whichever wallet address the browser reports (falling back to the operator's configured wallet, or the account's own linked wallet when signed in), plus this session's Practice Runs, each labelled |
-| `GET /account` | no | the signed-in account's saved settings and linked wallet, if any (ADR-0014) |
-| `POST /account/settings` | no | save a partial Risk Budget / default-asset / default-direction update |
-| `GET /account/activity` | no | a page of the account's own activity log |
-| `GET /history` | no | the account's own settled Fills. Needs a signed-in account |
-| `POST /rfq` | no | opens a sealed-bid request: a strike/tenor/size the book does not offer (`kind: "TRADER"`) or a Loan to cover (`kind: "COVER"`, an address and nothing else). Holds the Reserve Price against the Risk Budget and returns the one unsigned transaction the requester's own **proven** wallet must send. A `COVER` request for an uncoverable Loan answers with that Loan's own refusal instead |
-| `POST /rfq/confirm` | no | looks up the opening transaction's real receipt, reads the quotation id the chain assigned, and releases the reservation if it never opened (ADR-0012) |
-| `GET /rfq/:requestId` | no | the wait: which phase, how many makers have answered, and the premium once one has. Never a maker's identity, and never a premium before an Offer exists |
-| `POST /rfq/settle/prepare` | no | the second human confirmation: a maker's own decrypted price, and the unsigned approve + settle transactions that pay exactly it |
-| `POST /rfq/settle` | no | looks up the settlement on-chain, records the option it minted, and drops the Risk Budget hold from the Reserve Price to the premium actually charged |
-| `POST /rfq/cancel/prepare` / `POST /rfq/cancel` | no | withdraw a request nobody answered, taking the commitment to pay back off the chain |
-| `GET /cover/quote` | no | a Borrower's Aave V3 Loan on Base, and the put that would protect it: Liquidation Price, Target Strike, the full hedge. `?address=0x...`. Reads any address, requests nothing from a maker, signs nothing. Refuses -- with the reason in words -- for multi-collateral Loans, unsupported collateral, no debt, or a price its two sources disagree on |
-| `GET /forecast/news` | no | headline sentiment for `?symbol=&horizon=`, over the real feeds below. Opinion, quarantined from the trade flow (ADR-0005) |
-| `GET /forecast/price` | no | a price prediction grounded in real market data. Opinion, never a trade input |
-| `GET /forecast/risk-benefit` | no | the risk/benefit reading, with a runtime guardrail against Max Loss phrasing |
-| `GET /forecast/indicators` | no | indicators for one coin, from the Python agents service. The odd one out: arithmetic over public candles rather than opinion, so no AI call, no horizon and no disclaimer. Needs `npm run agents` |
-| `POST /forecast/ask` | no | a free-text question answered per coin, with conversation history. Token-gated and rate-limited — one question can trigger several real AI calls |
-| `GET /news` \| `GET /news/crypto` \| `GET /news/macro` | no | raw news feeds: crypto (CryptoPanic → RSS → CryptoCompare) and macro (GNews → NewsAPI → the same chain), or both at once. Real external reads rather than a billed AI call, so ungated like `/book` and `/deck` |
-| `GET /health` | no | liveness: that this process is up, and whether it has a signer. Touches no dependency, so it stays free to poll |
-| `GET /health/ready` | no | readiness: makes real upstream calls and names the dependency that is down. 503 when degraded. Rate-limited — meant to be polled slowly |
-| `GET /risk-profile` | no | the caller's saved Risk Profile, or `null` if none is set yet. Needs a signed-in account |
-| `PUT /risk-profile` | no | saves conservative/balanced/aggressive for the caller. Needs a signed-in account |
-| `GET /suggestion` | no | an ETH Suggestion from the Strategy Agent for the caller's saved profile. Needs a signed-in account; `null` fields if no profile is saved yet |
-| `POST /decisions` | no | records ACCEPTED/DISMISSED for a Suggestion the caller was shown. Needs a signed-in account |
-| `GET /decisions/stats` | no | per-strategy accept/dismiss counts for the caller, optionally `?strategyId=`. Needs a signed-in account |
+| Frontend | Next.js 15, React 19, TypeScript | The surface. No SDK, no key, no arithmetic: it renders strings the server already formatted |
+| Wallet | wagmi + viem, EIP-6963, WalletConnect | Many wallets, picked by the Trader, not one assumed `window.ethereum` (ADR-0011) |
+| Backend | Fastify 5, TypeScript, zod | The only process holding a key. zod schemas are shared with the frontend, so the contract is one file |
+| Options | Thetanuts client SDK v0.3, ethers v6 | The live order book on Base, and the signing/calldata primitives |
+| Lending | Aave V3 on Base, read via ethers | A Borrower's real loan and its real liquidation price (ADR-0015) |
+| Agents | Python, FastAPI, pandas, pydantic | Indicators and Suggestions, on loopback only. Reaches the chain solely through the Node backend (ADR-0007) |
+| AI | OpenAI, Groq, Anthropic, tried in that order | Reads a sentence, drafts an opinion. Never originates a number (ADR-0006) |
+| Data | Supabase (Postgres) | Accounts, Risk Profiles, Decisions, open RFQs. Never balances, because the chain owns money (ADR-0003) |
+| Tests | Vitest, `node:test`, pytest, Playwright + axe | Four suites, all on every push |
 
-`/propose` is what fills the confirmation card; `/fill/prepare` then `/fill/settle` are what
-Confirm does — the Trader's own connected wallet signs and submits the actual transaction
-(ADR-0011), so the backend never holds a Trader's key. The chosen order is held server-side
-and only a `proposalId` goes out, so no caller can ask us to prepare a fill for an order we
-never priced. `/fill/prepare` also refuses a `walletAddress` the session has not proven it
-owns — that proof comes from `/auth/challenge` and `/auth/verify`, a signed message rather
-than a transaction. And `/fill/settle` no longer trusts the browser's own report of whether
-a fill worked: given a `txHash`, it looks up that transaction's real receipt on-chain and
-decides success or failure from that alone (ADR-0012).
-
-`/auth/challenge`, `/auth/verify`, and `/fill/prepare` also require a signed-in account
-now, on top of everything above -- a valid `x-account-token` (a Supabase Auth session,
-verified server-side), refused with 401 otherwise (ADR-0014). Deck browsing and Practice
-Run need neither an account nor a wallet. A successful `/auth/verify` call, when signed in,
-also links that wallet to the account (one wallet per account, overwritten on relink); the
-Risk Budget ceiling, Practice Run history, and an activity log persist per account through
-`GET /account`, `POST /account/settings`, and `GET /account/activity`.
-
-The `/rfq` routes are the other money path, and they are a different shape (ADR-0017). A
-Fill is one act against a price that already exists; an RFQ opens a sealed-bid auction,
-waits out a window the protocol sets, and settles against a price discovered inside it —
-**two signatures with a real wait between them**. What the requester commits to before the
-first one is the Reserve Price: a ceiling, enforced on-chain by the OptionFactory, held
-against the Risk Budget from the moment the request is built. No premium exists, or is
-shown, until a maker answers. Both doors — the trading surface's and Cover's — go through
-the same seven routes; they differ only in how the Ask is derived.
-
-Every number a Trader reads crosses the wire as `{ value, display }` -- formatted once, on
-the server. The frontend renders `display` verbatim and never formats or recomputes; if it
-ever does, ADR-0006 has been undone in the least visible place in the codebase. That is not
-left to discipline: `apps/web/tests/support/no-arithmetic.test.ts` reads every component and fails on a
-`toFixed`, a `toLocaleString` or a literal dollar sign. Two files are exempt and each says
-why -- `clock.ts` formats durations, which no response can carry, and `geometry.ts` produces
-coordinates, which are never read as text.
-
-The payoff curve follows the same rule. The crosshair SNAPS to one of the server's own sampled
-points and reads that point's strings rather than interpolating between two, which is why the
-proposal carries 81 pre-formatted points instead of a formula.
-
-A `cardRef` works the same way a `proposalId` does: it is a capability, not a label. It
-SELECTS an Order and never supplies a value -- the server re-fetches that Order off the live
-book and re-derives every number, so an override passes exactly the checks an agent-chosen
-Card does. No maker address, nonce or signature ever reaches the browser.
-
-`/practice` is a distinct route rather than a flag on `/fill`, because a boolean that
-switches a money route into a non-money route fails open under a typo or a merge. Its module
-imports nothing that can sign, and a test walks the import graph to keep it that way.
-
-The `/forecast/*` routes are the opinion surface ADR-0005 anticipated, and the
-quarantine is structural rather than intentional. Nothing in `apps/api/src/forecast/`
-imports `propose.ts` or `execute.ts`, or is imported by them. Every response carries a fixed
-disclaimer and a per-field `source`, so nothing downstream can render it as anything but
-attributed opinion. And `guardrails.ts` is a RUNTIME check, not a prompt: any model text
-matching `max loss` / `maximum loss` / `max-loss` -- the phrase plus the paraphrases a model
-told "never say X" reaches for -- throws, and the response is refused rather than cleaned up.
-
-Market data behind those routes is real and cross-checked. Price comes from the same
-`getMarketData()` the rest of the app trusts (the SDK's `getMarketPrices()` is broken in
-v0.3.0 -- it returns `{price: "0"}` for every symbol, contradicting its own type), with the
-24h stats from CoinGecko. The two sources are compared, and past 3% divergence the request
-is refused: a gap that large means a mis-resolved symbol or stale data, and grounding a
-forecast in it is worse than answering nothing. An unknown symbol 404s, a fetch failure
-502s, and no fabricated price is ever substituted for either.
-
-News is real, and it was not always. This file previously recorded a decision to keep
-headlines **simulated, permanently**; `apps/api/src/news/` replaced that with live providers
-and `forecast/news.ts` now asks it rather than fabricating anything. The fallback chain is
-CryptoPanic, then RSS, then CryptoCompare for crypto, and GNews, then NewsAPI, then that same
-chain for macro, so it works with zero keys configured. Every headline still carries its
-`source`, and the interface `fetchNews` reads against is unchanged, which is what made the
-swap a provider change rather than a rewrite.
-
-This process holds a funded key, so it is locked down by default: it binds to **loopback**,
-CORS is an explicit allowlist (never `origin: true`), and `/fill`, `/propose`, and
-`/forecast/*` all require `Authorization: Bearer $COPILOT_API_TOKEN` whenever that is set --
-not just `/fill`. `/propose` and `/forecast/*` are also rate-limited (30/min per IP)
-regardless of the token, since they cost real Thetanuts/AI API usage even though they never
-move funds. Do not bind it to `0.0.0.0` on shared WiFi -- anyone on the network could then
-spend from the wallet, or run up your API bill.
-
-`$COPILOT_API_TOKEN` does not make a non-loopback bind safe by itself: `$NEXT_PUBLIC_COPILOT_API_TOKEN`
-puts the same value in the public frontend bundle, so anyone who loads the site can read it
-back out and replay it directly against the API from outside the browser, bypassing CORS
-entirely -- CORS governs what a browser script may read, not what a plain HTTP client can send.
-So `apps/api/src/server.ts` refuses to start on any `HOST` other than `127.0.0.1`/`localhost`
-unless `EXTERNAL_AUTH_IN_FRONT=true` is also set, which is an explicit acknowledgment that some
-other, non-client-embedded authentication mechanism (a reverse proxy that authenticates callers
-itself, mTLS, a private network with no public ingress) is genuinely in front of this process.
-
-The four `/forecast/*` GET routes (`news`, `price`, `risk-benefit`, `indicators`) are the one
-exception to "whenever that is set": they refuse with 503 if `COPILOT_API_TOKEN` is unset,
-rather than falling back to loopback-only trust. A plain GET is a CORS-simple request -- a
-cross-site page's `<img src>` or a `no-cors` fetch still reaches the handler and runs a real,
-billed AI/CoinGecko call even though the browser can't read the response back, so an unset
-token left those four routes forgeable by any page the operator's browser happened to load.
-
-The Risk Profile / Suggestion / Decision routes are gated by `$COPILOT_API_TOKEN` when set,
-and then again by the account that signed in. They key their data on the id
-`requireAccount` resolves an `x-account-token` to -- read off a verified Supabase session,
-never off a header (ADR-0018, supersedes ADR-0013). Without a signed-in account all five
-answer 401; there is no fallback identity, because a fallback is reachable by simply not
-signing in.
-
-This closes a real hole, twice over. These routes originally keyed on `x-copilot-owner`, a
-client-supplied header nothing verified, so any holder of the shared token could name a
-different owner and read or overwrite that owner's Risk Profile or Decisions. ADR-0013
-closed that by keying on the wallet a session cryptographically proved instead; ADR-0018
-re-keys on the account for consistency with the rest of the account system (Risk Budget,
-linked wallet, Practice history) without reopening the hole -- an account id is only ever
-handed back after Supabase itself verifies the bearer token, exactly as unforgeable as the
-wallet signature it replaces.
-
-That account id is what the Insights tab's card is keyed on. `apps/web/components/SuggestionCard.tsx`
-sits between the Insights log and the ask-row: it is the Risk Profile picker and the
-Suggestion it drives, as one card, and shows no figures at all — no size, no cost, no days.
-At ≤900px `globals.css` collapses the layout to one column and `.commit` is
-`position: sticky; bottom: 0`, so a Max Loss can be on screen while the card is read; a card
-with no figures cannot violate ADR-0005 however the layout collapses. "See what this buys"
-records a Decision (`ACCEPTED`) and deals a fresh Deck from the Suggestion's own Trade Intent,
-then switches to the Trade tab — the Trader still picks a Card and presses Confirm before
-anything is signed (ADR-0008). Dismiss records `DISMISSED` and collapses the card.
-
-If you set `COPILOT_API_TOKEN`, set `NEXT_PUBLIC_COPILOT_API_TOKEN` to the same value --
-Next.js only inlines `NEXT_PUBLIC_*` into the browser bundle, and without it Confirm
-answers 401. That puts the token in the bundle, which is the honest cost of a browser
-holding one: it is not a secret from the person at the keyboard (the wallet is theirs),
-and the page on another origin it defends against cannot read the bundle.
+TypeScript everywhere except the agents, which are Python because that is where the
+indicator and backtesting libraries live. Groq is reached through the OpenAI SDK with a
+swapped base URL, so three providers cost two clients.
 
 ## Design
 
@@ -336,125 +263,3 @@ The reasoning behind this project is written down, not assumed:
   - [0016](./docs/adr/0016-cover-is-partial-and-says-by-how-much.md) — a Cover says how much of the Loan it actually covers
   - [0017](./docs/adr/0017-the-rfq-money-path-is-two-signatures-with-a-wait-between-them.md) — an RFQ is two signatures with a wait between them, and no price until a maker answers
   - [0018](./docs/adr/0018-a-risk-profile-belongs-to-an-account.md) — a Risk Profile is keyed on the signed-in account, not the wallet (supersedes 0013)
-
-## Layout
-
-```
-apps/web              the trading surface. Next.js, UI only -- no SDK, no key, no maths
-  app/globals.css     the design system. The Implied Chance ramp is measured, not chosen
-  app/page.tsx        two columns: language left, money right
-  components/         Tape, DeckRow, PayoffStrip, Board, Halt, Chat, Rail, Chips, Header,
-                      ConfirmModal, RfqModal, CoverConfirmModal, DepthChart, History,
-                      WalletConnect, WalletPicker, AccountControl, RiskProfileChip and the
-                      rest of the surface
-  lib/api.ts          the only way this app talks to anything
-  lib/surface.ts      the whole surface as one state machine
-  lib/wallet.ts       the only place this app touches a browser wallet (ADR-0011) --
-                      multiple extensions (via EIP-6963) plus WalletConnect, picked
-                      through WalletPicker.tsx, not a single assumed window.ethereum
-  lib/clock.ts        the ONE place a number becomes text in the browser. Durations only
-  lib/geometry.ts     coordinates and widths. Never text
-  tests/              Playwright + axe, stubbed from fixtures the real API generated
-  tests/support/      the Vitest source checks: the measured palette, the no-arithmetic scan
-apps/api
-  src/thetanuts/
-    units.ts          addresses and decimals -- no RPC, no key
-    client.ts         one configured ThetanutsClient. The seam the test suite stubs
-    market.ts         live spot, from the protocol's own market data
-    orders.ts         which orders we may buy -- ADR-0002 enforced here, once
-    pricing.ts        an Order + a stake -> its economics. THE one pricing path
-    implied-chance.ts the market's own probability of finishing in the money. Pure
-    deck.ts           a Deck of Cards, for one direction and one expiry
-    propose.ts        selects an Order, then calls pricing.ts. Derives nothing itself
-    prepareFill.ts    builds unsigned fill calldata for the Trader's own wallet (ADR-0011)
-    execute.ts        the operator's own custodial CLI path. Never called from the browser
-    underlyings.ts    the six Underlyings, keyed by Chainlink price feed (ADR-0010)
-    markets.ts        every Underlying at once, for the ticker rail
-    depth.ts          where makers will actually trade. Prices nothing
-    open-interest.ts  how many live Positions sit at each strike. Cached, never money
-    rfq/              the sealed-bid path (ADR-0017): build.ts, offers.ts, settle.ts,
-                      verify.ts -- the Ask, the decryption, the settlement calldata
-  src/insurance/      Liquidation Cover. Deterministic, no agent, no model
-    loan.ts           an Aave V3 Loan on Base. Single-collateral, WETH or cbBTC only
-    liquidation.ts    the arithmetic. Pure, and unit tested against hand-checked numbers
-    http.ts           GET /cover/quote
-  src/news/           the real news providers: CryptoPanic, RSS, CryptoCompare, macro
-  src/strategy/       the Node half of the Strategy Agent: Risk Profiles, Suggestions,
-                      Decisions. Owns both Supabase tables (ADR-0018)
-  src/agents/
-    review.ts         the Review Agent, stubbed. It may only veto, never authorise
-    trade.ts          a sentence -> a Trade Intent, with a deterministic parser behind the
-                      model. Names an Order's shape, never a number (ADR-0006)
-  src/forecast/       the opinion surface. Imports nothing on the money path, ADR-0005
-    agent.ts          one AI client: OpenAI, then Groq, then Claude. The seam tests stub
-    marketData.ts     real prices, two sources, refused when they disagree
-    news.ts           simulated headlines -- unconditionally -- and their sentiment
-    price.ts          a prediction, grounded in the market data it echoes back
-    riskBenefit.ts    the qualitative read
-    scenario.ts       one MarketScenario, so the three analyses cannot contradict
-    guardrails.ts     the runtime refusal on "max loss" phrasing
-    http.ts           query parsing and error mapping. Pure, so the routes stay thin
-  src/app.ts          the Fastify routes -- the only thing the browser talks to
-  src/server.ts       binds the port. Importing app.ts opens no socket
-  src/practice.ts     POST /practice, in a module with no signer in its import graph
-  src/rfq.ts          the seven RFQ routes. The other money path (ADR-0017)
-  src/history.ts      GET /history: what this account actually bought
-  src/env.ts          loads the ROOT .env whatever directory npm launched from
-  src/format.ts       every number becomes a string here, and nowhere else
-  src/sessions.ts     Risk Budget + the server-side proposal and Card stores
-  src/test/           fixtures and the stubbed client. No network, no chain, no wallet
-  src/scripts/
-    explore.ts        read-only diagnostic
-    fill.ts           thin CLI over propose + execute
-    forecast.ts       prints all three analyses, through the routes' own functions
-    trade-nlp.ts      extracts a Trade Intent from a sentence. No RPC, no frontend
-    news.ts / ask.ts  the news feed and the free-text question, from the terminal
-    wallet.ts         create / check the disposable wallet
-apps/agents           the Python service (ADR-0007). Loopback only, reaches the protocol
-                      only through the Node backend
-  strategy/           candles, indicators, profiles, the evaluator and the backtest
-  server.py           GET /health, /indicators, /suggest
-supabase/migrations   the two Strategy tables, and the RFQ table ADR-0021 explains
-packages/shared       zod schemas -- the TradeIntent wall from ADR-0001
-  src/forecast.ts     the Forecast shapes, and the disclaimer every response carries
-.github/workflows/    CI: typecheck, then all four suites, on every push
-docs/superpowers/     specs and implementation plans
-```
-
-## Status
-
-- [x] SDK integration: order selection, proposal, execution modules
-- [x] Backend API: `/book`, `/session`, `/propose`, `/fill`, `/positions`
-- [x] One pricing path: the Deck and the Trade Proposal derive from the same call
-- [x] Implied Chance
-- [x] `GET /deck` and the `cardRef` indirection
-- [x] `PROPOSAL | VETO | NO_ORDER`, with the Review Agent stubbed
-- [x] `POST /practice` and the merged board
-- [x] The trading surface: Deck, override, payoff, commit bar, Practice Run, board, halts
-- [x] A frontend quality bar that is checked: axe, keyboard, 375px, and a measured palette
-- [x] Forecast analysis: news sentiment, price prediction, risk/benefit — real market data,
-      simulated news, and a runtime guardrail keeping it clear of Max Loss language
-- [x] Tests and CI: Vitest with the Thetanuts client stubbed at its module boundary,
-      `node:test` for Forecast, pytest for the agents, Playwright + axe for the surface —
-      all four on every push
-- [ ] **First real mainnet fill.** Every part of the path is built and exercised against
-      live Base data — this ticks when one has actually been signed
-- [x] Trade Intent extraction — the chat input takes a sentence and `POST /propose/chat`
-      turns it into a Trade Intent, with a deterministic parser behind the model
-- [x] The agents as their own Python service (ADR-0007): `apps/agents` serves the Strategy
-      Agent's indicators and Suggestions over loopback HTTP, with its own pytest suite
-- [ ] The Review Agent is still stubbed as always-agreeing, and its silence has never been
-      treated as consent
-- [x] RFQ for strikes the book does not carry — the full sealed-bid path, both doors:
-      request, wait, a maker's real price, and a second signature to pay it (ADR-0017)
-- [x] Liquidation Cover, end to end — reads an Aave Loan, derives the hedge, and buys it
-      through the same RFQ path
-- [ ] **First real mainnet Cover.** The path is built and exercised against live Base data;
-      this ticks when a maker has actually answered one
-
-## Next steps
-
-Sign the first fill, and get a maker to answer the first Cover Request. Trade Intent
-extraction, so the left column takes a sentence rather than a seed prompt. A renewal prompt
-before a Lapse — the first thing ADR-0008 asks for if there is time. Auto-claim at expiry. A
-Python quant service for volatility modelling.
