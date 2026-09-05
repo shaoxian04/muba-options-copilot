@@ -7,7 +7,7 @@
  * here and nowhere else in `apps/web`.
  */
 import { describe, expect, it } from "vitest";
-import { dialArc, depthBarWidths, coverPriceLine } from "./geometry";
+import { dialArc, depthBarWidths, coverPriceLine, strikeBand } from "./geometry";
 
 describe("dialArc", () => {
   it("fills nothing at zero chance and the whole ring at certainty", () => {
@@ -132,5 +132,45 @@ describe("coverPriceLine", () => {
     expect(same.liquidation.x).toBeCloseTo(50, 1);
     expect(same.strike.x).toBeCloseTo(50, 1);
     expect(same.spot.x).toBeCloseTo(50, 1);
+  });
+});
+
+describe("strikeBand", () => {
+  const band = () => strikeBand(2340, 2400, 2620, 2450.85);
+
+  it("puts every marker inside the track", () => {
+    const b = band();
+    for (const x of [b.strikeX, b.spotX, b.range.left, b.rangeMidX]) {
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThanOrEqual(100);
+    }
+    expect(b.range.left + b.range.width).toBeLessThanOrEqual(100);
+  });
+
+  it("orders the markers the way the prices are ordered", () => {
+    // Strike 2340 < spot 2450.85 < range top 2620, and the strike sits BELOW the range
+    // -- the whole point of the picture, so a regression that collapses the scale shows
+    // up here rather than as a plausible-looking bar.
+    const b = band();
+    expect(b.strikeX).toBeLessThan(b.range.left);
+    expect(b.range.left).toBeLessThan(b.spotX);
+    expect(b.spotX).toBeLessThan(b.rangeMidX);
+  });
+
+  it("centres the range label on the range bar", () => {
+    const b = band();
+    expect(b.rangeMidX).toBeCloseTo(b.range.left + b.range.width / 2, 10);
+  });
+
+  it("survives a strike above the range", () => {
+    const b = strikeBand(2700, 2400, 2620, 2450.85);
+    expect(b.strikeX).toBeGreaterThan(b.range.left + b.range.width);
+    expect(b.strikeX).toBeLessThanOrEqual(100);
+  });
+
+  it("does not divide by zero when every price coincides", () => {
+    const b = strikeBand(2400, 2400, 2400, 2400);
+    for (const x of [b.strikeX, b.spotX, b.range.left, b.rangeMidX]) expect(Number.isFinite(x)).toBe(true);
+    expect(b.range.width).toBeCloseTo(0, 10);
   });
 });

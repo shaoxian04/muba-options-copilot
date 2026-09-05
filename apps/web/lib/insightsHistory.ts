@@ -10,6 +10,17 @@ import type { SuggestionResponse } from "./api";
 export interface InsightsLine {
   who: "trader" | "copilot";
   text?: string;
+  /**
+   * Set on the TRADER line of a card drop, so the renderer can show the card itself
+   * instead of the question.
+   *
+   * `buildCardQuestion` writes a 40-word sentence for the backend extractor's benefit
+   * (apps/web/lib/cardQuestion.ts explains why it names "price", "risk-benefit" and
+   * "indicators" out loud). That sentence is plumbing, and rendering it verbatim made
+   * the largest thing in the panel a paragraph the Trader never typed. The question
+   * still travels to /forecast/ask unchanged -- only what is DRAWN changes.
+   */
+  askedByCard?: boolean;
   results?: Record<string, CoinAskResult>;
   /**
    * Set only when this exchange came from dropping a Deck card (Chat.tsx) — carries
@@ -23,6 +34,13 @@ export interface InsightsLine {
     strikeDisplay: string;
     direction: "UP" | "DOWN";
     horizonDays: number;
+    /**
+     * The Card's own Implied Chance string, carried so the answer can put what the
+     * MARKET prices beside what the AI predicted -- the comparison the drop is asking
+     * for. Optional because a log restored from sessionStorage predates this field;
+     * such an entry renders without the market half rather than with a wrong one.
+     */
+    impliedChanceDisplay?: string;
   };
   /**
    * Set only on the copilot line that carries a Suggestion (Chat.tsx appends these

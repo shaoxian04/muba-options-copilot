@@ -75,6 +75,12 @@ export default function Page() {
         submitTradeMessage={s.submitTradeMessage}
         deal={s.deal}
         pick={s.pick}
+        chanceFor={(cardRef) => {
+          // Read off the Deck that is on screen right now, so the Copilot's Card and the
+          // Deck row it names can never disagree about the odds.
+          const card = s.deck?.cards.find((c) => c.cardRef === cardRef);
+          return card ? { impliedChance: card.impliedChance, chanceLabel: card.chanceLabel } : null;
+        }}
         signedIn={!!s.account}
         collapsed={collapsed}
         onToggleCollapsed={() => setCollapsed((v) => !v)}

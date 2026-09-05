@@ -7,11 +7,18 @@
  * chatbox stays mounted and only which backend a submitted message reaches changes.
  *
  * "Trade" is the Copilot that proposes and explains -- it cannot spend, nothing in this
- * mode can reach `/fill` or `/practice`. There is no free-text-to-trade backend yet (the
- * Trade, Review and Strategy Agents are a separate Python service that has not been
- * started, ADR-0007), so a typed message is logged and answered honestly rather than
- * pretending to be read -- picking a Card off the Deck is still the only way to price
- * and buy something. "Insights" is the Forecast subsystem (ADR-0005): real market data,
+ * mode can reach `/fill` or `/practice`. A typed sentence IS read: `submitTradeMessage`
+ * reaches `POST /propose/chat`, which extracts a Trade Intent, checks it against the
+ * Risk Budget, puts it past the Review Agent's veto and prices an Order. What comes back
+ * lands here as two lines -- the agent's reasoning, then the Order it named as a
+ * `ProposalCard` the Trader presses themselves. The confirmation deliberately does not
+ * open on its own; see the chat path in `lib/surface.ts` for why.
+ *
+ * The transcript carries ONLY what answers something the Trader submitted. A Card click,
+ * an accepted Suggestion and a Practice Run each used to narrate themselves in here and
+ * no longer do -- every one of them is already visible where it happened.
+ *
+ * "Insights" is the Forecast subsystem (ADR-0005): real market data,
  * news, price predictions, risk/benefit views, and comparisons across coins, answered
  * from a free-text question. It also carries the Risk Profile picker (a chip in the
  * composer row, `RiskProfileChip.tsx`) and the Suggestion it drives, which lands as a
@@ -53,7 +60,7 @@ import { useCallback, useEffect, useRef, useState, type DragEvent } from "react"
 import { usePathname } from "next/navigation";
 import type { UnderlyingSymbol } from "@copilot/shared";
 import type { ChatLine, Direction, TradeIntent } from "../lib/surface";
-import type { ProposeResult, RiskProfileName } from "../lib/api";
+import type { Figure, ProposeResult, RiskProfileName } from "../lib/api";
 import { ApiRefusal, askForecast, getSuggestion } from "../lib/api";
 import { deriveHistory, type InsightsLine } from "../lib/insightsHistory";
 import { buildCardQuestion, CARD_DRAG_MIME, type DroppedCard } from "../lib/cardQuestion";
@@ -61,6 +68,7 @@ import { compareStrikeToRange } from "../lib/strikeOutlook";
 import { RiskProfileChip } from "./RiskProfileChip";
 import { SuggestionMessage, type SuggestionStatus } from "./SuggestionMessage";
 import { NearestOrderPreview } from "./NearestOrderPreview";
+import { CardEcho, InsightCard } from "./InsightCard";
 
 type Engine = "trade" | "insights";
 
@@ -92,6 +100,7 @@ export function Chat({
   submitTradeMessage,
   deal,
   pick,
+  chanceFor,
   signedIn,
   collapsed,
   onToggleCollapsed,
@@ -103,6 +112,14 @@ export function Chat({
   deal: (line?: string, intent?: Partial<TradeIntent>) => Promise<ProposeResult | null>;
   /** Same signature as `Surface.pick` -- threaded down to NearestOrderPreview's "Place order". */
   pick: (cardRef: string, on?: { underlying: UnderlyingSymbol; direction: Direction; horizonDays: number }) => Promise<void>;
+  /**
+   * The Implied Chance of a Card the Copilot proposed, looked up in the Deck showing
+   * right now. A function rather than a value baked into the log line: the Deck
+   * refreshes underneath this panel, and a chance copied in when the answer landed
+   * would be a number that was true once. Null when that Order's expiry is not the one
+   * on screen -- the Card then renders without a chance rather than with a wrong one.
+   */
+  chanceFor: (cardRef: string) => { impliedChance: Figure; chanceLabel: string } | null;
   /**
    * Whether an account is signed in (ADR-0014). The gate this panel enforces is
    * sign-in alone, not a connected wallet -- a signed-in Trader with no wallet yet still
@@ -176,7 +193,13 @@ export function Chat({
       const fragment = question.trim();
       if (!fragment || insightsBusy) return;
       if (skipPending) setInsightsPending(null);
-      setInsightsLog((prev) => [...prev, { who: "trader", text: fragment }]);
+      // `cardContext` rides the trader line as well as the answer: the echo that replaces
+      // the machine-written question is drawn from the card's own fields, and it has to
+      // survive a reload out of sessionStorage the same way the answer does.
+      setInsightsLog((prev) => [
+        ...prev,
+        cardContext ? { who: "trader", text: fragment, askedByCard: true, cardContext } : { who: "trader", text: fragment },
+      ]);
       setInsightsBusy(true);
 
       const combined = !skipPending && insightsPending ? `${insightsPending} ${fragment}` : fragment;
@@ -239,6 +262,7 @@ export function Chat({
           strikeDisplay: card.strikeDisplay,
           direction: card.direction,
           horizonDays: card.horizonDays,
+          impliedChanceDisplay: card.impliedChanceDisplay,
         },
         true
       );
@@ -297,7 +321,14 @@ export function Chat({
         )}
 
         {engine === "trade" ? (
-          <TradeEngine log={log} busy={busy} submitTradeMessage={submitTradeMessage} disabled={!signedIn} />
+          <TradeEngine
+            log={log}
+            busy={busy}
+            submitTradeMessage={submitTradeMessage}
+            pick={pick}
+            chanceFor={chanceFor}
+            disabled={!signedIn}
+          />
         ) : (
           <InsightsEngine
             log={insightsLog}
@@ -316,15 +347,95 @@ export function Chat({
   );
 }
 
+/**
+ * The Order the agent named, as a Card the Trader presses themselves.
+ *
+ * "Place order" re-enters `pick(cardRef)` -- the same function a Deck Card click calls
+ * -- so the Order is re-fetched off the live book and every number re-derived before
+ * the confirmation opens (ADR-0006). Nothing on this Card is ever what gets filled:
+ * it selects, exactly as a `cardRef` is meant to.
+ *
+ * ADR-0009: no celebration and no urgency here. It states what the Order is, and the
+ * button is the plain one -- the loud button in this product is Practice Run, and it
+ * lives in the confirmation this opens.
+ */
+function ProposalCard({
+  line,
+  chance,
+  pick,
+  busy,
+  disabled,
+}: {
+  line: Extract<ChatLine, { kind: "proposal" }>;
+  chance: { impliedChance: Figure; chanceLabel: string } | null;
+  pick: (cardRef: string, on?: { underlying: UnderlyingSymbol; direction: Direction; horizonDays: number }) => Promise<void>;
+  busy: boolean;
+  disabled: boolean;
+}) {
+  const belief =
+    line.direction === "DOWN"
+      ? `${line.underlying} below ${line.strike.display}`
+      : `${line.underlying} above ${line.strike.display}`;
+
+  return (
+    <div className="chat-card" data-testid="chat-proposal">
+      <div className="chat-card-hd">
+        <span className="chat-card-k">The Copilot&rsquo;s pick</span>
+        {chance ? (
+          <span className="chat-card-chance">
+            {chance.impliedChance.display} &middot; {chance.chanceLabel}
+          </span>
+        ) : null}
+      </div>
+
+      <p className="chat-card-belief">{belief}</p>
+
+      <div className="chat-card-figs">
+        <div className="chat-card-fig">
+          <span className="k">Ends</span>
+          <span className="v">{line.expiry.display}</span>
+        </div>
+        <div className="chat-card-fig">
+          {/* Max Loss and the premium are the same number under buy-only (ADR-0002), so
+              naming it as the ceiling is the honest label rather than a second figure. */}
+          <span className="k">Costs &middot; most you can lose</span>
+          <span className="v">{line.premiumUsdc.display}</span>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        className="chat-card-place"
+        data-testid="chat-proposal-place"
+        disabled={busy || disabled}
+        onClick={() =>
+          void pick(line.cardRef, {
+            underlying: line.underlying,
+            direction: line.direction,
+            horizonDays: line.horizonDays,
+          })
+        }
+      >
+        Place order
+      </button>
+      <p className="chat-card-foot">Opens the confirmation. Nothing is bought yet.</p>
+    </div>
+  );
+}
+
 function TradeEngine({
   log,
   busy,
   submitTradeMessage,
+  pick,
+  chanceFor,
   disabled,
 }: {
   log: ChatLine[];
   busy: boolean;
   submitTradeMessage: (text: string) => void;
+  pick: (cardRef: string, on?: { underlying: UnderlyingSymbol; direction: Direction; horizonDays: number }) => Promise<void>;
+  chanceFor: (cardRef: string) => { impliedChance: Figure; chanceLabel: string } | null;
   disabled: boolean;
 }) {
   const [message, setMessage] = useState("");
@@ -345,19 +456,35 @@ function TradeEngine({
             poke or type what you want to do. Nothing is bought until you press confirm.
           </p>
         ) : (
-          log.map((line, i) => (
-            <p key={i} className={`from-${line.who}`}>
-              {line.text}
-            </p>
-          ))
+          log.map((line, i) =>
+            line.kind === "proposal" ? (
+              <ProposalCard
+                key={i}
+                line={line}
+                chance={chanceFor(line.cardRef)}
+                pick={pick}
+                busy={busy}
+                disabled={disabled}
+              />
+            ) : (
+              <p key={i} className={`from-${line.who}`}>
+                {line.text}
+              </p>
+            )
+          )
         )}
       </div>
 
       {/*
         The ask row goes to POST /propose/chat: a sentence becomes a Trade Intent, which
-        is priced through the same /propose path a Card is. The model names an Order's
-        shape and never a number (ADR-0006), and picking a Card off the Deck still works
-        exactly as before.
+        is checked against the Risk Budget, put past the Review Agent's veto, and priced
+        through the same /propose path a Card is. The model names an Order's shape and
+        never a number (ADR-0006), and picking a Card off the Deck still works exactly
+        as before.
+
+        What comes back lands as an answer plus a Card. The confirmation deliberately
+        does not open by itself -- the Trader presses "Place order" on that Card, which
+        re-enters the same `pick(cardRef)` a Deck Card click uses.
       */}
       <form
         className="ask-row"
@@ -473,9 +600,17 @@ function InsightsEngine({
         ) : (
           log.map((line, i) =>
             line.who === "trader" ? (
-              <p key={i} className="from-trader">
-                {line.text}
-              </p>
+              line.askedByCard && line.cardContext ? (
+                // The question still went to /forecast/ask verbatim; only what is drawn
+                // changes. See `askedByCard` in lib/insightsHistory.ts.
+                <div key={i} className="from-trader asked-by-card">
+                  <CardEcho card={line.cardContext} />
+                </div>
+              ) : (
+                <p key={i} className="from-trader">
+                  {line.text}
+                </p>
+              )
             ) : line.suggestion !== undefined || line.suggestionStatus !== undefined ? (
               <SuggestionMessage
                 key={i}
@@ -501,62 +636,13 @@ function InsightsEngine({
                   const outlook = cardContext ? compareStrikeToRange(cardContext.strikeValue, r.price?.predictedRange) : null;
 
                   return (
-                    <div key={symbol} className="coin-answer">
-                      <strong>{symbol}: </strong>
-                      {r.error ? <span className="err">{r.error}</span> : <span>{r.answer}</span>}
-
-                      {r.price ? (
-                        <div className="coin-detail">
-                          <span className="lbl">Price outlook</span>
-                          <span>
-                            {r.price.direction}, predicted {r.price.predictedRange.low}–{r.price.predictedRange.high},
-                            confidence {r.price.confidence}. {r.price.rationale}
-                          </span>
-                        </div>
-                      ) : null}
-
-                      {r.riskBenefit ? (
-                        <div className="coin-detail">
-                          <span className="lbl">Risk / benefit</span>
-                          <span>
-                            Upside: {r.riskBenefit.upside} Downside: {r.riskBenefit.downside}
-                          </span>
-                        </div>
-                      ) : null}
-
-                      {r.indicators ? (
-                        <div className="coin-detail">
-                          <span className="lbl">Indicators</span>
-                          <span>
-                            RSI(14) {r.indicators.rsi14 ?? "n/a"}, SMA(20) {r.indicators.sma20 ?? "n/a"}, EMA(20){" "}
-                            {r.indicators.ema20 ?? "n/a"}
-                          </span>
-                        </div>
-                      ) : null}
-
-                      {outlook && outlook.position !== "unavailable" && cardContext ? (
-                        <div className="coin-detail" data-testid="strike-outlook">
-                          {(() => {
-                            // Purely factual: restates the card's own payout condition from
-                            // `cardContext.direction` -- never an interpretive judgment about
-                            // whether the strike looks likely or unlikely to hit.
-                            const payoutCondition =
-                              cardContext.direction === "DOWN"
-                                ? `falls to or below that level`
-                                : `rises to or above that level`;
-
-                            if (outlook.position === "inside") {
-                              return `${cardContext.strikeDisplay} sits inside the AI's own predicted range for this horizon.`;
-                            }
-                            const rangeWord = outlook.position === "below-range" ? "below" : "above";
-                            return (
-                              `${cardContext.strikeDisplay} sits ${rangeWord} the AI's own predicted range for this ` +
-                              `horizon — this card pays if ${cardContext.underlying} ${payoutCondition}.`
-                            );
-                          })()}
-                        </div>
-                      ) : null}
-
+                    <InsightCard
+                      key={symbol}
+                      symbol={symbol}
+                      result={r}
+                      card={cardContext}
+                      outlook={outlook}
+                    >
                       {cardContext && r.price && i === lastCardDropIndex ? (
                         <NearestOrderPreview
                           underlying={cardContext.underlying}
@@ -568,9 +654,7 @@ function InsightsEngine({
                           onAccepted={onAccepted}
                         />
                       ) : null}
-
-                      {r.disclaimer ? <div className="disclaimer">{r.disclaimer}</div> : null}
-                    </div>
+                    </InsightCard>
                   );
                 })}
               </div>

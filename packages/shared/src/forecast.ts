@@ -119,6 +119,36 @@ export const ChatQuery = z.object({
 export type ChatQuery = z.infer<typeof ChatQuery>;
 
 /** One coin's result within a multi-coin /forecast/ask response -- partial success per coin. */
+/**
+ * The figures above, as strings a Trader reads.
+ *
+ * Everything else in this file is a wire shape validated against something Node did not
+ * write -- `Indicators` comes from the Python service and `PricePrediction` out of an
+ * LLM -- so the display strings cannot live on those objects without making Node's own
+ * validation of an upstream payload demand fields upstream has never heard of. They sit
+ * here instead, derived by Node from the numbers beside them.
+ *
+ * They exist because the alternative is the browser doing it. A raw `rsi14` rendered
+ * straight reads "RSI(14) 62.17234190576524", and the fix a component reaches for is
+ * `.toFixed(1)` -- which `apps/web/tests/support/no-arithmetic.test.ts` bans precisely
+ * so that this decision gets made here, once, where the number came from.
+ *
+ * Every field is nullable: an indicator inside its warm-up window has no value, and a
+ * question that asked for no price forecast has no range.
+ */
+export const ForecastDisplay = z.object({
+  /** Today's price, off `market.price` -- the band's spot marker and its label. */
+  spot: z.string().nullable(),
+  /** `price.predictedRange`, the two ends of the band. */
+  predictedRangeLow: z.string().nullable(),
+  predictedRangeHigh: z.string().nullable(),
+  /** One decimal, matching how `forecast/answer.ts` already says RSI aloud in prose. */
+  rsi14: z.string().nullable(),
+  sma20: z.string().nullable(),
+  ema20: z.string().nullable(),
+});
+export type ForecastDisplay = z.infer<typeof ForecastDisplay>;
+
 export const CoinAskResult = z.object({
   symbol: z.string(),
   answer: z.string().optional(),
@@ -128,6 +158,8 @@ export const CoinAskResult = z.object({
   news: NewsAnalysis.optional(),
   price: PricePrediction.optional(),
   riskBenefit: RiskBenefitView.optional(),
+  /** Optional so a result assembled before this existed still parses. */
+  display: ForecastDisplay.optional(),
   error: z.string().optional(),
 });
 export type CoinAskResult = z.infer<typeof CoinAskResult>;

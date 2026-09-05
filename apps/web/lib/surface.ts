@@ -181,12 +181,50 @@ export function fullestExpiry(expiries: ExpiryOption[]): number | null {
   return live.reduce((best, e) => (e.cards > best.cards ? e : best), live[0]!).horizonDays;
 }
 
-export interface ChatLine {
+/**
+ * One turn in the Trade transcript.
+ *
+ * A discriminated union rather than a bare string, because the panel now emits two
+ * different things and only one of them is prose. `say()` melting a server `Figure`
+ * into a sentence -- `${f.strike.display}, ${f.contracts.display} contracts for
+ * ${f.premiumUsdc.display}` -- threw away the structure the server had just gone to the
+ * trouble of building, and left a Review Agent veto rendering identically to small talk.
+ * Keeping the `Figure`s intact is ADR-0006 held onto for one step longer, not loosened:
+ * every string below is still the server's own `display`, never rebuilt here.
+ *
+ * The log carries ONLY what answers something the Trader submitted. A Card click, an
+ * accepted Suggestion and a Practice Run used to narrate themselves in here; they say
+ * nothing now, because each is already visible where it happened -- the Deck highlights
+ * the Card, the confirmation opens, and the practice receipt renders inside it.
+ */
+export type ChatLine =
   // The Copilot, never a "bot" -- CONTEXT.md keeps "trading bot" off the agents, and
   // the thing speaking on the left is the Copilot itself.
-  who: "trader" | "copilot";
-  text: string;
-}
+  | { who: "trader" | "copilot"; kind?: "text"; text: string }
+  /**
+   * An Order the Trade Agent named in answer to a typed sentence, rendered as a Card
+   * with its own "Place order" button. The button re-enters `pick(cardRef)` -- the same
+   * door a Deck Card click uses -- so the Order is re-fetched and re-priced server-side
+   * before any confirmation opens. Nothing here is ever the number that gets filled.
+   */
+  | {
+      who: "copilot";
+      kind: "proposal";
+      cardRef: string;
+      underlying: UnderlyingSymbol;
+      direction: Direction;
+      horizonDays: number;
+      strike: Figure;
+      premiumUsdc: Figure;
+      expiry: Figure;
+      /**
+       * Implied Chance is deliberately NOT carried here. It belongs to the Card, not to
+       * the proposal, and the Deck that holds it refreshes underneath this log -- a
+       * value copied in at answer time would be a number that was true once. The
+       * renderer looks it up live by `cardRef` instead (`chanceFor` in page.tsx), and
+       * renders the Card without one when the Order sits in an expiry not on screen.
+       */
+    };
 
 export type GateState = "idle" | "pass" | "wait" | "fail";
 
@@ -636,6 +674,15 @@ export function useSurface(): Surface {
 
   const say = useCallback((text: string) => setLog((l) => [...l, { who: "copilot", text }]), []);
   const heard = useCallback((text: string) => setLog((l) => [...l, { who: "trader", text }]), []);
+  /**
+   * The Card half of an answer to a typed sentence: the Order the agent named, kept as
+   * the server's own `Figure`s rather than flattened into a sentence. Paired with a
+   * `say()` carrying the agent's reasoning -- the two together are one answer.
+   */
+  const showProposal = useCallback(
+    (line: Extract<ChatLine, { kind: "proposal" }>) => setLog((l) => [...l, line]),
+    []
+  );
 
 
   /**
@@ -1495,7 +1542,6 @@ export function useSurface(): Surface {
       const askingHorizon = intent?.horizonDays ?? horizonDays;
       const askingSize = intent?.sizeUsdc ?? STAKE_USDC;
 
-      let row = deck;
       if (askingAsset !== asset || asking !== direction || askingHorizon !== horizonDays) {
         clearSelection();
         // An intent that names a horizon chose it; anything else leaves `loadDeck` free
@@ -1504,7 +1550,10 @@ export function useSurface(): Surface {
         setAssetState(askingAsset);
         setDirectionState(asking);
         setHorizonState(askingHorizon);
-        row = await loadDeck(askingAsset, asking, askingHorizon, { spinner: true });
+        // Awaited for its side effect only -- the Deck it returns was read solely by the
+        // narration this path no longer writes, and the Deck it sets is what the Cards
+        // on the right render from.
+        await loadDeck(askingAsset, asking, askingHorizon, { spinner: true });
       }
 
       setSizeUsdcState(askingSize);
@@ -1513,13 +1562,12 @@ export function useSurface(): Surface {
         horizonDays: askingHorizon,
       });
       if (answer?.kind === "PROPOSAL") {
-        const f = answer.proposal.figures;
-        const card = row?.cards.find((c) => c.cardRef === answer.cardRef);
-        say(
-          `Dealt the ${f.strike.display} — ${card ? `${card.impliedChance.display} chance, ${card.chanceLabel}, ` : ""}` +
-            `${f.contracts.display} contracts for ${f.premiumUsdc.display}. Ends ${f.expiry.display}. ` +
-            `Flick to another if you disagree with me.`
-        );
+        // Deliberately silent. This path deals a Deck -- from a seed prompt or an
+        // accepted Suggestion -- and the Deck itself is the answer: the dealt Card is
+        // already lit on the right by `dealtRef`. Narrating it here restated, in prose,
+        // figures the Trader can already read on the Card, and put a premium (which is
+        // the Max Loss, ADR-0002) into the transcript for no gain.
+        //
         // opt-in only -- the seed prompts call deal() without opts and just deal, same as
         // always. Reuses this already-priced proposal instead of asking again, since a
         // second ask() would relabel it as a Trader override rather than an agent Suggestion.
@@ -1535,7 +1583,7 @@ export function useSurface(): Surface {
       // the seed prompts -- can keep ignoring it.
       return answer;
     },
-    [ask, asset, clearSelection, deck, direction, heard, horizonDays, loadDeck, say]
+    [ask, asset, clearSelection, direction, heard, horizonDays, loadDeck, say]
   );
 
   /**
@@ -1577,13 +1625,13 @@ export function useSurface(): Surface {
 
       setSizeUsdcState(STAKE_USDC);
       setConfirmOpen(true);
-      const answer = await ask(cardRef, askingDirection, STAKE_USDC, { underlying: askingAsset, horizonDays: askingHorizon });
-      if (answer?.kind === "PROPOSAL" && answer.proposal.chosenBy === "TRADER") {
-        const f = answer.proposal.figures;
-        say(`Your pick: ${f.strike.display}, ${f.contracts.display} contracts for ${f.premiumUsdc.display}. Same checks either way.`);
-      }
+      // Deliberately silent on success. The Trader clicked a Card and a confirmation
+      // opened on top of it carrying every one of these figures -- saying them again in
+      // the transcript, in prose, answered a question nobody asked. A refusal still
+      // speaks: `ask` itself logs those.
+      await ask(cardRef, askingDirection, STAKE_USDC, { underlying: askingAsset, horizonDays: askingHorizon });
     },
-    [ask, busy, direction, say, asset, horizonDays]
+    [ask, busy, direction, asset, horizonDays]
   );
 
   /**
@@ -1602,37 +1650,65 @@ export function useSurface(): Surface {
       setPracticeDone(false);
       try {
         const answer = await proposeChat({ prompt });
-        setResult(answer);
         setQuoteMoved(false);
 
-        if (answer.intent) {
-          const askingAsset = answer.intent.underlying ?? asset;
-          const asking = answer.intent.direction ?? direction;
-          const askingHorizon = answer.intent.horizonDays ?? horizonDays;
-          const askingSize = answer.intent.sizeUsdc ?? STAKE_USDC;
-
-          if (askingAsset !== asset || asking !== direction || askingHorizon !== horizonDays) {
-            clearSelection();
-            expiryChosen.current = true;
-            setAssetState(askingAsset);
-            setDirectionState(asking);
-            setHorizonState(askingHorizon);
-            await loadDeck(askingAsset, asking, askingHorizon, { spinner: true });
-          }
-          setSizeUsdcState(askingSize);
-        }
-
         if (answer.kind === "PROPOSAL") {
-          setSelectedRef(answer.cardRef);
-          if (answer.proposal.chosenBy === "AGENT") setDealtRef(answer.cardRef);
-          shownQuote.current = { ref: answer.cardRef, perContract: answer.proposal.figures.perContractUsd.display };
+          // NOTHING on the right moves.
+          //
+          // This used to read the answer's Trade Intent and drag the whole surface after
+          // it -- asset, direction, expiry, stake, and a Deck reload -- so a sentence
+          // typed on the left silently replaced the Cards the Trader was reading on the
+          // right. The Deck is the Trader's own browsing context; a question about a
+          // 2-day ETH put is not an instruction to stop looking at whatever they had
+          // open.
+          //
+          // Nothing is lost by staying put, because the answer is self-contained: the
+          // Card below carries its own underlying, direction and expiry, and "Place
+          // order" hands all three to `pick`, which switches the Deck at that point --
+          // when the Trader has actually chosen to go there. `selectedRef`/`dealtRef`
+          // are deliberately not set either: they ring a Card in the Deck on screen, and
+          // this Order is not in it.
+          //
+          // The confirmation deliberately does NOT open here either. It used to, which
+          // made a typed sentence the one path in the product that put a spend a single
+          // click away without the Trader having chosen to look at it -- the shape
+          // ADR-0009 removed the commit bar to avoid.
+          //
+          // `result` stays untouched for the same reason: it drives the payoff strip and
+          // the "the agent picked $X" tag above the Deck, and naming a strike that is not
+          // in the row underneath it is worse than saying nothing.
           const expl = answer.explanation || `I found the ${answer.proposal.figures.strike.display} option for you.`;
           say(expl);
-          setConfirmOpen(true);
+
+          const f = answer.proposal.figures;
+          showProposal({
+            who: "copilot",
+            kind: "proposal",
+            cardRef: answer.cardRef,
+            // Off the proposal's own intent, never off local state: `pick` re-selects
+            // asset/direction/expiry from these, so a Card dealt on one selection still
+            // opens correctly after the Trader has moved the Deck somewhere else.
+            underlying: answer.proposal.intent.underlying,
+            direction: answer.proposal.intent.direction,
+            horizonDays: answer.horizonDays,
+            strike: f.strike,
+            premiumUsdc: f.premiumUsdc,
+            expiry: f.expiry,
+          });
         } else if (answer.kind === "NO_ORDER") {
+          // Said in the chat and nowhere else. "Nothing matched" is an answer to what was
+          // typed, not a condition of the book the Trader is browsing -- the Deck on the
+          // right is still full of perfectly good Cards, and replacing it with an
+          // empty-Deck halt would be this panel lying about the market.
           shownQuote.current = { ref: null, perContract: null };
           say(answer.message || "No suitable order found for that horizon and direction.");
         } else if (answer.kind === "VETO") {
+          // The one thing a typed sentence still puts on the right, deliberately. ADR-0006
+          // makes the Review Agent's veto the only word that can stop a trade, and
+          // ADR-0009 says it has to read across a room -- a refusal that appears only as
+          // another grey line in a transcript is a refusal that can be scrolled past.
+          // Nothing is priced or opened either way; this is louder, not further along.
+          setResult(answer);
           shownQuote.current = { ref: null, perContract: null };
           say(answer.explanation || "Review agent vetoed this trade intent.");
         }
@@ -1656,7 +1732,9 @@ export function useSurface(): Surface {
         setBusy(false);
       }
     },
-    [asset, clearSelection, direction, heard, horizonDays, loadDeck, say]
+    // `asset`, `direction`, `horizonDays`, `clearSelection` and `loadDeck` are all gone
+    // from here: this path no longer reads or moves the Deck's selection at all.
+    [heard, say, showProposal]
   );
 
   /**
@@ -1803,10 +1881,9 @@ export function useSurface(): Surface {
     setRefusal(null);
     try {
       await practice(p.proposalId);
-      say(
-        `Practice run open — no money moved. ${p.proposal.figures.contracts.display} contracts at ` +
-          `${p.proposal.figures.strike.display}, and it would have cost ${p.proposal.figures.premiumUsdc.display}.`
-      );
+      // Silent here too: `practiceDone` renders the receipt inside the confirmation the
+      // Trader is still looking at (ConfirmModal.tsx), which is both nearer and more
+      // legible than the same sentence in a transcript behind it.
       setPracticeDone(true);
       await refreshMoney();
     } catch (e) {

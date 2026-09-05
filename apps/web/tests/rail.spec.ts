@@ -154,9 +154,12 @@ test.describe("the Copilot follows the picker", () => {
     await page.getByTestId("rail-SOL").click();
     await expect(page.getByTestId("rail-SOL")).toHaveAttribute("aria-pressed", "true");
 
-    // Free text is only logged and answered with a fixed reply (ADR-0007) -- reading an
-    // asset out of a sentence is the Trade Agent's job and that service does not exist,
-    // so naming a different asset here must never originate a selection.
+    // Free text DOES reach the Trade Agent now (POST /propose/chat reads a sentence into
+    // a Trade Intent), so this no longer holds by accident -- it holds by decision. The
+    // Deck is the Trader's own browsing context, and an answer about ETH is not an
+    // instruction to stop looking at the SOL cards they had open. The answer arrives as
+    // its own Card in the chat carrying underlying, direction and expiry; pressing
+    // "Place order" on it is what moves the selection, because that is a choice.
     await page.getByRole("textbox", { name: "Say something to the Copilot" }).fill("I think BTC drops before Friday");
     await page.getByRole("button", { name: "Send" }).click();
 
