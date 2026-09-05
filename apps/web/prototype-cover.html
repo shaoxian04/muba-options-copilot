@@ -1,0 +1,1191 @@
+<!--
+  PROTOTYPE - throwaway. Not the real frontend. Third in the series after
+  prototype-copilot.html (settled the single-asset Deck) and prototype-deck-v2.html
+  (settled the multi-asset surface, variant E).
+
+  QUESTION IT ANSWERS: what should /cover look like once it stops being its own
+  visual island, says less, and leads with the answer instead of the data?
+
+  Today's /cover fails three ways, and all three are why this file exists:
+    1. It CANNOT SCROLL. globals.css sets `body{overflow:hidden}` for the fixed-viewport
+       trading terminal; .cvr is a flowing document, so a quoted Loan is clipped at the
+       fold and the disclaimer is unreachable.
+    2. Wrong type scale - rem on a 16px root against a system that is px on a 14px base.
+    3. Its figures are not figures. Every number in this product is set in Martian Mono
+       with tabular-nums (.num/.hero). /cover sets them in body sans, so they neither
+       line up nor read as data.
+
+  Three structurally different variants, switchable with the bar at the bottom or the
+  left/right arrow keys:
+
+    ?variant=A  Ladder   - one price axis is the hero: spot, strike, liquidation, to
+                           scale. The answer is a picture; the numbers hang off it.
+    ?variant=B  Sheets   - the Deck's own idiom. Loan and Cover as two data sheets,
+                           verdict in one line above, raw Aave numbers folded away.
+    ?variant=C  Steps    - a single narrow column read top to bottom: what you have,
+                           where you get liquidated, what stops it, when it ends.
+
+  Also switchable, independently: the SCENARIO (?s=) and the THEME. Refusals are a
+  first-class state here, not an afterthought - of the 40 largest aWETH holders on Base
+  only a minority can be quoted, so "we can't cover this" is the most common thing this
+  page does and every variant has to render it well.
+
+  DATA IS REAL, with one seam. Every figure and every sentence below came out of the
+  shipped GET /cover/quote - real liquidation.ts arithmetic, real format.ts strings -
+  driven at LIVE Aave prices read off Base at block 50788334 on 2026-09-03
+  (WETH $2,395.79 / LT 83%, cbBTC $77,441.93 / LT 78%; both within 0.05% of the
+  Thetanuts feed). The seam: the free-tier RPC caps eth_getLogs at a 10-block range, so
+  finding a live borrower would have taken ~3,000 requests. The BALANCES are therefore
+  synthetic - the loans are plausible, not real people. Everything computed FROM them
+  is the real code path.
+
+  PROTOTYPE LIBERTY: variant A's ladder positions are computed in this page. In the
+  real surface geometry belongs in lib/geometry.ts, which is one of the two files
+  allowed to do arithmetic because it produces coordinates and never text (ADR-0006).
+  No STRING here was built from a number - every figure renders `display` verbatim,
+  exactly as the real page must.
+-->
+<title>Cover - prototype</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Martian+Mono:wght@500;600;700&display=swap">
+<style>
+/* ============================================================================
+   Tokens, copied verbatim from apps/web/app/globals.css. Copied rather than
+   reinvented on purpose: the point of this prototype is that /cover stops having
+   its own palette, so if a colour here is not already in the real stylesheet, the
+   variant using it has failed the brief.
+   ========================================================================= */
+:root{
+  color-scheme: light;
+  --ground:#e7ecf1; --well:#dee5ec; --surface:#ffffff; --surface-2:#f2f5f8;
+  --line:#d3dbe4; --line-2:#e6ebf0;
+  --ink:#111820; --ink-2:#4c5a69; --ink-3:#7c8b9a;
+  --hue:#2a78d6; --hue-soft:#dceafa; --hue-deep:#1c5cab;
+  --call:#1a5fb4; --put:#9a5000; --call-soft:#dbe7f7; --put-soft:#f8e7d3;
+  --r0:#e9edfd; --r1:#bdc9f0; --r2:#93a6da; --r3:#6984c2; --r4:#3a65aa; --r5:#004791;
+  --good:#0a6f0a; --warn:#8a5200; --crit:#b52d2d;
+  --btn:#111820; --btn-ink:#ffffff;
+  --lift:0 1px 2px rgba(17,24,32,.07), 0 12px 28px rgba(17,24,32,.1);
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --ground:#0c1218; --well:#080d12; --surface:#151d25; --surface-2:#1c2630;
+  --line:#2a3742; --line-2:#212c36;
+  --ink:#e7edf3; --ink-2:#a2b1bf; --ink-3:#8497a6;
+  --hue:#3987e5; --hue-soft:#14304f; --hue-deep:#86b6ef;
+  --call:#3987e5; --put:#f0883e; --call-soft:#12283f; --put-soft:#3a2313;
+  --r0:#cfd2d9; --r1:#a7b1c6; --r2:#8391ad; --r3:#607395; --r4:#3d567c; --r5:#143a63;
+  --good:#3fbf3f; --warn:#fab219; --crit:#f0716b;
+  --btn:#e7edf3; --btn-ink:#0c1218;
+  --lift:0 1px 2px rgba(0,0,0,.5), 0 12px 28px rgba(0,0,0,.45);
+}
+*{box-sizing:border-box}
+*{scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+*::-webkit-scrollbar{width:8px;height:8px}
+*::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px}
+
+/* THE FIX, in one rule. The real body is `overflow:hidden` + `height:100%` for the
+   trading terminal. Here the shell is a flex column: chrome stays put, the document
+   under it scrolls. This is what /cover needs and does not currently have. */
+html,body{height:100%}
+body{margin:0;background:var(--ground);color:var(--ink);overflow:hidden;
+  font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;font-size:14px;
+  line-height:1.45;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;text-align:left}
+button[disabled]{cursor:not-allowed;opacity:.45}
+:focus-visible{outline:2px solid var(--hue);outline-offset:2px;border-radius:8px}
+h1,h2,h3{margin:0}
+
+.num{font-family:"Martian Mono","IBM Plex Mono",ui-monospace,monospace;
+  font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+.hero{font-family:"Martian Mono","IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
+  letter-spacing:-.05em}
+.lbl{font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-2);font-weight:500}
+.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+/* ============================================================================
+   THE APP HEADER - "option 2" from the integration question, and shared by every
+   variant because it is not what is being chosen between. This is the missing way
+   in: today /cover is reachable only by typing the URL.
+   ========================================================================= */
+.top{display:flex;align-items:center;gap:18px;padding:0 20px;height:46px;flex:0 0 auto;
+  background:var(--surface);border-bottom:1px solid var(--line)}
+.top .brand{font-weight:600;letter-spacing:-.01em;font-size:13px}
+.top nav{display:flex;gap:2px;padding:3px;border-radius:999px;background:var(--well);
+  border:1px solid var(--line)}
+.top nav a{padding:5px 14px;border-radius:999px;font-size:12.5px;color:var(--ink-2);
+  text-decoration:none;font-weight:500;transition:background .16s,color .16s}
+.top nav a[aria-current="page"]{background:var(--ink);color:var(--ground)}
+.top .right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.top .thm{border:1px solid var(--line);border-radius:8px;padding:4px 10px;font-size:11.5px;
+  color:var(--ink-2);background:var(--surface-2)}
+
+.scroll{flex:1;overflow-y:auto;overflow-x:hidden}
+
+/* ---- the address form, shared shape, restyled per variant where it matters ---- */
+.ask{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+.ask .fld{display:flex;flex-direction:column;gap:5px;flex:1 1 22rem;min-width:0}
+.ask input{padding:9px 12px;border-radius:10px;border:1px solid var(--line);
+  background:var(--surface);color:var(--ink);font-family:"IBM Plex Mono",monospace;
+  font-size:13px;min-width:0}
+.ask input::placeholder{color:var(--ink-3)}
+.ask .go{padding:9px 18px;border-radius:10px;background:var(--btn);color:var(--btn-ink);
+  font-weight:550;font-size:13px}
+
+/* ---- refusal + warning, shared across variants: this is content, not a toast ---- */
+.declined{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--warn);
+  border-radius:12px;padding:14px 16px;max-width:52rem}
+.declined h2{font-size:13.5px;margin-bottom:5px}
+.declined p{margin:0;color:var(--ink-2);line-height:1.55}
+.declined .code{margin-top:9px}
+.warn-row{display:flex;gap:9px;align-items:flex-start;background:var(--surface);
+  border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:10px;
+  padding:11px 13px;color:var(--ink-2);line-height:1.5;max-width:52rem}
+.warn-row b{color:var(--warn);flex:0 0 auto}
+.fine{color:var(--ink-3);line-height:1.5;max-width:52rem;font-size:12.5px}
+
+/* ============================================================================
+   VARIANT A - LADDER. One price axis carries the answer; figures hang off it.
+   ========================================================================= */
+.vA{padding:22px 24px 40px;max-width:70rem;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+.vA .head{display:flex;flex-direction:column;gap:5px}
+.vA h1{font-size:19px;letter-spacing:-.02em}
+.vA .sub{color:var(--ink-2);max-width:44rem}
+
+.vA .stage{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:22px;align-items:stretch}
+@media(max-width:860px){.vA .stage{grid-template-columns:1fr}}
+
+.vA .ladder{position:relative;background:var(--well);border-radius:16px;
+  box-shadow:inset 0 1px 3px rgba(0,0,0,.09);min-height:340px}
+/* The plot area, inset from the card so the top and bottom marks have room to sit
+   ON the axis rather than clipping out of it. Every mark below is positioned in
+   percent OF THIS BOX, which is what makes the scale honest. */
+.vA .plot{position:absolute;left:0;right:18px;top:34px;bottom:34px}
+.vA .track{position:absolute;left:160px;top:0;bottom:0;width:3px;border-radius:3px;
+  background:var(--line)}
+/* The danger band: from the strike down to liquidation. Orange because a Cover is a
+   PUT, and put is orange in this product's palette - never red/green (dE 5.5 under
+   deuteranopia, against a bar of 8). */
+.vA .band{position:absolute;left:160px;width:3px;border-radius:3px;background:var(--put)}
+.vA .mark{position:absolute;left:0;right:0;display:flex;align-items:center;gap:0;
+  transform:translateY(-50%)}
+.vA .mark .cap{width:152px;text-align:right;padding-right:14px;flex:0 0 auto}
+.vA .mark .cap .lbl{display:block;margin-bottom:2px}
+.vA .mark .cap .v{font-size:15px;font-weight:600}
+.vA .mark .dot{position:absolute;left:158px;width:7px;height:7px;border-radius:50%;
+  background:var(--ink-3);border:2px solid var(--well);box-sizing:content-box}
+.vA .mark .note{margin-left:24px;color:var(--ink-2);font-size:12.5px;line-height:1.4;max-width:24rem}
+.vA .mark.spot .dot{background:var(--ink)}
+.vA .mark.spot .cap .v{font-size:22px}
+.vA .mark.strike .dot{background:var(--put)}
+.vA .mark.strike .cap .v{color:var(--put)}
+.vA .mark.liq .dot{background:var(--crit)}
+.vA .mark.liq .cap .v{color:var(--crit)}
+
+.vA .side{display:flex;flex-direction:column;gap:12px}
+.vA .lapse{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:15px 16px}
+.vA .lapse .v{font-size:20px;font-weight:650;letter-spacing:-.02em;margin:3px 0 6px;display:block}
+.vA .lapse p{margin:0;color:var(--ink-2);font-size:12.5px;line-height:1.5}
+.vA .facts{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:6px 16px 12px}
+.vA .facts .r{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+  padding:9px 0;border-bottom:1px solid var(--line-2)}
+.vA .facts .r:last-child{border-bottom:0}
+.vA .facts .r .k{color:var(--ink-2);font-size:12.5px}
+.vA .facts .r .v{font-weight:600}
+
+/* ============================================================================
+   VARIANT B - SHEETS. The Deck's own idiom: the verdict in one line, then two
+   labelled data sheets. Raw Aave numbers fold away behind a disclosure.
+   ========================================================================= */
+.vB{padding:22px 24px 40px;max-width:66rem;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+.vB h1{font-size:19px;letter-spacing:-.02em;margin-bottom:5px}
+.vB .sub{color:var(--ink-2);max-width:44rem}
+
+/* The verdict. ONE sentence, and the only place on the page with a large figure. */
+.vB .verdict{background:var(--surface);border:1px solid var(--line);border-radius:16px;
+  padding:18px 20px;box-shadow:var(--lift);display:flex;gap:22px;align-items:center;flex-wrap:wrap}
+.vB .verdict .big{display:flex;flex-direction:column;gap:2px;flex:0 0 auto}
+.vB .verdict .big .v{font-size:30px;font-weight:650}
+.vB .verdict .say{flex:1 1 20rem;min-width:0;line-height:1.5;color:var(--ink-2);font-size:14.5px}
+.vB .verdict .say b{color:var(--ink);font-weight:600}
+.vB .verdict .chip{flex:0 0 auto;display:flex;flex-direction:column;gap:2px;
+  padding-left:22px;border-left:1px solid var(--line-2)}
+.vB .verdict .chip .v{font-size:15px;font-weight:600}
+
+.vB .sheets{display:grid;grid-template-columns:repeat(auto-fit,minmax(19rem,1fr));gap:14px}
+.vB .sheet{background:var(--surface);border:1px solid var(--line);border-radius:14px;
+  padding:14px 16px 6px}
+.vB .sheet .cap{display:flex;justify-content:space-between;align-items:center;
+  padding-bottom:10px;border-bottom:1px solid var(--line-2)}
+.vB .sheet dl{display:grid;grid-template-columns:1fr auto;gap:0;margin:0}
+.vB .sheet dt{color:var(--ink-2);font-size:12.5px;padding:9px 0;border-bottom:1px solid var(--line-2)}
+.vB .sheet dd{margin:0;text-align:right;font-weight:600;padding:9px 0;
+  border-bottom:1px solid var(--line-2)}
+.vB .sheet dt:last-of-type,.vB .sheet dd:last-of-type{border-bottom:0}
+.vB .sheet dd .q{display:block;font-weight:400;font-size:11.5px;color:var(--ink-3);
+  letter-spacing:0;font-family:"IBM Plex Sans",sans-serif}
+.vB details{border:1px solid var(--line);border-radius:12px;background:var(--surface-2);
+  padding:0 14px;max-width:52rem}
+.vB summary{cursor:pointer;padding:11px 0;font-size:12.5px;color:var(--ink-2);font-weight:500}
+.vB details[open] summary{border-bottom:1px solid var(--line-2)}
+.vB details dl{display:grid;grid-template-columns:1fr auto;gap:8px 14px;margin:0;padding:12px 0}
+.vB details dt{color:var(--ink-2);font-size:12.5px}
+.vB details dd{margin:0;text-align:right;font-weight:600;font-size:12.5px}
+.vB .lapse{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;background:var(--surface);
+  border:1px solid var(--line);border-left:3px solid var(--hue);border-radius:12px;padding:13px 16px}
+.vB .lapse .v{font-size:17px;font-weight:650}
+.vB .lapse p{margin:0;color:var(--ink-2);font-size:12.5px;flex:1 1 18rem}
+
+/* --- the price line: liquidation, strike and spot on one axis, to scale ------
+   A's ladder, folded into B and laid on its side. Kept because "how far is the
+   fall" is the one thing a first-timer cannot get from a table of four numbers,
+   and it costs 60px. Ascending left to right, which is how a number line reads. */
+.vB .line{background:var(--well);border-radius:14px;padding:30px 18px 34px;
+  box-shadow:inset 0 1px 3px rgba(0,0,0,.09)}
+.vB .line .axis{position:relative;height:4px;border-radius:4px;background:var(--line)}
+.vB .line .danger{position:absolute;top:0;height:4px;border-radius:4px;background:var(--put)}
+.vB .line .pt{position:absolute;top:50%;transform:translate(-50%,-50%);text-align:center;
+  white-space:nowrap}
+.vB .line .pt i{display:block;width:9px;height:9px;border-radius:50%;background:var(--ink-3);
+  margin:0 auto;border:2px solid var(--well);box-sizing:content-box}
+.vB .line .pt .k{position:absolute;left:50%;transform:translateX(-50%);bottom:20px}
+.vB .line .pt .v{position:absolute;left:50%;transform:translateX(-50%);top:20px;
+  font-size:13.5px;font-weight:650}
+.vB .line .pt.liq i{background:var(--crit)} .vB .line .pt.liq .v{color:var(--crit)}
+.vB .line .pt.stk i{background:var(--put)}  .vB .line .pt.stk .v{color:var(--put)}
+.vB .line .pt.now i{background:var(--ink)}
+
+/* --- what it costs. Its own card because the price is the question a beginner
+   actually has, and because what is honest to say about it needs a sentence. --- */
+.vB .cost{background:var(--surface);border:1px solid var(--line);border-radius:14px;
+  padding:16px 18px;display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap}
+.vB .cost .amt{flex:0 0 auto}
+.vB .cost .amt .v{font-size:26px;font-weight:700;letter-spacing:-.03em;display:block;margin-top:2px}
+.vB .cost .txt{flex:1 1 22rem;min-width:0;color:var(--ink-2);line-height:1.55;font-size:13px}
+.vB .cost .txt b{color:var(--ink);font-weight:600}
+.vB .cta{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.vB .cta .go2{background:var(--btn);color:var(--btn-ink);padding:12px 22px;border-radius:12px;
+  font-weight:600;font-size:14px;min-height:44px}
+.vB .cta .note{color:var(--ink-3);font-size:12.5px}
+
+/* ============================================================================
+   THE CONFIRMATION - the same shape as ConfirmModal/RfqModal on the trading
+   surface, so a Borrower does not learn a second interface. ADR-0008: no
+   signature without a human confirmation, Cover included.
+   ========================================================================= */
+.scrim{position:fixed;inset:0;background:rgba(4,7,10,.6);backdrop-filter:blur(3px);z-index:60}
+.modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:61;
+  width:min(94vw,468px);max-height:92vh;overflow:auto;background:var(--surface);
+  border:1px solid var(--line);border-radius:20px;box-shadow:var(--lift)}
+.modal header{display:flex;align-items:center;gap:12px;padding:16px 18px 14px;
+  border-bottom:1px solid var(--line-2)}
+.modal header b{display:block;font-family:"Martian Mono","IBM Plex Mono",monospace;
+  font-size:16px;font-weight:700;letter-spacing:-.03em}
+.modal header small{display:block;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--ink-2);font-weight:600;margin-top:1px}
+.modal header .x{margin-left:auto;width:30px;height:30px;border-radius:9px;display:grid;
+  place-items:center;font-size:19px;color:var(--ink-3)}
+.modal header .x:hover{background:var(--surface-2);color:var(--ink)}
+.modal .belief{margin:16px 18px;padding:20px 18px;border-radius:14px;text-align:center;
+  background:var(--surface-2);border:1px solid var(--line-2);font-size:16px;font-weight:700;
+  line-height:1.55;color:var(--ink)}
+.modal .belief em{font-style:normal;color:var(--warn)}
+.modal dl{margin:16px 18px 0;display:grid;grid-template-columns:1fr auto;gap:0;
+  border-top:1px solid var(--line-2)}
+.modal dt{font-size:12px;color:var(--ink-2);padding:8px 0}
+.modal dd{margin:0;padding:8px 0;font-family:"IBM Plex Mono",monospace;
+  font-variant-numeric:tabular-nums;font-size:13px;text-align:right;color:var(--ink)}
+.modal dd.hero{font-size:20px;font-weight:700;letter-spacing:-.03em}
+.modal .gate{margin:14px 18px 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:7px}
+.modal .gate li{display:flex;gap:8px;align-items:baseline;font-size:12.5px;color:var(--ink-2)}
+.modal .gate li b{flex:0 0 auto;width:14px;color:var(--ink-3)}
+.modal .gate li.done b{color:var(--good)}
+.modal .refusal{margin:14px 18px 0;padding:12px 14px;border-radius:11px;background:var(--surface-2);
+  border:1px solid var(--line);border-left:3px solid var(--warn);color:var(--ink-2);
+  line-height:1.55;font-size:12.5px}
+.modal footer{display:flex;gap:9px;padding:16px 18px 18px;margin-top:14px}
+.modal footer .btn{flex:1;text-align:center;padding:13px 14px;min-height:44px;border-radius:11px;
+  font-weight:600;font-size:13.5px;white-space:nowrap;font-family:"IBM Plex Mono",monospace}
+.modal footer .btn.primary{background:var(--btn);color:var(--btn-ink)}
+.modal footer .btn.ghost{background:transparent;color:var(--ink);border:1px dashed var(--ink-3);
+  font-weight:500}
+
+/* ============================================================================
+   VARIANT C - STEPS. One narrow column, read top to bottom. Each step is a
+   question a first-timer actually asks, answered by one figure.
+   ========================================================================= */
+.vC{padding:24px 24px 48px;max-width:40rem;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.vC h1{font-size:19px;letter-spacing:-.02em;margin-bottom:5px}
+.vC .sub{color:var(--ink-2)}
+.vC .flow{display:flex;flex-direction:column;gap:0;background:var(--surface);
+  border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.vC .step{display:flex;gap:14px;padding:16px 18px;border-bottom:1px solid var(--line-2)}
+.vC .step:last-child{border-bottom:0}
+.vC .step .no{flex:0 0 auto;width:22px;height:22px;border-radius:50%;background:var(--well);
+  border:1px solid var(--line);display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:600;color:var(--ink-2);margin-top:1px}
+.vC .step .body{flex:1;min-width:0}
+.vC .step .q{color:var(--ink-2);font-size:12.5px;margin-bottom:3px}
+.vC .step .a{font-size:21px;font-weight:650;letter-spacing:-.02em;display:block}
+.vC .step .a small{font-size:12.5px;font-weight:400;color:var(--ink-3);letter-spacing:0;
+  font-family:"IBM Plex Sans",sans-serif;margin-left:8px}
+.vC .step .why{color:var(--ink-3);font-size:12.5px;line-height:1.5;margin-top:4px}
+.vC .step.danger .a{color:var(--crit)}
+.vC .step.cover .a{color:var(--put)}
+.vC .step.end{background:var(--surface-2)}
+.vC .step.end .a{font-size:18px}
+/* C's own disclosure. Borrowing .vB's would defeat the point of the comparison -
+   each variant has to be free to disagree about layout. */
+.vC details{border:1px solid var(--line);border-radius:12px;background:var(--surface-2);padding:0 14px}
+.vC summary{cursor:pointer;padding:11px 0;font-size:12.5px;color:var(--ink-2);font-weight:500}
+.vC details[open] summary{border-bottom:1px solid var(--line-2)}
+.vC details dl{display:grid;grid-template-columns:1fr auto;gap:8px 14px;margin:0;padding:12px 0}
+.vC details dt{color:var(--ink-2);font-size:12.5px}
+.vC details dd{margin:0;text-align:right;font-weight:600;font-size:12.5px}
+
+/* ============================================================================
+   The prototype's own chrome. Deliberately NOT in the design language - high
+   contrast pill, so nobody mistakes it for part of what is being judged.
+   ========================================================================= */
+.switch{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:99;
+  display:flex;align-items:center;gap:4px;background:#111;color:#fff;border-radius:999px;
+  padding:5px 6px;box-shadow:0 6px 26px rgba(0,0,0,.45);font-size:12.5px}
+.switch button{color:#fff;padding:5px 10px;border-radius:999px;font-size:12.5px;line-height:1}
+.switch button:hover{background:#333}
+.switch .now{padding:0 10px;font-weight:600;white-space:nowrap}
+.switch .sep{width:1px;align-self:stretch;background:#444;margin:0 4px}
+.switch select{background:#222;color:#fff;border:1px solid #444;border-radius:999px;
+  padding:5px 8px;font:inherit;font-size:12px}
+</style>
+
+<body>
+  <header class="top">
+    <span class="brand">Options Copilot</span>
+    <nav>
+      <a href="#">Copilot</a>
+      <a href="#" aria-current="page">Cover</a>
+    </nav>
+    <div class="right">
+      <button class="thm" id="thm" type="button">Theme</button>
+    </div>
+  </header>
+
+  <div class="scroll"><div id="stage"></div></div>
+
+  <div class="switch">
+    <button id="prev" type="button" aria-label="Previous variant">&larr;</button>
+    <span class="now" id="now">A</span>
+    <button id="next" type="button" aria-label="Next variant">&rarr;</button>
+    <span class="sep"></span>
+    <select id="scen" aria-label="Scenario"></select>
+  </div>
+
+<script id="data" type="application/json">{
+  "healthy": {
+    "status": "QUOTE",
+    "quote": {
+      "address": "0x9a1F5C4d2eB77A0c8b3D6e91Fa2B4c77E5d81A03",
+      "collateral": "WETH",
+      "underlying": "ETH",
+      "spot": {
+        "value": 2395.79,
+        "display": "$2,395.79"
+      },
+      "loan": {
+        "collateralAmount": {
+          "value": 2,
+          "display": "2.000000 WETH"
+        },
+        "collateralUsd": {
+          "value": 4791.58,
+          "display": "$4,791.58"
+        },
+        "debtUsd": {
+          "value": 3324.98,
+          "display": "$3,324.98"
+        },
+        "liquidationThreshold": {
+          "value": 0.83,
+          "display": "83%"
+        },
+        "healthFactor": {
+          "value": 1.1961008487269096,
+          "display": "1.20"
+        }
+      },
+      "cover": {
+        "liquidationPrice": {
+          "value": 2003,
+          "display": "$2,003.00"
+        },
+        "targetStrike": {
+          "value": 2203.3,
+          "display": "$2,203.30"
+        },
+        "strikeDistanceFromSpot": {
+          "value": -0.08034510537234052,
+          "display": "-8.0%"
+        },
+        "requiredContracts": {
+          "value": 1.66,
+          "display": "1.660000"
+        },
+        "tenorDays": {
+          "value": 14,
+          "display": "14d"
+        },
+        "expiry": {
+          "value": 1789632000000,
+          "display": "17 Sep, 08:00 UTC"
+        },
+        "premiumCapUsdc": {
+          "value": 8,
+          "display": "$8.00"
+        }
+      },
+      "warnings": [],
+      "disclaimer": "Nothing has been requested from a maker, nothing has been signed, and no USDC has moved. This is what your Loan would need, read from Aave."
+    }
+  },
+  "tight": {
+    "status": "QUOTE",
+    "quote": {
+      "address": "0x3Bd7E0a5C41f92D8b6Ae0347Cc19F5b8A2e6D410",
+      "collateral": "WETH",
+      "underlying": "ETH",
+      "spot": {
+        "value": 2395.79,
+        "display": "$2,395.79"
+      },
+      "loan": {
+        "collateralAmount": {
+          "value": 12.4,
+          "display": "12.400000 WETH"
+        },
+        "collateralUsd": {
+          "value": 29707.796000000002,
+          "display": "$29,707.80"
+        },
+        "debtUsd": {
+          "value": 21850,
+          "display": "$21,850.00"
+        },
+        "liquidationThreshold": {
+          "value": 0.83,
+          "display": "83%"
+        },
+        "healthFactor": {
+          "value": 1.1284883606407323,
+          "display": "1.13"
+        }
+      },
+      "cover": {
+        "liquidationPrice": {
+          "value": 2123.008161678974,
+          "display": "$2,123.01"
+        },
+        "targetStrike": {
+          "value": 2335.3089778468716,
+          "display": "$2,335.31"
+        },
+        "strikeDistanceFromSpot": {
+          "value": -0.025244709324743986,
+          "display": "-2.5%"
+        },
+        "requiredContracts": {
+          "value": 10.292,
+          "display": "10.292000"
+        },
+        "tenorDays": {
+          "value": 14,
+          "display": "14d"
+        },
+        "expiry": {
+          "value": 1789632000000,
+          "display": "17 Sep, 08:00 UTC"
+        },
+        "premiumCapUsdc": {
+          "value": 8,
+          "display": "$8.00"
+        }
+      },
+      "warnings": [],
+      "disclaimer": "Nothing has been requested from a maker, nothing has been signed, and no USDC has moved. This is what your Loan would need, read from Aave."
+    }
+  },
+  "wide": {
+    "status": "QUOTE",
+    "quote": {
+      "address": "0x7fC2A93e6B15d40aE8c7391Db5e2F60A4c83B9d1",
+      "collateral": "WETH",
+      "underlying": "ETH",
+      "spot": {
+        "value": 2395.79,
+        "display": "$2,395.79"
+      },
+      "loan": {
+        "collateralAmount": {
+          "value": 5,
+          "display": "5.000000 WETH"
+        },
+        "collateralUsd": {
+          "value": 11978.95,
+          "display": "$11,978.95"
+        },
+        "debtUsd": {
+          "value": 2400,
+          "display": "$2,400.00"
+        },
+        "liquidationThreshold": {
+          "value": 0.83,
+          "display": "83%"
+        },
+        "healthFactor": {
+          "value": 4.142720208333333,
+          "display": "4.14"
+        }
+      },
+      "cover": {
+        "liquidationPrice": {
+          "value": 578.3132530120482,
+          "display": "$578.31"
+        },
+        "targetStrike": {
+          "value": 636.1445783132531,
+          "display": "$636.14"
+        },
+        "strikeDistanceFromSpot": {
+          "value": -0.7344739821464932,
+          "display": "-73.4%"
+        },
+        "requiredContracts": {
+          "value": 4.1499999999999995,
+          "display": "4.150000"
+        },
+        "tenorDays": {
+          "value": 14,
+          "display": "14d"
+        },
+        "expiry": {
+          "value": 1789632000000,
+          "display": "17 Sep, 08:00 UTC"
+        },
+        "premiumCapUsdc": {
+          "value": 8,
+          "display": "$8.00"
+        }
+      },
+      "warnings": [
+        "At health factor 4.14 you are 73% away from liquidation. A strike that far out is cheap, but makers are unlikely to price it at all."
+      ],
+      "disclaimer": "Nothing has been requested from a maker, nothing has been signed, and no USDC has moved. This is what your Loan would need, read from Aave."
+    }
+  },
+  "btc": {
+    "status": "QUOTE",
+    "quote": {
+      "address": "0x5E81b3aC70Df29e4B6c1A8520fD73e9C4a6B02F8",
+      "collateral": "cbBTC",
+      "underlying": "BTC",
+      "spot": {
+        "value": 77441.93,
+        "display": "$77,441.93"
+      },
+      "loan": {
+        "collateralAmount": {
+          "value": 0.35,
+          "display": "0.35000000 cbBTC"
+        },
+        "collateralUsd": {
+          "value": 27104.675499999998,
+          "display": "$27,104.68"
+        },
+        "debtUsd": {
+          "value": 14200,
+          "display": "$14,200.00"
+        },
+        "liquidationThreshold": {
+          "value": 0.78,
+          "display": "78%"
+        },
+        "healthFactor": {
+          "value": 1.4888483725352113,
+          "display": "1.49"
+        }
+      },
+      "cover": {
+        "liquidationPrice": {
+          "value": 52014.65201465202,
+          "display": "$52,014.65"
+        },
+        "targetStrike": {
+          "value": 57216.11721611723,
+          "display": "$57,216.12"
+        },
+        "strikeDistanceFromSpot": {
+          "value": -0.26117392456364097,
+          "display": "-26.1%"
+        },
+        "requiredContracts": {
+          "value": 0.27299999999999996,
+          "display": "0.273000"
+        },
+        "tenorDays": {
+          "value": 14,
+          "display": "14d"
+        },
+        "expiry": {
+          "value": 1789632000000,
+          "display": "17 Sep, 08:00 UTC"
+        },
+        "premiumCapUsdc": {
+          "value": 8,
+          "display": "$8.00"
+        }
+      },
+      "warnings": [],
+      "disclaimer": "Nothing has been requested from a maker, nothing has been signed, and no USDC has moved. This is what your Loan would need, read from Aave."
+    }
+  },
+  "multi": {
+    "status": "REFUSED",
+    "refusal": {
+      "code": "MULTI_COLLATERAL",
+      "message": "Your WETH is worth $4,791.58 but Aave reports $9,800.00 of collateral in total, so this Loan holds more than one asset. A Cover can only be priced for a single-collateral Loan -- with a mix, the liquidation price is wrong by tens of percent and nothing on screen would show it."
+    }
+  },
+  "nodebt": {
+    "status": "REFUSED",
+    "refusal": {
+      "code": "NO_DEBT",
+      "message": "This Loan has no debt, so it cannot be liquidated and there is nothing to cover. Borrow against your collateral first."
+    }
+  },
+  "under": {
+    "status": "REFUSED",
+    "refusal": {
+      "code": "ALREADY_LIQUIDATABLE",
+      "message": "Your health factor is 0.947, below 1 -- this Loan can be liquidated right now. A Cover bought at this point would be struck above the current price, so its premium is mostly money you would be handed straight back. Repay or add collateral instead."
+    }
+  },
+  "unsupported": {
+    "status": "REFUSED",
+    "refusal": {
+      "code": "UNSUPPORTED_COLLATERAL",
+      "message": "This Loan is collateralised with wstETH, which a Cover cannot hedge. Only WETH and cbBTC are supported: wstETH accrues against ETH, so an ETH put under-hedges it by a margin that grows with time."
+    }
+  },
+  "nocollateral": {
+    "status": "REFUSED",
+    "refusal": {
+      "code": "NO_COLLATERAL",
+      "message": "0x2A7c… has 400.0 WETH supplied to Aave, but none of it is enabled as collateral, so you have no debt at risk and nothing to cover. Enable it as collateral in Aave first."
+    }
+  }
+}</script>
+<script>
+const DATA = JSON.parse(document.getElementById("data").textContent);
+
+const SCENARIOS = [
+  ["healthy", "Quote - 2 WETH, HF 1.20"],
+  ["tight",   "Quote - 12.4 WETH, HF 1.13 (close)"],
+  ["btc",     "Quote - cbBTC collateral"],
+  ["wide",    "Quote + warning - HF 4.14, strike 73% out"],
+  ["multi",   "Refused - multi-collateral"],
+  ["nodebt",  "Refused - no debt"],
+  ["under",   "Refused - already liquidatable"],
+  ["unsupported", "Refused - wstETH collateral"],
+  ["nocollateral", "Refused - supplied, not collateralised"],
+];
+
+const VARIANTS = {
+  A: { name: "Ladder", render: renderA },
+  B: { name: "Sheets", render: renderB },
+  C: { name: "Steps",  render: renderC },
+};
+
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+};
+/* Every figure renders `display` verbatim. Nothing here builds a string out of a
+   number - that is the rule the real page lives under (ADR-0006). */
+const show = (fig) => fig.display;
+
+/* ---------------------------------------------------------------- the form */
+function form(placeholder) {
+  const f = el("form", "ask");
+  f.innerHTML =
+    '<div class="fld"><label class="lbl" for="a">Wallet address</label>' +
+    '<input id="a" spellcheck="false" autocomplete="off" placeholder="' + placeholder + '"></div>' +
+    '<button class="go" type="submit">Read loan</button>';
+  f.addEventListener("submit", (e) => e.preventDefault());
+  return f;
+}
+
+function refusalBlock(refusal, heading) {
+  const d = el("div", "declined");
+  d.append(el("h2", null, heading));
+  d.append(el("p", null, refusal.message));
+  const c = el("div", "code");
+  c.append(el("span", "lbl", refusal.code.replace(/_/g, " ")));
+  d.append(c);
+  return d;
+}
+
+function warnings(list) {
+  return list.map((w) => {
+    const r = el("div", "warn-row");
+    r.append(el("b", null, "!"));
+    r.append(el("span", null, w));
+    return r;
+  });
+}
+
+/* ================================================================ VARIANT A */
+function renderA(result, root) {
+  const wrap = el("div", "vA");
+  const head = el("div", "head");
+  head.append(el("h1", null, "Liquidation Cover"));
+  head.append(el("p", "sub", "See how far your Aave loan is from liquidation, and the put that would cover it. Nothing here is bought."));
+  wrap.append(head);
+  wrap.append(form("0x…"));
+
+  if (result.status === "REFUSED") {
+    wrap.append(refusalBlock(result.refusal, "We can't cover this loan"));
+    root.append(wrap);
+    return;
+  }
+
+  const q = result.quote;
+  const stage = el("div", "stage");
+
+  /* PROTOTYPE LIBERTY - see the file header. In the real page this belongs in
+     lib/geometry.ts, which may do arithmetic because it emits coordinates, not text. */
+  const spot = q.spot.value, strike = q.cover.targetStrike.value, liq = q.cover.liquidationPrice.value;
+  const top = spot * 1.06, bottom = Math.min(liq, strike) * 0.94;
+  const y = (v) => ((top - v) / (top - bottom)) * 100;
+
+  const ladder = el("div", "ladder");
+  const plot = el("div", "plot");
+  plot.append(el("div", "track"));
+
+  const band = el("div", "band");
+  band.style.top = y(strike) + "%";
+  band.style.height = (y(liq) - y(strike)) + "%";
+  plot.append(band);
+
+  const mark = (cls, label, value, note) => {
+    const m = el("div", "mark " + cls);
+    m.style.top = y(value.value) + "%";
+    const cap = el("div", "cap");
+    cap.append(el("span", "lbl", label));
+    cap.append(el("span", "v num", show(value)));
+    m.append(cap);
+    m.append(el("span", "dot"));
+    if (note) m.append(el("span", "note", note));
+    return m;
+  };
+
+  plot.append(mark("spot", q.underlying + " now", q.spot, null));
+  plot.append(mark("strike", "Cover pays from", q.cover.targetStrike,
+    "Your cover starts paying here — " + show(q.cover.strikeDistanceFromSpot) + " from today's price."));
+  plot.append(mark("liq", "Liquidated at", q.cover.liquidationPrice,
+    "Aave sells your collateral at this price."));
+  ladder.append(plot);
+  stage.append(ladder);
+
+  const side = el("div", "side");
+  const lapse = el("div", "lapse");
+  lapse.append(el("span", "lbl", "Protection ends"));
+  lapse.append(el("b", "v num", show(q.cover.expiry)));
+  lapse.append(el("p", null, "No auto-renewal. Renewing without you would mean signing without you."));
+  side.append(lapse);
+
+  const facts = el("div", "facts");
+  const row = (k, v) => {
+    const r = el("div", "r");
+    r.append(el("span", "k", k));
+    r.append(el("span", "v num", v));
+    facts.append(r);
+  };
+  row("Health factor", show(q.loan.healthFactor));
+  row("Collateral", show(q.loan.collateralAmount));
+  row("Debt", show(q.loan.debtUsd));
+  row("Full hedge", show(q.cover.requiredContracts) + " puts");
+  row("You'd pay at most", show(q.cover.premiumCapUsdc));
+  side.append(facts);
+  stage.append(side);
+  wrap.append(stage);
+
+  warnings(q.warnings).forEach((w) => wrap.append(w));
+  wrap.append(el("p", "fine", q.disclaimer));
+  root.append(wrap);
+}
+
+/* ================================================================ VARIANT B */
+function renderB(result, root) {
+  const wrap = el("div", "vB");
+  const head = el("div");
+  head.append(el("h1", null, "Liquidation Cover"));
+  head.append(el("p", "sub",
+    "See what protects your Aave loan if the market falls. Nothing is bought until you say so."));
+  wrap.append(head);
+  wrap.append(form("0x\u2026"));
+
+  if (result.status === "REFUSED") {
+    wrap.append(refusalBlock(result.refusal, "We can't cover this loan"));
+    root.append(wrap);
+    return;
+  }
+
+  const q = result.quote;
+
+  /* --- the verdict: one number, one sentence, and today's price ------------- */
+  const verdict = el("div", "verdict");
+  const big = el("div", "big");
+  big.append(el("span", "lbl", "Health factor"));
+  big.append(el("span", "v hero", show(q.loan.healthFactor)));
+  verdict.append(big);
+  const say = el("div", "say");
+  say.innerHTML =
+    "If " + q.underlying + " falls to <b>" + show(q.cover.liquidationPrice) +
+    "</b>, Aave sells your collateral to repay the loan. A cover pays you back from <b>" +
+    show(q.cover.targetStrike) + "</b> \u2014 before that happens.";
+  verdict.append(say);
+  const chip = el("div", "chip");
+  chip.append(el("span", "lbl", q.underlying + " right now"));
+  chip.append(el("span", "v num", show(q.spot)));
+  verdict.append(chip);
+  wrap.append(verdict);
+
+  /* --- the same three prices on one axis, to scale -------------------------
+     PROTOTYPE LIBERTY: the positions are arithmetic done in this page. In the
+     real surface that belongs in lib/geometry.ts, which may do it because it
+     emits coordinates and never text. No string below is built from a number. */
+  const spot = q.spot.value, stk = q.cover.targetStrike.value, liq = q.cover.liquidationPrice.value;
+  const lo = liq - (spot - liq) * 0.18, hi = spot + (spot - liq) * 0.18;
+  const x = (v) => ((v - lo) / (hi - lo)) * 100;
+
+  const line = el("div", "line");
+  const axis = el("div", "axis");
+  const danger = el("div", "danger");
+  danger.style.left = x(liq) + "%";
+  danger.style.width = (x(stk) - x(liq)) + "%";
+  axis.append(danger);
+  const pt = (cls, label, fig) => {
+    const n = el("div", "pt " + cls);
+    n.style.left = x(fig.value) + "%";
+    n.append(el("span", "k lbl", label));
+    n.append(el("i"));
+    n.append(el("span", "v num", show(fig)));
+    return n;
+  };
+  axis.append(pt("liq", "Liquidated", q.cover.liquidationPrice));
+  axis.append(pt("stk", "Cover pays from", q.cover.targetStrike));
+  axis.append(pt("now", q.underlying + " now", q.spot));
+  line.append(axis);
+  wrap.append(line);
+
+  /* --- what it costs -------------------------------------------------------
+     The premium does NOT exist yet and this card must not pretend otherwise.
+     A Cover is bought by sealed-bid RFQ (ADR-0008); the price is whatever a
+     maker answers, and until one does the only true figures are the CAP and
+     the guarantee that a bought put can never cost more than it. */
+  const cost = el("div", "cost");
+  const amt = el("div", "amt");
+  amt.append(el("span", "lbl", "What it costs"));
+  amt.append(el("span", "v num", show(q.cover.premiumCapUsdc)));
+  cost.append(amt);
+  const txt = el("div", "txt");
+  txt.innerHTML =
+    "That is the <b>most</b> you can pay. The exact price is set when a market maker answers " +
+    "your request \u2014 you approve it before anything is signed.<br>" +
+    "It is also the most you can <b>lose</b>: a put can expire worth nothing, but it can never " +
+    "cost you more than you paid for it.";
+  cost.append(txt);
+  wrap.append(cost);
+
+  const lapse = el("div", "lapse");
+  lapse.append(el("span", "lbl", "Protection ends"));
+  lapse.append(el("b", "v num", show(q.cover.expiry)));
+  lapse.append(el("p", null,
+    "After this the loan is uncovered again. Nothing renews on its own \u2014 renewing without you would mean signing without you."));
+  wrap.append(lapse);
+
+  /* --- the two sheets ------------------------------------------------------ */
+  const sheets = el("div", "sheets");
+  const sheet = (title, rows) => {
+    const n = el("div", "sheet");
+    const cap = el("div", "cap");
+    cap.append(el("span", "lbl", title));
+    n.append(cap);
+    const dl = el("dl");
+    rows.forEach(([k, v, q2]) => {
+      dl.append(el("dt", null, k));
+      const dd = el("dd", "num", v);
+      if (q2) dd.append(el("span", "q", q2));
+      dl.append(dd);
+    });
+    n.append(dl);
+    return n;
+  };
+  sheets.append(sheet("Your loan", [
+    ["What you put in", show(q.loan.collateralAmount), "worth " + show(q.loan.collateralUsd)],
+    ["What you borrowed", show(q.loan.debtUsd), null],
+    ["Sold if " + q.underlying + " hits", show(q.cover.liquidationPrice), "Aave's price, not ours"],
+  ]));
+  sheets.append(sheet("The cover", [
+    [q.underlying + " price now", show(q.spot), "Aave's oracle"],
+    ["Pays you from", show(q.cover.targetStrike), show(q.cover.strikeDistanceFromSpot) + " from today"],
+    ["Size", show(q.cover.requiredContracts), q.underlying + " puts \u2014 covers the loan in full"],
+  ]));
+  wrap.append(sheets);
+
+  /* --- the door. ADR-0008: a Cover is never signed without a human saying so. */
+  const cta = el("div", "cta");
+  const buy = el("button", "go2", "Cover this loan");
+  buy.type = "button";
+  buy.addEventListener("click", () => openConfirm(q));
+  cta.append(buy);
+  cta.append(el("span", "note", "You will see exactly what you are agreeing to first."));
+  wrap.append(cta);
+
+  const det = el("details");
+  det.append(el("summary", null, "The Aave numbers this came from"));
+  const dl = el("dl");
+  [["Address", q.address],
+   ["Liquidation threshold", show(q.loan.liquidationThreshold)],
+   ["Collateral value", show(q.loan.collateralUsd)],
+   ["Health factor", show(q.loan.healthFactor)],
+   ["How long the cover lasts", show(q.cover.tenorDays)]]
+    .forEach(([k, v]) => { dl.append(el("dt", null, k)); dl.append(el("dd", "mono", v)); });
+  det.append(dl);
+  wrap.append(det);
+
+  warnings(q.warnings).forEach((w) => wrap.append(w));
+  wrap.append(el("p", "fine", q.disclaimer));
+  root.append(wrap);
+}
+
+/* ============================================================================
+   THE CONFIRMATION. Same shape as ConfirmModal/RfqModal on the trading surface:
+   scrim, belief statement in plain language, the labelled list, who still has to
+   agree, then two buttons. Confirming here does NOT buy anything - POST /rfq is
+   the honest 501 of issue #31, and this dialog ends in exactly that sentence
+   rather than inventing a pending state nobody can act on.
+   ========================================================================= */
+function openConfirm(q) {
+  const scrim = el("div", "scrim");
+  const modal = el("div", "modal");
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-label", "Cover this loan");
+  modal.tabIndex = -1;
+
+  const close = () => {
+    scrim.remove(); modal.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  scrim.addEventListener("click", close);
+
+  const hd = el("header");
+  const t = el("div");
+  t.append(el("b", null, "Cover this loan"));
+  t.append(el("small", null, "Nothing is signed until you confirm"));
+  hd.append(t);
+  const x = el("button", "x", "\u00d7");
+  x.type = "button";
+  x.setAttribute("aria-label", "Close");
+  x.addEventListener("click", close);
+  hd.append(x);
+  modal.append(hd);
+
+  const body = el("div");
+
+  const belief = el("div", "belief");
+  belief.innerHTML = "If " + q.underlying + " falls below <em>" + show(q.cover.targetStrike) +
+    "</em> before " + show(q.cover.expiry) + ", this pays you what your collateral loses.";
+  body.append(belief);
+
+  const dl = el("dl");
+  const row = (k, v, cls) => {
+    dl.append(el("dt", null, k));
+    dl.append(el("dd", cls || null, v));
+  };
+  row("Protects", show(q.loan.collateralAmount));
+  row("Pays you from", show(q.cover.targetStrike));
+  row("Size", show(q.cover.requiredContracts) + " " + q.underlying + " puts");
+  row("Protection ends", show(q.cover.expiry));
+  row("Most you can pay", show(q.cover.premiumCapUsdc), "hero");
+  body.append(dl);
+
+  /* The RFQ flow, said out loud. Two confirmations, not one: ADR-0008 refuses to
+     settle a maker's answer without the Borrower agreeing to it a second time. */
+  const gate = el("ul", "gate");
+  gate.setAttribute("aria-label", "What still has to happen");
+  [["done", "You ask for the cover"],
+   ["", "Makers bid, sealed, for a short window"],
+   ["", "You see the winning price and confirm again"],
+   ["", "Only then is anything signed"]].forEach(([cls, text]) => {
+    const li = el("li", cls);
+    li.append(el("b", null, cls === "done" ? "\u2713" : "\u00b7"));
+    li.append(el("span", null, text));
+    gate.append(li);
+  });
+  body.append(gate);
+  modal.append(body);
+
+  const ft = el("footer");
+  const ask = el("button", "btn primary", "Request cover");
+  ask.type = "button";
+  const cancel = el("button", "btn ghost", "Not now");
+  cancel.type = "button";
+  cancel.addEventListener("click", close);
+
+  ask.addEventListener("click", () => {
+    /* What POST /rfq actually answers today (apps/api/src/rfq.ts): 501, and a
+       sentence that echoes the request back. Reproduced in shape - the strike
+       string is the server's own `display`, never rebuilt here. */
+    body.textContent = "";
+    const r = el("p", "refusal");
+    r.setAttribute("role", "alert");
+    r.textContent =
+      "The sealed-bid RFQ backend is not built yet. Nothing was sent to a maker, nothing was " +
+      "signed, and no USDC moved. You asked for: " + q.underlying + " below " +
+      show(q.cover.targetStrike) + ", " + show(q.cover.tenorDays) + ", at most " +
+      show(q.cover.premiumCapUsdc) + ".";
+    body.append(r);
+    ask.remove();
+    cancel.textContent = "Close";
+  });
+
+  ft.append(ask);
+  ft.append(cancel);
+  modal.append(ft);
+
+  document.body.append(scrim, modal);
+  modal.focus();
+}
+
+/* ================================================================ VARIANT C */
+function renderC(result, root) {
+  const wrap = el("div", "vC");
+  const head = el("div");
+  head.append(el("h1", null, "Liquidation Cover"));
+  head.append(el("p", "sub", "Four questions about your Aave loan. Nothing here is bought."));
+  wrap.append(head);
+  wrap.append(form("0x…"));
+
+  if (result.status === "REFUSED") {
+    wrap.append(refusalBlock(result.refusal, "We can't cover this loan"));
+    root.append(wrap);
+    return;
+  }
+
+  const q = result.quote;
+  const flow = el("div", "flow");
+  let n = 0;
+  const step = (cls, question, answer, small, why) => {
+    const s = el("div", "step " + (cls || ""));
+    s.append(el("span", "no", String(++n)));
+    const b = el("div", "body");
+    b.append(el("div", "q", question));
+    const a = el("span", "a num", answer);
+    if (small) a.append(el("small", null, small));
+    b.append(a);
+    if (why) b.append(el("div", "why", why));
+    s.append(b);
+    flow.append(s);
+  };
+
+  step("", "What you put in", show(q.loan.collateralAmount), show(q.loan.collateralUsd),
+    "You borrowed " + show(q.loan.debtUsd) + " against it.");
+  step("danger", "Where Aave takes it", show(q.cover.liquidationPrice), null,
+    "If " + q.underlying + " falls this far, your collateral is sold. Health factor is " +
+    show(q.loan.healthFactor) + " today.");
+  step("cover", "Where a cover starts paying", show(q.cover.targetStrike),
+    show(q.cover.strikeDistanceFromSpot) + " from spot",
+    "Deliberately above the liquidation price, so the money arrives while you can still act.");
+  step("end", "When it stops", show(q.cover.expiry), null,
+    "No auto-renewal — renewing without you would mean signing without you.");
+  wrap.append(flow);
+
+  const det = el("details");
+  det.append(el("summary", null, "Size and price"));
+  const dl = el("dl");
+  [["Full hedge", show(q.cover.requiredContracts) + " " + q.underlying + " puts"],
+   ["You'd pay at most", show(q.cover.premiumCapUsdc)],
+   ["Tenor", show(q.cover.tenorDays)],
+   [q.collateral + " price (Aave oracle)", show(q.spot)],
+   ["Liquidation threshold", show(q.loan.liquidationThreshold)]]
+    .forEach(([k, v]) => { dl.append(el("dt", null, k)); dl.append(el("dd", "mono", v)); });
+  det.append(dl);
+  wrap.append(det);
+
+  warnings(q.warnings).forEach((w) => wrap.append(w));
+  wrap.append(el("p", "fine", q.disclaimer));
+  root.append(wrap);
+}
+
+/* ------------------------------------------------------------- the switcher */
+const params = () => new URLSearchParams(location.search);
+const key = () => (params().get("variant") || "A").toUpperCase();
+const scen = () => params().get("s") || "healthy";
+
+function go(v, s) {
+  const p = params();
+  p.set("variant", v);
+  p.set("s", s);
+  history.replaceState(null, "", "?" + p);
+  draw();
+}
+
+function draw() {
+  const v = VARIANTS[key()] ? key() : "A";
+  const s = DATA[scen()] ? scen() : "healthy";
+  const stage = document.getElementById("stage");
+  stage.textContent = "";
+  VARIANTS[v].render(DATA[s], stage);
+  document.getElementById("now").textContent = v + " — " + VARIANTS[v].name;
+  document.getElementById("scen").value = s;
+  document.title = "Cover " + v + " (" + VARIANTS[v].name + ") - prototype";
+}
+
+const sel = document.getElementById("scen");
+SCENARIOS.forEach(([id, label]) => {
+  const o = document.createElement("option");
+  o.value = id; o.textContent = label;
+  sel.append(o);
+});
+sel.addEventListener("change", () => go(key(), sel.value));
+
+const cycle = (d) => {
+  const keys = Object.keys(VARIANTS);
+  const i = keys.indexOf(VARIANTS[key()] ? key() : "A");
+  go(keys[(i + d + keys.length) % keys.length], scen());
+};
+document.getElementById("prev").addEventListener("click", () => cycle(-1));
+document.getElementById("next").addEventListener("click", () => cycle(1));
+addEventListener("keydown", (e) => {
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+  if (e.key === "ArrowLeft") cycle(-1);
+  if (e.key === "ArrowRight") cycle(1);
+});
+
+document.getElementById("thm").addEventListener("click", () => {
+  const now = document.documentElement.getAttribute("data-theme");
+  document.documentElement.setAttribute("data-theme", now === "dark" ? "light" : "dark");
+});
+document.documentElement.setAttribute("data-theme",
+  matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+
+draw();
+</script>
+</body>

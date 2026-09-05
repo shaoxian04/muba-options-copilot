@@ -22,7 +22,7 @@ export function Header() {
 
   return (
     <header className="shell-header">
-      <span className="brand">Options Copilot</span>
+      <span className="brand">NutShell</span>
       <nav aria-label="Main">
         <Link href="/" aria-current={isCopilot ? "page" : undefined}>
           Copilot

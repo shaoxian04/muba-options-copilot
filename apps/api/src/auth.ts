@@ -18,7 +18,7 @@ export function generateNonce(): string {
  */
 export function buildChallengeMessage(walletAddress: string, nonce: string): string {
   return [
-    "Options Copilot wants you to sign in with your wallet.",
+    "NutShell wants you to sign in with your wallet.",
     "",
     `Address: ${walletAddress}`,
     `Nonce: ${nonce}`,
