@@ -38,6 +38,35 @@ guard -- if `collateralAmount * spot` does not match `totalCollateralBase` withi
 to quote and say why. Multi-collateral and Aave e-mode Loans are explicitly out of scope. A
 refusal a Borrower can read is worth more than Cover struck at the wrong price.
 
+## When the money arrives, and what the buffer therefore buys
+
+Thetanuts V4 options are **European**. The r12 `BaseOption` exposes no `exercise`, and the
+SDK's `payout()` is deprecated with the reason: "Settlement is automatic via the factory's
+`notifyTradeSettled` callback; there is no user-callable settlement trigger on the option
+contract itself" (TNU-AUDIT-0046). The lifecycle is `active -> expired-awaiting-settlement
+-> settled-itm | settled-otm`. The `exercise()` methods elsewhere in the SDK belong to the
+Wheel Vault and Loan products, not to the OptionFactory path Cover uses.
+
+A Cover therefore pays on day 14 whether the Loan was liquidated on day 3 or not. **Cover
+is compensation, not prevention**, and every surface must say so. A Borrower who believes
+cash will arrive in time to save the Loan will not act -- and that belief is worse than no
+Cover at all, for the same reason a lapsed Cover is.
+
+So the 10% buffer does something narrower than the earlier wording in `liquidation.ts`
+claimed. It does not buy time to act while money arrives. It widens the band of price
+outcomes on which the Cover finishes in the money, so a Borrower who IS liquidated is
+compensated rather than paid nothing.
+
+This also settles auto-repay: it cannot be built. Not primarily because of the custody rule
+(though that binds too -- ADR-0011 leaves the backend no key to spend with), but because
+there are no funds to route before expiry. The one pre-expiry exit is selling the Position
+through a fresh RFQ (`PositionPnL.exitType` includes `'rfq'`), which is another sealed-bid
+auction with its own maker window and is not a liquidation-speed instrument. Building it
+would need ADR-0002 re-examined first, since closing a long by selling is still a sell.
+
+Verified against `@thetanuts-finance/thetanuts-client@0.3.0` typings and ABI, not against
+the deployed Base contract. Confirm on-chain before anything load-bearing rests on it.
+
 ## Consequences
 
 Cover is one-shot. There is no auto-renewal, because unattended renewal means a background
@@ -45,3 +74,8 @@ process spending from a hot key, and "no signature without a human confirmation"
 this context too or it is not a rule. That makes **Lapse** the sharpest edge in the product:
 the expiry date is the loudest thing on a Cover, and a renewal prompt is the first thing to
 build if there is time.
+
+Lapse is not the only sharp edge, though. Because settlement is European, a Cover never
+prevents the liquidation it is named for -- so the surface owes the Borrower two facts, not
+one: when the Cover expires, and that its payout arrives at expiry rather than in time to
+act. Neither the Coverage figure nor the premium says either of those things.

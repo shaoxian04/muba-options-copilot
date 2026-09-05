@@ -3,7 +3,7 @@ import "./globals.css";
 import { Header } from "../components/Header";
 
 export const metadata: Metadata = {
-  title: "Options Copilot",
+  title: "NutShell",
   description: "Buy protection on ETH, in plain English, with the downside always in sight.",
 };
 

@@ -20,14 +20,19 @@ import {
   injected,
   sendTransaction,
   signMessage as wagmiSignMessage,
+  switchChain,
 } from "@wagmi/core";
 import { getTransactionReceipt as viemGetTransactionReceipt } from "viem/actions";
-import { UserRejectedRequestError } from "viem";
+import { ChainMismatchError, UserRejectedRequestError } from "viem";
+import { base } from "viem/chains";
 import type { UnsignedTx } from "@copilot/shared";
 import { createStore as createMipdStore } from "mipd";
 import { config } from "./wagmiConfig";
 
 export class WalletUnavailable extends Error {}
+
+/** The connected wallet is not on Base, and could not or would not be moved there. */
+export class WrongChain extends Error {}
 
 /**
  * Closing a wallet's own connect/QR UI without pairing (WalletConnect's modal, or an
@@ -581,9 +586,55 @@ async function pollForReceipt(hash: `0x${string}`, attempts = 40, intervalMs = 1
   throw new Error("Timed out waiting for the transaction to be mined.");
 }
 
+/**
+ * Moves the connected wallet onto Base, prompting it if it is anywhere else.
+ *
+ * The chain a signature lands on belongs to the WALLET, not to this app. `wagmiConfig.ts`
+ * declaring `chains: [base]` reads like a constraint and is not one: it configures the
+ * transports wagmi uses for its OWN reads, and places no limit on the network a connector
+ * signs against. wagmi's chain guard is opt-in, and omitting `chainId` opts OUT of it twice
+ * over -- `sendTransaction` resolves the target chain from `connector.getChainId()` and
+ * forwards `assertChainId: false` to viem, disabling the `ChainMismatchError` that is the
+ * only thing that would otherwise complain.
+ *
+ * Observed on mainnet, 2026-09-05: a Trader whose wallet sat on Ethereum (the EVM default
+ * for Phantom and MetaMask alike) broadcast Base calldata to Ethereum, where the OptionBook
+ * address holds no code. A call to a codeless address SUCCEEDS and does nothing, so the
+ * wallet reported success and `pollForReceipt` -- which asks that same wallet -- agreed.
+ * Only `/fill/settle`'s own Base lookup caught it (ADR-0012), after real gas had been paid
+ * for a no-op. The money was safe; the confirmation was a lie for as long as it took the
+ * backend to answer.
+ */
+export async function ensureBaseChain(): Promise<void> {
+  const { connector } = getConnection(config);
+  if (!connector) throw new WalletUnavailable("Connect a wallet before sending a transaction.");
+  // Asks the CONNECTOR, not `getChainId(config)`: that one reads wagmi's own cached
+  // `state.chainId`, which is only ever as fresh as the last `chainChanged` event it saw.
+  // A wallet switched by hand between page loads is exactly the case this must not miss.
+  const current = await connector.getChainId().catch(() => null);
+  if (current === base.id) return;
+  await switchChain(config, { chainId: base.id }).catch((error) => {
+    if (error instanceof UserRejectedRequestError)
+      throw new WrongChain("This trade settles on Base. Approve the network switch in your wallet to continue.");
+    throw new WrongChain("Could not switch your wallet to Base. Select Base mainnet in the wallet itself, then try again.");
+  });
+}
+
 /** Sends one prepared transaction through the connected wallet and waits for it to mine. */
 export async function sendTx(tx: UnsignedTx): Promise<string> {
-  const hash = await sendTransaction(config, { to: tx.to as `0x${string}`, data: tx.data as `0x${string}` });
+  await ensureBaseChain();
+  const hash = await sendTransaction(config, {
+    // Naming the chain here is what turns wagmi's own assertion back ON (`assertChainId:
+    // !!chainId`), so a wallet that moves off Base between the switch above and this call
+    // throws instead of quietly signing somewhere else.
+    chainId: base.id,
+    to: tx.to as `0x${string}`,
+    data: tx.data as `0x${string}`,
+  }).catch((error) => {
+    if (error instanceof ChainMismatchError)
+      throw new WrongChain("Your wallet left Base before signing. Switch back to Base mainnet and try again.");
+    throw error;
+  });
   const receipt = await pollForReceipt(hash);
   if (receipt.status !== "success") throw new Error("Transaction failed on-chain.");
   return hash;

@@ -677,7 +677,7 @@ export async function rfqRoutes(app: FastifyInstance): Promise<void> {
           expiryIso: new Date(record.ask.expiry.value).toISOString(),
           optionAddress: verification.optionAddress,
           txHash: parsed.data.txHash,
-        });
+        }).catch((e) => req.log.error({ err: e, requestId: record.id, txHash: parsed.data.txHash }, "Failed to record fill"));
       }
 
       return { settled: true, remainingUsdc: remainingBudget(s), status: quietStatus(record) };

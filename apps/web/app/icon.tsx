@@ -4,7 +4,7 @@ export const size = { width: 32, height: 32 };
 export const contentType = "image/png";
 
 /**
- * The browser-tab icon. A "C" for Copilot on the same primary blue
+ * The browser-tab icon. An "N" for NutShell on the same primary blue
  * (`--hue` in globals.css) the rest of the surface uses, so the tab matches
  * the app instead of showing a generic default.
  */
@@ -26,7 +26,7 @@ export default function Icon() {
           fontFamily: "sans-serif",
         }}
       >
-        C
+        N
       </div>
     ),
     { ...size }

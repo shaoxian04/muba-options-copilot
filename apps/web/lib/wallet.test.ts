@@ -3,7 +3,7 @@ import { UserRejectedRequestError } from "viem";
 
 vi.mock("@wagmi/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@wagmi/core")>();
-  return { ...actual, connect: vi.fn(), disconnect: vi.fn(), getConnection: vi.fn() };
+  return { ...actual, connect: vi.fn(), disconnect: vi.fn(), getConnection: vi.fn(), switchChain: vi.fn() };
 });
 
 vi.mock("./wagmiConfig", () => ({
@@ -22,7 +22,7 @@ vi.mock("@wagmi/connectors/walletConnect", async (importOriginal) => {
   return { ...actual, walletConnect: vi.fn(actual.walletConnect) };
 });
 
-import { connect, disconnect, getConnection } from "@wagmi/core";
+import { connect, disconnect, getConnection, switchChain } from "@wagmi/core";
 import { walletConnect as walletConnectFactory } from "@wagmi/connectors/walletConnect";
 import { config } from "./wagmiConfig";
 import {
@@ -40,6 +40,9 @@ import {
   WALLETCONNECT_ICON,
   WALLETCONNECT_PEER_KEY,
   WalletConnectionCancelled,
+  WalletUnavailable,
+  WrongChain,
+  ensureBaseChain,
   walletOptionFor,
   watchAvailableWallets,
 } from "./wallet";
@@ -694,5 +697,70 @@ describe("isConnectionFresh", () => {
     // corrupted or manipulated stored timestamp auto-reconnect forever.
     const connectedAt = 2_000_000;
     expect(isConnectionFresh(connectedAt, 1_000_000, THREE_HOURS_MS)).toBe(false);
+  });
+});
+
+/**
+ * The regression these cover cost a real transaction on 2026-09-05: Base calldata signed
+ * on Ethereum, where the OptionBook address holds no code, so the call succeeded and did
+ * nothing. Nothing in the browser noticed, because `pollForReceipt` asks the same wallet
+ * that just signed it. `ensureBaseChain` is the guard; these are the cases that matter.
+ */
+describe("ensureBaseChain", () => {
+  const BASE = 8453;
+  const ETHEREUM = 1;
+
+  function connectedOn(chainId: number | (() => Promise<number>)) {
+    vi.mocked(getConnection).mockReturnValue({
+      connector: {
+        getChainId: typeof chainId === "function" ? chainId : async () => chainId,
+      },
+    } as unknown as ReturnType<typeof getConnection>);
+  }
+
+  afterEach(() => {
+    vi.mocked(getConnection).mockReset();
+    vi.mocked(switchChain).mockReset();
+  });
+
+  it("does not prompt when the wallet is already on Base", async () => {
+    connectedOn(BASE);
+    await ensureBaseChain();
+    expect(switchChain).not.toHaveBeenCalled();
+  });
+
+  it("switches a wallet sitting on Ethereum, which is Phantom's and MetaMask's EVM default", async () => {
+    connectedOn(ETHEREUM);
+    vi.mocked(switchChain).mockResolvedValueOnce({ id: BASE } as never);
+    await ensureBaseChain();
+    expect(switchChain).toHaveBeenCalledWith(expect.anything(), { chainId: BASE });
+  });
+
+  it("refuses in words when the Trader declines the switch, rather than signing anyway", async () => {
+    connectedOn(ETHEREUM);
+    vi.mocked(switchChain).mockRejectedValueOnce(new UserRejectedRequestError(new Error("declined")));
+    await expect(ensureBaseChain()).rejects.toBeInstanceOf(WrongChain);
+  });
+
+  it("refuses when the wallet cannot switch at all", async () => {
+    connectedOn(ETHEREUM);
+    vi.mocked(switchChain).mockRejectedValueOnce(new Error("unsupported method"));
+    await expect(ensureBaseChain()).rejects.toBeInstanceOf(WrongChain);
+  });
+
+  it("treats an unreadable chain id as 'not Base' and switches rather than assuming", async () => {
+    // A connector that throws here must not be read as "probably fine" -- that is the
+    // assumption that let the original wrong-chain fill through.
+    connectedOn(async () => {
+      throw new Error("provider asleep");
+    });
+    vi.mocked(switchChain).mockResolvedValueOnce({ id: BASE } as never);
+    await ensureBaseChain();
+    expect(switchChain).toHaveBeenCalled();
+  });
+
+  it("refuses when no wallet is connected at all", async () => {
+    vi.mocked(getConnection).mockReturnValue({ connector: undefined } as unknown as ReturnType<typeof getConnection>);
+    await expect(ensureBaseChain()).rejects.toBeInstanceOf(WalletUnavailable);
   });
 });

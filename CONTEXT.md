@@ -1,17 +1,21 @@
-# Options Copilot
+# Copilot
 
-A natural-language client for buying on-chain options on Thetanuts Finance V4 (Base mainnet),
-aimed at people who understand crypto but have never traded a derivative. The product's core
-promise is protection first, translation second: a Trader should be unable to lose more than
-they consented to, and should understand the position in plain English before signing.
+The trading context of **NutShell**, and this file is its glossary. A natural-language client
+for buying on-chain options on Thetanuts Finance V4 (Base mainnet), aimed at people who
+understand crypto but have never traded a derivative. The product's core promise is protection
+first, translation second: a Trader should be unable to lose more than they consented to, and
+should understand the position in plain English before signing.
+
+Liquidation Cover is the other context and keeps its own glossary; see `CONTEXT-MAP.md`.
 
 ## Language
 
 ### The product
 
 **Copilot**:
-The thing we are building — a client that sits in front of Thetanuts and converts natural
-language into a real on-chain option position.
+The trading half of NutShell — the client that sits in front of Thetanuts and converts natural
+language into a real on-chain option position. Not the whole product: Liquidation Cover is the
+other half, and it never builds a Trade Intent or speaks to an agent.
 _Avoid_: platform, exchange, protocol, DEX (Thetanuts is the platform; we are not)
 
 **Trader**:

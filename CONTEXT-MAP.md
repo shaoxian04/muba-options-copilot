@@ -1,10 +1,10 @@
 # Context Map
 
-Two contexts. They share a chain, a wallet and an SDK, and almost no vocabulary.
+NutShell has two contexts. They share a chain, a wallet and an SDK, and almost no vocabulary.
 
 ## Contexts
 
-- [Options Copilot](./CONTEXT.md) -- turns a Trader's sentence into an option Position
+- [Copilot](./CONTEXT.md) -- turns a Trader's sentence into an option Position
 - [Liquidation Cover](./apps/api/src/insurance/CONTEXT.md) -- hedges a Borrower's Aave Loan
   against liquidation
 

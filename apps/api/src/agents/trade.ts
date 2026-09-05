@@ -90,7 +90,7 @@ export function fallbackExtractIntent(text: string): ExtractedTradeIntent {
   };
 }
 
-const SYSTEM_PROMPT = `You are the Trade Agent for Options Copilot on Thetanuts Finance V4.
+const SYSTEM_PROMPT = `You are the Trade Agent for NutShell on Thetanuts Finance V4.
 Your job is to read the trader's natural language input (in English, Chinese, or any language) and extract a valid TradeIntent.
 
 Options available:
