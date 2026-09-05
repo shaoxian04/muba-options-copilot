@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prototype — trade panel</title>
+<!--
+  PROTOTYPE. THROWAWAY. NOT PRODUCTION CODE.
+
+  Question it answers: the Trade panel emits EVENTS (a proposal dealt, a veto, a practice
+  run, a fill receipt) but renders every one of them as an identical <p>. What shape
+  should those events have?
+
+  Four renderings of ONE fixed session, on the real 344px `.chat` column, real tokens.
+  Switch with the floating bar, ?variant=, or the left/right arrow keys.
+
+    now  - what apps/web/components/Chat.tsx renders today (baseline, not a variant)
+    A    - Typed event stream: each event kind gets a shape; still a conversation
+    B    - On the table: live proposal pinned above a compressed history
+    C    - Ledger: drops the conversation metaphor for a dense timeline
+
+  Every string in `now` is the real one, lifted from the `say()` calls in
+  apps/web/lib/surface.ts (lines 1504, 1562, 1616, 1754, 1785). The contract quantities
+  really are 6dp - apps/api/src/format.ts:32 quotes them that way on purpose.
+
+  ADR-0009 is load-bearing here: NO celebration on a fill. No green banner, no confetti,
+  no streak. The receipt is deliberately the quietest event in all three variants, and
+  none of them carries a standing Confirm control.
+-->
+<style>
+:root{
+  color-scheme:dark;
+  --ground:#0c1218; --well:#080d12; --surface:#151d25; --surface-2:#1c2630;
+  --line:#2a3742; --line-2:#212c36;
+  --ink:#e7edf3; --ink-2:#a2b1bf; --ink-3:#8497a6;
+  --hue:#3987e5; --hue-ink:#0c1218; --hue-soft:#14304f; --hue-deep:#86b6ef;
+  --call:#3987e5; --put:#f0883e; --call-soft:#12283f; --put-soft:#3a2313;
+  --warn:#fab219; --good:#3fbf3f; --crit:#f0716b;
+  --lift:0 1px 2px rgba(0,0,0,.5), 0 12px 28px rgba(0,0,0,.45);
+}
+:root[data-theme="light"]{
+  color-scheme:light;
+  --ground:#e7ecf1; --well:#dee5ec; --surface:#ffffff; --surface-2:#f2f5f8;
+  --line:#d3dbe4; --line-2:#e6ebf0;
+  --ink:#111820; --ink-2:#4c5a69; --ink-3:#5e6c79;
+  --hue:#2470cc; --hue-ink:#ffffff; --hue-soft:#dceafa; --hue-deep:#1c5cab;
+  --call:#1a5fb4; --put:#9a5000; --call-soft:#dbe7f7; --put-soft:#f8e7d3;
+  --warn:#8a5200; --good:#0a6f0a; --crit:#b52d2d;
+  --lift:0 1px 2px rgba(17,24,32,.07), 0 12px 28px rgba(17,24,32,.1);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font:14px/1.5 ui-sans-serif,-apple-system,"Segoe UI",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+/* ---- app chrome ---- */
+.hdr{height:52px; display:flex; align-items:center; justify-content:space-between;
+  padding:0 18px; border-bottom:1px solid var(--line); background:var(--surface)}
+.hdr .brand{font-weight:700; letter-spacing:-.02em}
+.hdr .brand span{color:var(--ink-3); font-weight:500; margin-left:8px; font-size:12px}
+.app{display:grid; grid-template-columns:344px minmax(0,1fr); height:calc(100% - 52px)}
+.rig{background:var(--well); overflow:hidden; padding:14px; opacity:.5}
+.rig h4{margin:0 0 10px; font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-3)}
+.fakecard{background:var(--surface); border:1px solid var(--line); border-radius:12px;
+  padding:11px 13px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center}
+.fakecard b{font-weight:600}
+.fakecard .pc{color:var(--ink-3); font-size:12px}
+.fakecard.hot{border-color:var(--hue); box-shadow:0 0 0 1px var(--hue)}
+
+/* ---- the panel under test ---- */
+.chat{display:flex; flex-direction:column; background:var(--surface); border-right:1px solid var(--line); min-width:0; min-height:0; overflow:hidden}
+.chat .hd{padding:15px 18px; border-bottom:1px solid var(--line-2); display:flex; justify-content:space-between; align-items:center; gap:10px}
+.chat .hd .who{font-weight:600; letter-spacing:-.01em}
+.chat .hd .lbl{font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3)}
+.engine-tabs{display:flex; gap:6px; padding:10px 18px 0}
+.engine-tabs button{font:inherit; font-size:13px; padding:6px 13px; border-radius:9px; cursor:pointer;
+  background:transparent; border:1px solid transparent; color:var(--ink-3)}
+.engine-tabs button[aria-selected="true"]{background:var(--surface-2); border-color:var(--line); color:var(--ink); font-weight:600}
+.chat .log{flex:1; min-height:0; overflow:auto; padding:18px; display:flex; flex-direction:column; gap:13px}
+/* `.log` is a flex column, so every child defaults to shrinking to fit the available
+   height instead of scrolling - which silently clips the taller event cards. The real
+   `.log` in globals.css has the same exposure the moment a child stops being a <p>. */
+.chat .log > *{flex:0 0 auto}
+.from-trader{align-self:flex-end; max-width:88%; background:var(--surface-2); border:1px solid var(--line);
+  padding:8px 12px; border-radius:14px 14px 4px 14px; margin:0}
+.from-copilot{color:var(--ink-2); max-width:94%; margin:0}
+.ask-row{display:flex; gap:8px; padding:12px 18px 16px; border-top:1px solid var(--line-2)}
+.ask-row input{flex:1; min-width:0; font:inherit; padding:9px 12px; border-radius:10px;
+  background:var(--surface-2); border:1px solid var(--line); color:var(--ink)}
+.ask-row input::placeholder{color:var(--ink-3)}
+.ask-row button{font:inherit; font-weight:600; padding:9px 14px; border-radius:10px;
+  border:1px solid var(--line); background:var(--surface-2); color:var(--ink-3); cursor:pointer}
+
+/* ================= shared event vocabulary (A and B) ================= */
+.ev{border:1px solid var(--line); border-radius:12px; background:var(--surface-2); overflow:hidden}
+.ev-hd{display:flex; align-items:center; gap:7px; padding:8px 11px; border-bottom:1px solid var(--line-2)}
+.ev-k{font-size:10px; letter-spacing:.09em; text-transform:uppercase; font-weight:700; color:var(--ink-3)}
+.ev-hd .spacer{flex:1}
+.ev-hd .when{font-size:10px; color:var(--ink-3)}
+.ev-bd{padding:10px 11px; display:flex; flex-direction:column; gap:9px}
+
+/* the accent stripe is the ONLY thing that differs between event kinds - it is a hue,
+   never an icon set, so nothing here can start reading as a reward */
+.ev.proposal{border-left:3px solid var(--hue)}
+.ev.proposal .ev-k{color:var(--hue-deep)}
+.ev.veto{border-left:3px solid var(--crit)}
+.ev.veto .ev-k{color:var(--crit)}
+.ev.practice{border-left:3px solid var(--warn)}
+.ev.practice .ev-k{color:var(--warn)}
+/* ADR-0009: a fill gets the QUIETEST treatment of the four, not the loudest. */
+.ev.receipt{border-left:3px solid var(--line)}
+
+.figs{display:grid; grid-template-columns:1fr 1fr; gap:8px 10px}
+.fig{min-width:0}
+.fig .k{display:block; font-size:10px; letter-spacing:.07em; text-transform:uppercase; color:var(--ink-3); margin-bottom:1px}
+.fig .v{display:block; font-size:13px; font-weight:600; color:var(--ink); font-variant-numeric:tabular-nums; overflow-wrap:anywhere}
+.fig .v.big{font-size:17px; letter-spacing:-.01em}
+.fig .v.sm{font-size:11px; font-weight:500; color:var(--ink-2)}
+.ev-note{font-size:12px; color:var(--ink-2); margin:0; line-height:1.45}
+.ev-link{font-size:11px; color:var(--hue-deep); text-decoration:none}
+.ev-link:hover{text-decoration:underline}
+
+.tags{display:flex; flex-wrap:wrap; gap:5px}
+.tag{font-size:10px; padding:2px 7px; border-radius:999px; border:1px solid var(--line);
+  background:var(--surface); color:var(--ink-2); font-variant-numeric:tabular-nums}
+.tag b{color:var(--ink); font-weight:600}
+
+/* ================= VARIANT B - on the table ================= */
+.pinned{margin:0 18px 0; padding:11px 12px; border:1px solid var(--hue); border-radius:12px;
+  background:var(--surface-2); box-shadow:var(--lift); display:flex; flex-direction:column; gap:9px}
+.pinned .p-hd{display:flex; align-items:center; gap:8px}
+.pinned .p-k{font-size:10px; letter-spacing:.09em; text-transform:uppercase; font-weight:700; color:var(--hue-deep)}
+.pinned .p-hd .spacer{flex:1}
+.pinned .p-live{font-size:10px; color:var(--ink-3); font-variant-numeric:tabular-nums}
+.pinned .p-note{font-size:11px; color:var(--ink-3); margin:0}
+.vB .log{padding-top:12px}
+.hist{display:flex; flex-direction:column; gap:0}
+.hist .h-row{display:flex; gap:9px; align-items:baseline; padding:7px 0; border-bottom:1px solid var(--line-2); font-size:12px}
+.hist .h-row:last-child{border-bottom:0}
+.hist .h-k{flex:0 0 62px; font-size:9px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); padding-top:2px}
+.hist .h-t{flex:1; min-width:0; color:var(--ink-2); line-height:1.4}
+.hist .h-t b{color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums}
+.hist .h-row.veto .h-k{color:var(--crit)}
+.hist .h-row.you .h-t{color:var(--ink)}
+.hist-hd{font-size:10px; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-3); margin:0 0 2px}
+
+/* ================= VARIANT C - ledger ================= */
+.ledger{display:flex; flex-direction:column; font-size:12px}
+.led{display:grid; grid-template-columns:44px 12px 1fr; gap:0; align-items:start; position:relative}
+.led .t{font-size:10px; color:var(--ink-3); padding:7px 0 0; font-variant-numeric:tabular-nums}
+/* the rail: a continuous hairline with one node per event */
+.led .rail{position:relative}
+.led .rail::before{content:""; position:absolute; left:5px; top:0; bottom:0; width:1px; background:var(--line-2)}
+.led:first-child .rail::before{top:11px}
+.led:last-child .rail::before{bottom:calc(100% - 11px)}
+.led .node{position:absolute; left:2px; top:8px; width:7px; height:7px; border-radius:50%;
+  background:var(--surface); border:1.5px solid var(--ink-3)}
+.led.proposal .node{border-color:var(--hue)}
+.led.veto .node{border-color:var(--crit)}
+.led.practice .node{border-color:var(--warn)}
+.led.receipt .node{border-color:var(--ink-2); background:var(--ink-2)}
+.led.you .node{border-color:var(--line); background:var(--line)}
+.led .body{padding:5px 0 11px 10px; min-width:0}
+.led .k{font-size:9px; letter-spacing:.09em; text-transform:uppercase; font-weight:700; color:var(--ink-3); display:block; margin-bottom:2px}
+.led.proposal .k{color:var(--hue-deep)}
+.led.veto .k{color:var(--crit)}
+.led.practice .k{color:var(--warn)}
+.led .line{color:var(--ink-2); line-height:1.45}
+.led .line b{color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums}
+.led.you .line{color:var(--ink)}
+.led .kv{display:flex; flex-wrap:wrap; gap:0 14px; margin-top:4px; font-size:11px; color:var(--ink-3)}
+.led .kv span b{color:var(--ink-2); font-weight:600; font-variant-numeric:tabular-nums}
+.led details summary{cursor:pointer; list-style:none; font-size:10px; letter-spacing:.07em;
+  text-transform:uppercase; color:var(--hue-deep); margin-top:5px}
+.led details summary::-webkit-details-marker{display:none}
+
+/* ================= switcher ================= */
+.switcher{position:fixed; left:50%; bottom:18px; transform:translateX(-50%); z-index:99;
+  display:flex; align-items:center; gap:2px; padding:5px;
+  background:#0b0f14; color:#fff; border:1px solid #39424d; border-radius:999px;
+  box-shadow:0 8px 30px rgba(0,0,0,.55); font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
+.switcher button{font:inherit; background:none; border:0; color:#fff; cursor:pointer; padding:7px 11px; border-radius:999px}
+.switcher button:hover{background:#232b34}
+.switcher .lab{padding:0 12px; white-space:nowrap; letter-spacing:.02em}
+.switcher .lab b{color:#7fb2f0}
+.switcher .theme{border-left:1px solid #39424d; margin-left:4px; padding-left:6px}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="brand">Options Copilot <span>PROTOTYPE &mdash; throwaway</span></div>
+  <div style="font-size:12px;color:var(--ink-3)">Base &middot; 8453</div>
+</div>
+
+<div class="app">
+  <div class="chat" id="chat">
+    <div class="hd">
+      <span class="who">Copilot</span>
+      <span class="lbl">proposes &middot; never spends</span>
+    </div>
+    <div class="engine-tabs" role="tablist">
+      <button role="tab" aria-selected="true">Trade</button>
+      <button role="tab" aria-selected="false">Insights</button>
+    </div>
+
+    <div id="mount"></div>
+
+    <div class="ask-row">
+      <input placeholder="Say something&hellip;" aria-label="Say something to the Copilot">
+      <button>Send</button>
+    </div>
+  </div>
+
+  <div class="rig">
+    <h4>Deck &middot; ETH &middot; falls &middot; 2 days</h4>
+    <div class="fakecard hot"><b>$2,340</b><span class="pc">6% &middot; $2.56</span></div>
+    <div class="fakecard"><b>$2,380</b><span class="pc">11% &middot; $4.10</span></div>
+    <div class="fakecard"><b>$2,420</b><span class="pc">22% &middot; $8.05</span></div>
+    <div class="fakecard"><b>$2,460</b><span class="pc">38% &middot; $14.90</span></div>
+  </div>
+</div>
+
+<div class="switcher">
+  <button id="prev" title="Previous (left arrow)">&larr;</button>
+  <span class="lab" id="lab"></span>
+  <button id="next" title="Next (right arrow)">&rarr;</button>
+  <button class="theme" id="theme" title="Toggle theme">&#9680;</button>
+</div>
+
+<script>
+/* ---------------------------------------------------------------------------
+   ONE fixed session. `now` prints the REAL sentences from lib/surface.ts; the
+   variants print the same facts as fields. Nothing here fetches or signs.
+--------------------------------------------------------------------------- */
+var S = [
+  { kind: "you", at: "14:02", text: "protect my eth for a couple of days" },
+
+  { kind: "prose", at: "14:02",
+    text: "I found the $2,340 option for you." },
+
+  { kind: "proposal", at: "14:02", label: "Dealt",
+    strike: "$2,340", chance: "6%", chanceLabel: "long shot",
+    contracts: "0.869434", premium: "$2.56", expiry: "2 Sep, 08:00 UTC",
+    note: "Flick to another if you disagree with me.",
+    say: "Dealt the $2,340 — 6% chance, long shot, 0.869434 contracts for $2.56. " +
+         "Ends 2 Sep, 08:00 UTC. Flick to another if you disagree with me." },
+
+  { kind: "pick", at: "14:04", label: "Your pick",
+    strike: "$2,380", chance: "11%", chanceLabel: "outside shot",
+    contracts: "1.302158", premium: "$4.10", expiry: "2 Sep, 08:00 UTC",
+    note: "Same checks either way.",
+    say: "Your pick: $2,380, 1.302158 contracts for $4.10. Same checks either way." },
+
+  { kind: "practice", at: "14:05", label: "Practice run",
+    strike: "$2,380", contracts: "1.302158", wouldCost: "$4.10",
+    note: "No money moved.",
+    say: "Practice run open — no money moved. 1.302158 contracts at $2,380, " +
+         "and it would have cost $4.10." },
+
+  { kind: "you", at: "14:07", text: "buy me something on btc that pays if it crashes 40%" },
+
+  { kind: "veto", at: "14:07", label: "Review Agent · vetoed",
+    reason: "No order on the book reaches that far from spot at this expiry. " +
+            "Nothing was priced and nothing was signed.",
+    say: "Review Agent vetoed this trade." },
+
+  { kind: "you", at: "14:09", text: "ok just do the first eth one" },
+
+  { kind: "receipt", at: "14:09", label: "Filled",
+    strike: "$2,340", contracts: "0.869434", paid: "$2.56",
+    tx: "0x8f3c…4b21",
+    say: "Bought. 0.869434 contracts at $2,340, paid $2.56." }
+];
+
+var LIVE = S[2]; /* what variant B pins: the proposal currently on the table */
+
+function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;"); }
+
+/* ======================= now - today's rendering ======================= */
+function now() {
+  var out = '<div class="log">';
+  S.forEach(function (e) {
+    if (e.kind === "you") { out += '<p class="from-trader">' + esc(e.text) + '</p>'; return; }
+    out += '<p class="from-copilot">' + esc(e.say || e.text) + '</p>';
+  });
+  return out + '</div>';
+}
+
+/* ======================= A - typed event stream ======================= */
+function figs(pairs) {
+  return '<div class="figs">' + pairs.map(function (p) {
+    return '<div class="fig"><span class="k">' + p[0] + '</span>' +
+           '<span class="v' + (p[2] ? ' ' + p[2] : '') + '">' + p[1] + '</span></div>';
+  }).join('') + '</div>';
+}
+
+function evShell(cls, kind, when, body) {
+  return '<div class="ev ' + cls + '">' +
+    '<div class="ev-hd"><span class="ev-k">' + kind + '</span>' +
+      '<span class="spacer"></span><span class="when">' + when + '</span></div>' +
+    '<div class="ev-bd">' + body + '</div></div>';
+}
+
+function A() {
+  var out = '<div class="log">';
+  S.forEach(function (e) {
+    if (e.kind === "you") { out += '<p class="from-trader">' + esc(e.text) + '</p>'; return; }
+    if (e.kind === "prose") { out += '<p class="from-copilot">' + esc(e.text) + '</p>'; return; }
+
+    if (e.kind === "proposal" || e.kind === "pick") {
+      out += evShell("proposal", e.label, e.at,
+        figs([["Strike", e.strike, "big"], ["Implied chance", e.chance + " &middot; " + e.chanceLabel],
+              ["Contracts", e.contracts, "sm"], ["Premium &middot; max loss", e.premium]]) +
+        '<p class="ev-note">Ends ' + e.expiry + '. ' + e.note + '</p>');
+      return;
+    }
+
+    if (e.kind === "practice") {
+      out += evShell("practice", e.label, e.at,
+        '<div class="tags"><span class="tag"><b>No money moved</b></span>' +
+        '<span class="tag">would have cost <b>' + e.wouldCost + '</b></span></div>' +
+        figs([["Strike", e.strike], ["Contracts", e.contracts, "sm"]]));
+      return;
+    }
+
+    if (e.kind === "veto") {
+      out += evShell("veto", e.label, e.at, '<p class="ev-note">' + e.reason + '</p>');
+      return;
+    }
+
+    if (e.kind === "receipt") {
+      out += evShell("receipt", e.label, e.at,
+        figs([["Strike", e.strike], ["Paid", e.paid],
+              ["Contracts", e.contracts, "sm"], ["Transaction", '<a class="ev-link" href="#">' + e.tx + '</a>', "sm"]]));
+      return;
+    }
+  });
+  return out + '</div>';
+}
+
+/* ======================= B - on the table ======================= */
+function B() {
+  var pin = '<div class="pinned">' +
+    '<div class="p-hd"><span class="p-k">On the table</span><span class="spacer"></span>' +
+      '<span class="p-live">ends in 47:58:12</span></div>' +
+    figs([["Strike", LIVE.strike, "big"], ["Implied chance", LIVE.chance + " &middot; " + LIVE.chanceLabel],
+          ["Contracts", LIVE.contracts, "sm"], ["Premium &middot; max loss", LIVE.premium]]) +
+    '<p class="p-note">Nothing is bought here. Open the card to confirm.</p>' +
+  '</div>';
+
+  var rows = '';
+  S.forEach(function (e) {
+    if (e.kind === "you") {
+      rows += '<div class="h-row you"><span class="h-k">You</span><span class="h-t">' + esc(e.text) + '</span></div>';
+      return;
+    }
+    if (e.kind === "prose") {
+      rows += '<div class="h-row"><span class="h-k">Copilot</span><span class="h-t">' + esc(e.text) + '</span></div>';
+      return;
+    }
+    if (e.kind === "proposal" || e.kind === "pick") {
+      rows += '<div class="h-row"><span class="h-k">' + e.label + '</span><span class="h-t"><b>' +
+        e.strike + '</b> &middot; ' + e.chance + ' &middot; <b>' + e.premium + '</b></span></div>';
+      return;
+    }
+    if (e.kind === "practice") {
+      rows += '<div class="h-row"><span class="h-k">Practice</span><span class="h-t"><b>' +
+        e.strike + '</b> &middot; would have cost <b>' + e.wouldCost + '</b> &middot; no money moved</span></div>';
+      return;
+    }
+    if (e.kind === "veto") {
+      rows += '<div class="h-row veto"><span class="h-k">Vetoed</span><span class="h-t">' + e.reason + '</span></div>';
+      return;
+    }
+    if (e.kind === "receipt") {
+      rows += '<div class="h-row"><span class="h-k">Filled</span><span class="h-t"><b>' +
+        e.strike + '</b> &middot; paid <b>' + e.paid + '</b> &middot; <a class="ev-link" href="#">' + e.tx + '</a></span></div>';
+      return;
+    }
+  });
+
+  return pin + '<div class="log"><p class="hist-hd">Earlier</p><div class="hist">' + rows + '</div></div>';
+}
+
+/* ======================= C - ledger ======================= */
+function led(cls, when, kind, line, kv, more) {
+  return '<div class="led ' + cls + '">' +
+    '<div class="t mono">' + when + '</div>' +
+    '<div class="rail"><span class="node"></span></div>' +
+    '<div class="body">' +
+      (kind ? '<span class="k">' + kind + '</span>' : '') +
+      '<div class="line">' + line + '</div>' +
+      (kv || '') + (more || '') +
+    '</div></div>';
+}
+
+function C() {
+  var out = '<div class="log"><div class="ledger">';
+  S.forEach(function (e) {
+    if (e.kind === "you") { out += led("you", e.at, "", '&rsaquo; ' + esc(e.text)); return; }
+    if (e.kind === "prose") { out += led("", e.at, "Copilot", esc(e.text)); return; }
+
+    if (e.kind === "proposal" || e.kind === "pick") {
+      out += led("proposal", e.at, e.label,
+        '<b>' + e.strike + '</b> &middot; ' + e.chance + ' chance &middot; ' + e.chanceLabel,
+        '<div class="kv"><span>premium <b>' + e.premium + '</b></span>' +
+        '<span>contracts <b>' + e.contracts + '</b></span>' +
+        '<span>ends <b>' + e.expiry + '</b></span></div>');
+      return;
+    }
+    if (e.kind === "practice") {
+      out += led("practice", e.at, e.label, '<b>' + e.strike + '</b> &middot; no money moved',
+        '<div class="kv"><span>would have cost <b>' + e.wouldCost + '</b></span>' +
+        '<span>contracts <b>' + e.contracts + '</b></span></div>');
+      return;
+    }
+    if (e.kind === "veto") {
+      out += led("veto", e.at, e.label, 'Nothing priced, nothing signed.',
+        '', '<details><summary>Reason</summary><div class="kv" style="display:block;margin-top:5px">' +
+            e.reason + '</div></details>');
+      return;
+    }
+    if (e.kind === "receipt") {
+      out += led("receipt", e.at, e.label, '<b>' + e.strike + '</b> &middot; paid <b>' + e.paid + '</b>',
+        '<div class="kv"><span>contracts <b>' + e.contracts + '</b></span>' +
+        '<span><a class="ev-link" href="#">' + e.tx + '</a></span></div>');
+      return;
+    }
+  });
+  return out + '</div></div>';
+}
+
+/* ======================= switcher ======================= */
+var VARIANTS = [
+  { key: "now", name: "today's rendering",  render: now, cls: "" },
+  { key: "A",   name: "Typed event stream", render: A,   cls: "vA" },
+  { key: "B",   name: "On the table",       render: B,   cls: "vB" },
+  { key: "C",   name: "Ledger",             render: C,   cls: "vC" }
+];
+
+function current() {
+  var k = new URLSearchParams(location.search).get("variant");
+  for (var i = 0; i < VARIANTS.length; i++) {
+    if (VARIANTS[i].key.toLowerCase() === String(k).toLowerCase()) return i;
+  }
+  return 0;
+}
+
+function draw() {
+  var v = VARIANTS[current()];
+  document.getElementById("mount").outerHTML = '<div id="mount" style="display:contents">' + v.render() + '</div>';
+  document.getElementById("chat").className = "chat " + v.cls;
+  document.getElementById("lab").innerHTML = "<b>" + v.key + "</b> &mdash; " + v.name;
+}
+
+function go(delta) {
+  var next = VARIANTS[(current() + delta + VARIANTS.length) % VARIANTS.length];
+  var u = new URL(location.href);
+  u.searchParams.set("variant", next.key);
+  history.replaceState(null, "", u);
+  location.reload();
+}
+
+document.getElementById("prev").onclick = function () { go(-1); };
+document.getElementById("next").onclick = function () { go(1); };
+document.getElementById("theme").onclick = function () {
+  var r = document.documentElement;
+  r.setAttribute("data-theme", r.getAttribute("data-theme") === "dark" ? "light" : "dark");
+};
+
+addEventListener("keydown", function (e) {
+  var t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+  if (e.key === "ArrowLeft") go(-1);
+  if (e.key === "ArrowRight") go(1);
+});
+
+draw();
+</script>
+</body>
+</html>

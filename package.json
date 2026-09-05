@@ -19,6 +19,8 @@
     "prototype": "node -e \"require('child_process').exec((process.platform==='win32'?'start \\\"\\\" ':'open ')+'apps/web/prototype-copilot.html')\"",
     "prototype:v2": "node -e \"require('child_process').exec((process.platform==='win32'?'start \\\"\\\" ':'open ')+'apps/web/prototype-deck-v2.html')\"",
     "prototype:cover": "node -e \"require('child_process').exec((process.platform==='win32'?'start \\\"\\\" ':'open ')+'apps/web/prototype-cover.html')\"",
+    "prototype:insight": "node -e \"require('child_process').exec((process.platform==='win32'?'start \\\"\\\" ':'open ')+'apps/web/prototype-insight-card.html')\"",
+    "prototype:trade": "node -e \"require('child_process').exec((process.platform==='win32'?'start \\\"\\\" ':'open ')+'apps/web/prototype-trade-panel.html')\"",
     "test": "npm run test:unit && npm run test:node && npm run test:py && npm run test:e2e",
     "test:unit": "vitest run",
     "test:coverage": "vitest run --coverage",

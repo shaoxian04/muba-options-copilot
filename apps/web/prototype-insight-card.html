@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prototype — card-drop insight</title>
+<!--
+  PROTOTYPE. THROWAWAY. NOT PRODUCTION CODE.
+
+  Question it answers: what should a dropped Deck card's analysis look like in the
+  Insights panel, instead of the current wall of prose?
+
+  Four renderings of ONE fixed response, on the real 344px `.chat` column, against the
+  real app ground, using the real tokens copied out of app/globals.css. Switch with the
+  floating bar, the ?variant= param, or the left/right arrow keys.
+
+    now  - what apps/web/components/Chat.tsx renders today (baseline, not a variant)
+    A    - Comparison card: market-vs-AI is the hero, prose collapsed
+    B    - Chart-first: the range band is the hero, everything else is caption
+    C    - Bounded dossier: tabs inside the message, fixed height no matter the essay
+
+  Data below is one realistic /forecast/ask response for the ETH card in the screenshot.
+  Nothing here fetches. Nothing here can reach a trade. Numbers are hardcoded strings.
+
+  ADR-0005 note carried into every variant: no premium, no Max Loss, and no hard
+  "overpriced" verdict badge sits above the Place order button. The two probabilities
+  are stated side by side; the reader draws the conclusion.
+-->
+<style>
+:root{
+  color-scheme:dark;
+  --ground:#0c1218; --well:#080d12; --surface:#151d25; --surface-2:#1c2630;
+  --line:#2a3742; --line-2:#212c36;
+  --ink:#e7edf3; --ink-2:#a2b1bf; --ink-3:#8497a6;
+  --hue:#3987e5; --hue-ink:#0c1218; --hue-soft:#14304f; --hue-deep:#86b6ef;
+  --call:#3987e5; --put:#f0883e; --call-soft:#12283f; --put-soft:#3a2313;
+  --warn:#fab219; --good:#3fbf3f; --crit:#f0716b;
+  --btn:#e7edf3; --btn-ink:#0c1218;
+  --lift:0 1px 2px rgba(0,0,0,.5), 0 12px 28px rgba(0,0,0,.45);
+}
+:root[data-theme="light"]{
+  color-scheme:light;
+  --ground:#e7ecf1; --well:#dee5ec; --surface:#ffffff; --surface-2:#f2f5f8;
+  --line:#d3dbe4; --line-2:#e6ebf0;
+  --ink:#111820; --ink-2:#4c5a69; --ink-3:#5e6c79;
+  --hue:#2470cc; --hue-ink:#ffffff; --hue-soft:#dceafa; --hue-deep:#1c5cab;
+  --call:#1a5fb4; --put:#9a5000; --call-soft:#dbe7f7; --put-soft:#f8e7d3;
+  --warn:#8a5200; --good:#0a6f0a; --crit:#b52d2d;
+  --btn:#111820; --btn-ink:#ffffff;
+  --lift:0 1px 2px rgba(17,24,32,.07), 0 12px 28px rgba(17,24,32,.1);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font:14px/1.5 ui-sans-serif,-apple-system,"Segoe UI",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ---- app chrome, so a variant is judged at real density, not in a vacuum ---- */
+.hdr{
+  height:52px; display:flex; align-items:center; justify-content:space-between;
+  padding:0 18px; border-bottom:1px solid var(--line); background:var(--surface);
+}
+.hdr .brand{font-weight:700; letter-spacing:-.02em}
+.hdr .brand span{color:var(--ink-3); font-weight:500; margin-left:8px; font-size:12px}
+.app{display:grid; grid-template-columns:344px minmax(0,1fr); height:calc(100% - 52px)}
+
+/* the fake Deck column: context only, deliberately dimmed */
+.rig{background:var(--well); overflow:hidden; padding:14px; opacity:.5}
+.rig h4{margin:0 0 10px; font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-3)}
+.fakecard{
+  background:var(--surface); border:1px solid var(--line); border-radius:12px;
+  padding:11px 13px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;
+}
+.fakecard b{font-weight:600}
+.fakecard .pc{color:var(--ink-3); font-size:12px}
+.fakecard.hot{border-color:var(--hue); box-shadow:0 0 0 1px var(--hue)}
+
+/* ---- the panel under test ---- */
+.chat{display:flex; flex-direction:column; background:var(--surface); border-right:1px solid var(--line); min-width:0; min-height:0; overflow:hidden}
+.chat .hd{padding:15px 18px; border-bottom:1px solid var(--line-2); display:flex; justify-content:space-between; align-items:center; gap:10px}
+.chat .hd .who{font-weight:600; letter-spacing:-.01em}
+.chat .hd .lbl{font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3)}
+.engine-tabs{display:flex; gap:6px; padding:10px 18px 0}
+.engine-tabs button{
+  font:inherit; font-size:13px; padding:6px 13px; border-radius:9px; cursor:pointer;
+  background:transparent; border:1px solid transparent; color:var(--ink-3);
+}
+.engine-tabs button[aria-selected="true"]{background:var(--surface-2); border-color:var(--line); color:var(--ink); font-weight:600}
+.chat .log{flex:1; min-height:0; overflow:auto; padding:18px; display:flex; flex-direction:column; gap:13px}
+.from-trader{align-self:flex-end; max-width:88%; background:var(--surface-2); border:1px solid var(--line); padding:8px 12px; border-radius:14px 14px 4px 14px; margin:0}
+.from-copilot{color:var(--ink-2); max-width:94%; margin:0}
+.ask-row{display:flex; gap:8px; padding:12px 18px 16px; border-top:1px solid var(--line-2)}
+.ask-row input{
+  flex:1; min-width:0; font:inherit; padding:9px 12px; border-radius:10px;
+  background:var(--surface-2); border:1px solid var(--line); color:var(--ink);
+}
+.ask-row input::placeholder{color:var(--ink-3)}
+.ask-row button{font:inherit; font-weight:600; padding:9px 14px; border-radius:10px; border:1px solid var(--line); background:var(--surface-2); color:var(--ink-3); cursor:pointer}
+
+/* ================= shared bits the variants reuse ================= */
+
+/* the dropped-card echo: replaces the 40-word machine-written question bubble */
+.echo{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  font-size:12px; color:var(--ink-2);
+}
+.echo .sym{font-weight:700; color:var(--ink); font-size:13px; letter-spacing:-.01em}
+.echo .dir{
+  font-weight:600; padding:1px 7px; border-radius:6px; font-size:11px;
+  background:var(--put-soft); color:var(--put);
+}
+.echo .dot{color:var(--ink-3)}
+.echo .k{color:var(--ink); font-variant-numeric:tabular-nums}
+
+/* the range band - the thing that replaces "sits below the AI's predicted range" */
+.band{position:relative; height:38px; margin:4px 0 6px}
+.band .axis{position:absolute; left:0; right:0; top:21px; height:2px; background:var(--line); border-radius:2px}
+.band .rng{position:absolute; top:17px; height:10px; border-radius:5px; background:var(--hue-soft); border:1px solid var(--hue)}
+.band .spot{position:absolute; top:13px; width:2px; height:18px; background:var(--ink-2)}
+.band .strike{position:absolute; top:10px; width:2px; height:24px; background:var(--put)}
+.band .tag{position:absolute; font-size:10px; letter-spacing:.02em; white-space:nowrap; font-variant-numeric:tabular-nums}
+.band .tag.sp{top:0; color:var(--ink-3); transform:translateX(-50%)}
+/* strike label hugs its own marker; range label centres inside the range bar. At 344px
+   these two collide the moment either carries a trailing word, so the words live in the
+   legend instead and the band carries only figures. */
+.band .tag.st{bottom:0; color:var(--put); font-weight:600; transform:translateX(-50%)}
+.band .tag.rl{bottom:0; color:var(--hue-deep); transform:translateX(-50%)}
+
+/* evidence chips */
+.legend{display:flex; flex-wrap:wrap; gap:12px; font-size:10px; color:var(--ink-3)}
+.legend i{display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:4px; vertical-align:middle}
+
+.chips{display:flex; flex-wrap:wrap; gap:6px}
+.chip{
+  font-size:11px; padding:3px 8px; border-radius:999px;
+  background:var(--surface-2); border:1px solid var(--line); color:var(--ink-2);
+  font-variant-numeric:tabular-nums;
+}
+.chip b{color:var(--ink); font-weight:600}
+
+/* the prose, demoted */
+details.why{border-top:1px solid var(--line-2); padding-top:9px}
+details.why > summary{
+  cursor:pointer; font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--ink-3); list-style:none; display:flex; align-items:center; gap:6px;
+}
+details.why > summary::-webkit-details-marker{display:none}
+details.why > summary::before{content:"\25B8"; font-size:9px; transition:transform .12s}
+details.why[open] > summary::before{transform:rotate(90deg)}
+details.why p{margin:9px 0 0; font-size:13px; line-height:1.55; color:var(--ink-2)}
+.discl{font-size:10px; color:var(--ink-3); line-height:1.45; margin:0}
+
+/* the closest-order footer, same discipline as NearestOrderPreview: no premium here */
+.nearest{
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  border-top:1px solid var(--line-2); padding-top:10px;
+}
+.nearest .n-l{min-width:0}
+.nearest .n-k{font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3)}
+.nearest .n-v{font-size:12px; color:var(--ink); font-variant-numeric:tabular-nums}
+.nearest button{
+  font:inherit; font-size:12px; font-weight:600; padding:7px 12px; border-radius:9px;
+  background:var(--hue); color:var(--hue-ink); border:0; cursor:pointer; white-space:nowrap;
+}
+
+/* ================= VARIANT A - comparison card ================= */
+.vA .card{
+  background:var(--surface-2); border:1px solid var(--line); border-radius:14px;
+  box-shadow:var(--lift); padding:13px; display:flex; flex-direction:column; gap:11px;
+}
+.vA .card-hd{display:flex; flex-direction:column; gap:7px; padding-bottom:10px; border-bottom:1px solid var(--line-2)}
+.vA .card-hd .t{font-size:10px; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-3)}
+.vA .cmp{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+.vA .cmp > div{min-width:0}
+.vA .cmp .k{font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); display:block; margin-bottom:4px}
+.vA .cmp .big{font-size:22px; font-weight:700; letter-spacing:-.02em; color:var(--ink); line-height:1.1; font-variant-numeric:tabular-nums; display:block}
+.vA .cmp .sub{font-size:11px; color:var(--ink-3); display:block; margin-top:3px}
+.vA .cmp .ai{font-size:13px; color:var(--ink); line-height:1.35; display:block}
+.vA .cmp .ai em{font-style:normal; color:var(--put); font-weight:600}
+
+/* ================= VARIANT B - chart-first ================= */
+.vB .stack{display:flex; flex-direction:column; gap:10px}
+.vB .lead{font-size:15px; line-height:1.4; color:var(--ink); letter-spacing:-.01em; margin:0}
+.vB .lead .num{font-weight:700; font-variant-numeric:tabular-nums}
+.vB .bigband{height:70px; margin:6px 0 2px}
+.vB .bigband .axis{top:39px}
+.vB .bigband .rng{top:32px; height:16px; border-radius:8px}
+.vB .bigband .spot{top:27px; height:26px}
+.vB .bigband .strike{top:21px; height:38px; width:3px}
+.vB .bigband .tag{font-size:11px}
+.vB .clamp{
+  font-size:13px; color:var(--ink-2); line-height:1.5; margin:0 0 4px;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+.vB.open .clamp{-webkit-line-clamp:unset; overflow:visible}
+.vB .more{
+  font:inherit; font-size:10px; background:none; border:0; padding:0; cursor:pointer;
+  color:var(--hue-deep); letter-spacing:.07em; text-transform:uppercase;
+}
+
+/* ================= VARIANT C - bounded dossier ================= */
+.vC .dossier{border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--surface-2)}
+.vC .d-hd{padding:10px 12px; border-bottom:1px solid var(--line-2)}
+.vC .d-tabs{display:flex; border-bottom:1px solid var(--line-2); background:var(--surface)}
+.vC .d-tabs button{
+  flex:1; font:inherit; font-size:11px; letter-spacing:.06em; text-transform:uppercase;
+  padding:8px 4px; background:none; border:0; border-bottom:2px solid transparent;
+  color:var(--ink-3); cursor:pointer;
+}
+.vC .d-tabs button[aria-selected="true"]{color:var(--ink); border-bottom-color:var(--hue); font-weight:600}
+.vC .d-body{padding:12px; min-height:150px; display:flex; flex-direction:column; gap:2px}
+.vC .d-body[hidden]{display:none}
+.vC .row{display:flex; justify-content:space-between; align-items:baseline; gap:10px; font-size:12px; padding:6px 0; border-bottom:1px solid var(--line-2)}
+.vC .row:last-child{border-bottom:0}
+.vC .row .k{color:var(--ink-3); letter-spacing:.02em}
+.vC .row .v{color:var(--ink); font-weight:600; text-align:right; font-variant-numeric:tabular-nums}
+.vC .scroll{overflow:auto; max-height:134px; font-size:13px; line-height:1.55; color:var(--ink-2)}
+.vC .scroll p{margin:0 0 9px}
+.vC .scroll p:last-child{margin:0}
+.vC .tail{margin-top:10px; display:flex; flex-direction:column; gap:9px}
+
+/* ================= the switcher - deliberately not part of the design ================= */
+.switcher{
+  position:fixed; left:50%; bottom:18px; transform:translateX(-50%); z-index:99;
+  display:flex; align-items:center; gap:2px; padding:5px;
+  background:#0b0f14; color:#fff; border:1px solid #39424d; border-radius:999px;
+  box-shadow:0 8px 30px rgba(0,0,0,.55); font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+.switcher button{
+  font:inherit; background:none; border:0; color:#fff; cursor:pointer;
+  padding:7px 11px; border-radius:999px;
+}
+.switcher button:hover{background:#232b34}
+.switcher .lab{padding:0 12px; white-space:nowrap; letter-spacing:.02em}
+.switcher .lab b{color:#7fb2f0}
+.switcher .theme{border-left:1px solid #39424d; margin-left:4px; padding-left:6px}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="brand">Options Copilot <span>PROTOTYPE &mdash; throwaway</span></div>
+  <div style="font-size:12px;color:var(--ink-3)">Base &middot; 8453</div>
+</div>
+
+<div class="app">
+  <div class="chat">
+    <div class="hd">
+      <span class="who">Copilot</span>
+      <span class="lbl">answers &middot; never trades</span>
+    </div>
+    <div class="engine-tabs" role="tablist">
+      <button role="tab" aria-selected="false">Trade</button>
+      <button role="tab" aria-selected="true">Insights</button>
+    </div>
+
+    <div class="log" id="log"></div>
+
+    <div class="ask-row">
+      <input placeholder="Ask about any coin&hellip;" aria-label="Ask a question">
+      <button>&rarr; Ask</button>
+    </div>
+  </div>
+
+  <div class="rig">
+    <h4>Deck &middot; ETH &middot; falls &middot; 2 days</h4>
+    <div class="fakecard hot"><b>$2,340</b><span class="pc">6% &middot; $2.56</span></div>
+    <div class="fakecard"><b>$2,380</b><span class="pc">11% &middot; $4.10</span></div>
+    <div class="fakecard"><b>$2,420</b><span class="pc">22% &middot; $8.05</span></div>
+    <div class="fakecard"><b>$2,460</b><span class="pc">38% &middot; $14.90</span></div>
+  </div>
+</div>
+
+<div class="switcher">
+  <button id="prev" title="Previous (left arrow)">&larr;</button>
+  <span class="lab" id="lab"></span>
+  <button id="next" title="Next (right arrow)">&rarr;</button>
+  <button class="theme" id="theme" title="Toggle theme">&#9680;</button>
+</div>
+
+<script>
+/* ---------------------------------------------------------------------------
+   ONE fixed response, in exactly the shape CoinAskResult already has, for the ETH
+   card in the screenshot. Every string here is one a server sends today.
+--------------------------------------------------------------------------- */
+var D = {
+  card: {
+    underlying: "ETH", direction: "DOWN", horizonDays: 2,
+    strikeDisplay: "$2,340", impliedChanceDisplay: "6%", perContractDisplay: "$2.56",
+    expiryDisplay: "2 Sep"
+  },
+  spotDisplay: "$2,450.85",
+  question:
+    "ETH is priced at a 6% chance of finishing at or below $2,340.00 within 2 days, " +
+    "trading at $2.56 per contract. Does that probability look fair given current price " +
+    "outlook, risk/benefit, and technical indicators, or does it look mispriced?",
+  answer:
+    "The strike at $2,340 is only about 4.5% below the current spot price of ~$2,450.85, " +
+    "and ETH is trading above its 20-day SMA/EMA with an RSI of 62.4, which points to a " +
+    "mildly bullish setup rather than imminent downside. The short-term outlook provided " +
+    "(favoring a $2,400-$2,620 range with medium confidence and upward bias) suggests that " +
+    "a move to or below $2,340 in just 2 days is possible but not the most likely path. " +
+    "A 6% implied chance therefore sits in the same neighbourhood as the setup implies, " +
+    "rather than looking obviously rich or obviously cheap.",
+  price: {
+    direction: "up", low: 2400, high: 2620, lowD: "$2,400", highD: "$2,620",
+    confidence: "medium",
+    rationale: "Momentum is positive and the 20-day averages are holding as support."
+  },
+  riskBenefit: {
+    upside: "A sharp risk-off move would make this cheap protection.",
+    downside: "Two days is a short window; the premium is lost in full if ETH holds up."
+  },
+  indicators: { rsi14: "62.4", sma20: "$2,388", ema20: "$2,401" },
+  nearest: { strikeDisplay: "$2,510", dirWord: "rises to", expiryDisplay: "9 Sep" },
+  disclaimer:
+    "Opinion generated from real news headlines and real market data — not financial " +
+    "advice, never a guarantee, and never connected to any live position."
+};
+
+/* Band geometry, as percentages across a $2,300-$2,680 domain. Hardcoded - this is a
+   prototype, not shipped React, so no-arithmetic.test.ts is not in play. In the real
+   thing these are coordinates, which lib/geometry.ts is already the home for. */
+var G = { strike: 10.5, rngLeft: 26.3, rngWidth: 57.9, spot: 39.7, rngMid: 55.25 };
+
+function band(cls) {
+  return '' +
+    '<div class="band ' + cls + '">' +
+      '<div class="axis"></div>' +
+      '<div class="rng" style="left:' + G.rngLeft + '%;width:' + G.rngWidth + '%"></div>' +
+      '<div class="spot" style="left:' + G.spot + '%"></div>' +
+      '<div class="strike" style="left:' + G.strike + '%"></div>' +
+      '<span class="tag sp" style="left:' + G.spot + '%">spot ' + D.spotDisplay + '</span>' +
+      '<span class="tag st" style="left:' + G.strike + '%">' + D.card.strikeDisplay + '</span>' +
+      '<span class="tag rl" style="left:' + G.rngMid + '%">' + D.price.lowD + '–' + D.price.highD + '</span>' +
+    '</div>';
+}
+
+/* The band carries figures only, so the words go here. A and C get it too, not just B -
+   an orange tick and a blue bar are not self-describing. */
+var legend = '' +
+  '<div class="legend">' +
+    '<span><i style="background:var(--put)"></i>your strike</span>' +
+    '<span><i style="background:var(--hue)"></i>predicted range</span>' +
+    '<span><i style="background:var(--ink-2)"></i>spot now</span>' +
+  '</div>';
+
+var echo = '' +
+  '<div class="echo">' +
+    '<span class="sym">' + D.card.underlying + '</span>' +
+    '<span class="dir">falls to ' + D.card.strikeDisplay + '</span>' +
+    '<span class="dot">&middot;</span><span class="k">' + D.card.horizonDays + 'd</span>' +
+    '<span class="dot">&middot;</span><span class="k">' + D.card.impliedChanceDisplay + '</span>' +
+    '<span class="dot">&middot;</span><span class="k">' + D.card.perContractDisplay + '</span>' +
+  '</div>';
+
+var chips = '' +
+  '<div class="chips">' +
+    '<span class="chip">RSI(14) <b>' + D.indicators.rsi14 + '</b></span>' +
+    '<span class="chip">above 20d SMA <b>' + D.indicators.sma20 + '</b></span>' +
+    '<span class="chip">above 20d EMA <b>' + D.indicators.ema20 + '</b></span>' +
+    '<span class="chip">outlook <b>' + D.price.direction + '</b></span>' +
+    '<span class="chip">confidence <b>' + D.price.confidence + '</b></span>' +
+  '</div>';
+
+var nearest = '' +
+  '<div class="nearest">' +
+    '<div class="n-l">' +
+      '<div class="n-k">Closest live order</div>' +
+      '<div class="n-v">' + D.card.underlying + ' ' + D.nearest.dirWord + ' ' + D.nearest.strikeDisplay + ' &middot; ' + D.nearest.expiryDisplay + '</div>' +
+    '</div>' +
+    '<button>Place order</button>' +
+  '</div>';
+
+var K = 'font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);display:block';
+
+/* ======================= now - today's rendering ======================= */
+function now() {
+  return '' +
+    '<p class="from-trader">' + D.question + '</p>' +
+    '<div class="from-copilot">' +
+      '<div class="coin-answer">' +
+        '<strong>ETH: </strong><span>' + D.answer + '</span>' +
+        '<div style="margin-top:4px"><span style="' + K + '">Price outlook</span>' +
+          '<span>' + D.price.direction + ', predicted ' + D.price.low + '–' + D.price.high +
+          ', confidence ' + D.price.confidence + '. ' + D.price.rationale + '</span></div>' +
+        '<div style="margin-top:4px"><span style="' + K + '">Risk / benefit</span>' +
+          '<span>Upside: ' + D.riskBenefit.upside + ' Downside: ' + D.riskBenefit.downside + '</span></div>' +
+        '<div style="margin-top:4px"><span style="' + K + '">Indicators</span>' +
+          '<span>RSI(14) ' + D.indicators.rsi14 + ', SMA(20) ' + D.indicators.sma20 +
+          ', EMA(20) ' + D.indicators.ema20 + '</span></div>' +
+        '<div style="margin-top:4px">' + D.card.strikeDisplay + ' sits below the AI’s own predicted ' +
+          'range for this horizon — this card pays if ETH falls to or below that level.</div>' +
+        '<div style="margin-top:8px">' + nearest + '</div>' +
+        '<div class="discl" style="margin-top:8px">' + D.disclaimer + '</div>' +
+      '</div>' +
+    '</div>';
+}
+
+/* ======================= A - comparison card ======================= */
+function A() {
+  return '' +
+    '<div class="vA">' +
+      '<div class="card">' +
+        '<div class="card-hd">' +
+          '<span class="t">You dropped</span>' + echo +
+        '</div>' +
+
+        '<div class="cmp">' +
+          '<div>' +
+            '<span class="k">Market says</span>' +
+            '<span class="big">' + D.card.impliedChanceDisplay + '</span>' +
+            '<span class="sub">chance, by ' + D.card.expiryDisplay + '</span>' +
+          '</div>' +
+          '<div>' +
+            '<span class="k">AI’s view</span>' +
+            '<span class="ai">Strike sits <em>below</em> its ' + D.price.lowD + '–' + D.price.highD + ' range</span>' +
+            '<span class="sub">' + D.price.confidence + ' confidence</span>' +
+          '</div>' +
+        '</div>' +
+
+        band('') + legend + chips +
+
+        '<details class="why">' +
+          '<summary>Why</summary>' +
+          '<p>' + D.answer + '</p>' +
+          '<p><strong style="color:var(--ink)">Upside.</strong> ' + D.riskBenefit.upside + '</p>' +
+          '<p><strong style="color:var(--ink)">Downside.</strong> ' + D.riskBenefit.downside + '</p>' +
+        '</details>' +
+
+        nearest +
+        '<p class="discl">' + D.disclaimer + '</p>' +
+      '</div>' +
+    '</div>';
+}
+
+/* ======================= B - chart-first ======================= */
+function B() {
+  return '' +
+    '<div class="vB" id="vB">' +
+      '<div class="stack">' +
+        echo +
+        '<p class="lead">The market prices <span class="num">' + D.card.impliedChanceDisplay + '</span>. ' +
+          'The AI’s own 2-day range is <span class="num">' + D.price.lowD + '–' + D.price.highD + '</span>.</p>' +
+
+        band('bigband') +
+
+        legend +
+
+        chips +
+
+        '<div>' +
+          '<p class="clamp">' + D.answer + '</p>' +
+          '<button class="more" id="moreBtn">Read all</button>' +
+        '</div>' +
+
+        nearest +
+        '<p class="discl">' + D.disclaimer + '</p>' +
+      '</div>' +
+    '</div>';
+}
+
+/* ======================= C - bounded dossier ======================= */
+function C() {
+  return '' +
+    '<div class="vC">' +
+      '<div class="dossier" id="dossier">' +
+        '<div class="d-hd">' + echo + '</div>' +
+        '<div class="d-tabs" role="tablist">' +
+          '<button role="tab" data-p="0" aria-selected="true">Compare</button>' +
+          '<button role="tab" data-p="1" aria-selected="false">Evidence</button>' +
+          '<button role="tab" data-p="2" aria-selected="false">Why</button>' +
+        '</div>' +
+
+        '<div class="d-body" data-p="0">' +
+          '<div class="row"><span class="k">Market says</span><span class="v">' + D.card.impliedChanceDisplay + ' chance</span></div>' +
+          '<div class="row"><span class="k">AI predicted range</span><span class="v">' + D.price.lowD + '–' + D.price.highD + '</span></div>' +
+          '<div class="row"><span class="k">Your strike</span><span class="v" style="color:var(--put)">' + D.card.strikeDisplay + ' &middot; below range</span></div>' +
+          band('') + legend +
+        '</div>' +
+
+        '<div class="d-body" data-p="1" hidden>' +
+          '<div class="row"><span class="k">Spot</span><span class="v">' + D.spotDisplay + '</span></div>' +
+          '<div class="row"><span class="k">RSI(14)</span><span class="v">' + D.indicators.rsi14 + '</span></div>' +
+          '<div class="row"><span class="k">20-day SMA</span><span class="v">' + D.indicators.sma20 + '</span></div>' +
+          '<div class="row"><span class="k">20-day EMA</span><span class="v">' + D.indicators.ema20 + '</span></div>' +
+          '<div class="row"><span class="k">Outlook</span><span class="v">' + D.price.direction + ' &middot; ' + D.price.confidence + '</span></div>' +
+        '</div>' +
+
+        '<div class="d-body" data-p="2" hidden>' +
+          '<div class="scroll">' +
+            '<p>' + D.answer + '</p>' +
+            '<p><strong style="color:var(--ink)">Upside.</strong> ' + D.riskBenefit.upside + '</p>' +
+            '<p><strong style="color:var(--ink)">Downside.</strong> ' + D.riskBenefit.downside + '</p>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="tail">' + nearest + '<p class="discl">' + D.disclaimer + '</p></div>' +
+    '</div>';
+}
+
+/* ======================= switcher ======================= */
+var VARIANTS = [
+  { key: "now", name: "today's rendering", render: now },
+  { key: "A",   name: "Comparison card",   render: A },
+  { key: "B",   name: "Chart-first",       render: B },
+  { key: "C",   name: "Bounded dossier",   render: C }
+];
+
+function current() {
+  var k = new URLSearchParams(location.search).get("variant");
+  for (var i = 0; i < VARIANTS.length; i++) {
+    if (VARIANTS[i].key.toLowerCase() === String(k).toLowerCase()) return i;
+  }
+  return 0;
+}
+
+function draw() {
+  var v = VARIANTS[current()];
+  document.getElementById("log").innerHTML = v.render();
+  document.getElementById("lab").innerHTML = "<b>" + v.key + "</b> &mdash; " + v.name;
+  wire();
+}
+
+function go(delta) {
+  var next = VARIANTS[(current() + delta + VARIANTS.length) % VARIANTS.length];
+  var u = new URL(location.href);
+  u.searchParams.set("variant", next.key);
+  history.replaceState(null, "", u);
+  draw();
+}
+
+/* per-variant interactions, re-bound after every render */
+function wire() {
+  var more = document.getElementById("moreBtn");
+  if (more) {
+    more.onclick = function () {
+      var box = document.getElementById("vB");
+      box.classList.toggle("open");
+      more.textContent = box.classList.contains("open") ? "Show less" : "Read all";
+    };
+  }
+
+  var dossier = document.getElementById("dossier");
+  if (dossier) {
+    var tabs = dossier.querySelectorAll(".d-tabs button");
+    Array.prototype.forEach.call(tabs, function (b) {
+      b.onclick = function () {
+        Array.prototype.forEach.call(tabs, function (x) {
+          x.setAttribute("aria-selected", String(x === b));
+        });
+        Array.prototype.forEach.call(dossier.querySelectorAll(".d-body"), function (x) {
+          x.hidden = x.getAttribute("data-p") !== b.getAttribute("data-p");
+        });
+      };
+    });
+  }
+}
+
+document.getElementById("prev").onclick = function () { go(-1); };
+document.getElementById("next").onclick = function () { go(1); };
+document.getElementById("theme").onclick = function () {
+  var r = document.documentElement;
+  r.setAttribute("data-theme", r.getAttribute("data-theme") === "dark" ? "light" : "dark");
+};
+
+addEventListener("keydown", function (e) {
+  var t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+  if (e.key === "ArrowLeft") go(-1);
+  if (e.key === "ArrowRight") go(1);
+});
+
+draw();
+</script>
+</body>
+</html>
