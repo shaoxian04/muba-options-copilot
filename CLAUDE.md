@@ -1,4 +1,4 @@
-# Options Copilot
+# NutShell
 
 Keep this file short — it's an index, not documentation. Depth lives in `CONTEXT.md`,
 `docs/adr/` and `README.md`; link to it rather than restating it here.
