@@ -4,9 +4,9 @@ export const size = { width: 32, height: 32 };
 export const contentType = "image/png";
 
 /**
- * The browser-tab icon. An "N" for NutShell on the same primary blue
- * (`--hue` in globals.css) the rest of the surface uses, so the tab matches
- * the app instead of showing a generic default.
+ * The browser-tab icon. NutShell's own peanut mark (README.md opens with the same
+ * "🥜 NutShell"), rather than a plain letter -- so the tab matches the project's actual
+ * branding instead of a generic monogram.
  */
 export default function Icon() {
   return new ImageResponse(
@@ -18,15 +18,10 @@ export default function Icon() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "#2a78d6",
-          borderRadius: 7,
-          color: "#ffffff",
-          fontSize: 22,
-          fontWeight: 700,
-          fontFamily: "sans-serif",
+          fontSize: 26,
         }}
       >
-        N
+        🥜
       </div>
     ),
     { ...size }
